@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.11"
+            tox-env: py311-airflow2
+          - python: "3.12"
+            tox-env: py312-airflow2
+          - python: "3.11"
+            tox-env: py311-airflow3
+          - python: "3.12"
+            tox-env: py312-airflow3
+          - python: "3.9"
+            tox-env: py39-airflow2min
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install tox
+      - run: tox -e ${{ matrix.tox-env }}
