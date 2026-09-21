@@ -17,6 +17,12 @@ shells out to.
 - `tox -e py311-airflow2` / `tox -e py311-airflow3`, run the suite against a
   specific Airflow major version.
 
+Each tox env writes coverage to `coverage-<envname>.lcov` (see `tox.ini`); CI
+uploads these per-matrix-env to Coveralls and merges them in a `finish` job.
+`usedevelop = true` in `tox.ini` is required for the lcov `SF:` paths to match
+the repo tree (`src/sparkforensics_operator/...`) instead of a `.tox` venv
+path, which Coveralls needs to attribute lines.
+
 ## History
 
 This repo's git history was squashed to a single commit on 2026-09-20 ahead
