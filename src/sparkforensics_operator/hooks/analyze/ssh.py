@@ -172,7 +172,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
             **paths,
         }
 
-    def trigger_for(self, job: dict, log_offset: int = 0) -> Any:
+    def trigger_for(self, job: dict) -> Any:
         from airflow.providers.ssh.triggers.ssh_remote_job import SSHRemoteJobTrigger
 
         return SSHRemoteJobTrigger(
@@ -184,7 +184,6 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
             exit_code_file=job["exit_code_file"],
             remote_os="posix",
             poll_interval=job["poll_interval"],
-            log_offset=log_offset,
         )
 
     def defer_timeout(self, job: dict) -> timedelta:

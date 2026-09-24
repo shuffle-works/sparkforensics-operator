@@ -58,8 +58,8 @@ class FakeDeferrableHook(DeferrableAnalyzeHook):
         self.submitted.append((log_ref, thresholds))
         return {"job_id": "job-1", "timeout": 900}
 
-    def trigger_for(self, job, log_offset=0):
-        return ("trigger", job["job_id"], log_offset)
+    def trigger_for(self, job):
+        return ("trigger", job["job_id"])
 
     def defer_timeout(self, job):
         return timedelta(seconds=job["timeout"] + 120)
@@ -111,7 +111,7 @@ def test_deferrable_execute_submits_and_defers_with_everything_resume_needs(tmp_
     deferred = _defer(op)
 
     assert backend.submitted == [(LOG, op.thresholds)]
-    assert deferred.trigger == ("trigger", "job-1", 0)
+    assert deferred.trigger == ("trigger", "job-1")
     assert deferred.method_name == "execute_complete"
     assert deferred.timeout == timedelta(seconds=1020)
     assert deferred.kwargs == {
@@ -189,19 +189,6 @@ def test_resume_logs_the_last_remote_log_chunk(tmp_path, caplog):
 
     info.assert_any_call("[remote] %s", "line one")
     info.assert_any_call("[remote] %s", "line two")
-
-
-def test_resume_keeps_waiting_on_a_progress_event(tmp_path):
-    kwargs = _defer(_operator(FakeDeferrableHook(), tmp_path)).kwargs
-    backend = FakeDeferrableHook()
-    fresh = _operator(backend, tmp_path)
-
-    with pytest.raises(TaskDeferred) as deferred:
-        fresh.execute_complete({}, event=_event(done=False, log_offset=42), **kwargs)
-
-    assert deferred.value.trigger == ("trigger", "job-1", 42)
-    assert deferred.value.kwargs == kwargs
-    assert backend.collected == []
 
 
 def test_resume_without_an_event_fails_clearly(tmp_path):

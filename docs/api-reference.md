@@ -141,7 +141,8 @@ resumes the task, so it can't rely on state `resolve()` left on the hook.
 `log_ref_to_dict(log_ref)` and `log_ref_from_dict(data)` (in
 `sparkforensics_operator.log_ref`) convert a reference to and from plain
 JSON values; the deferrable mode uses them to carry it across the
-deferral.
+deferral. They accept `RemoteEventLog` and `HistoryServerApp`, the
+references a deferrable backend reads.
 
 Which log source works with which backend:
 
@@ -250,7 +251,7 @@ top of `_analyze()`:
 - `submit(log_ref, thresholds, context) -> dict`, start the job and return
   it as JSON-native values; first stop and remove anything an earlier try
   of the same task instance left behind.
-- `trigger_for(job, log_offset=0)`, the trigger to defer on.
+- `trigger_for(job)`, the trigger to defer on.
 - `defer_timeout(job) -> timedelta`, how long to wait before giving up.
 - `collect(job, event, log_ref, thresholds) -> Report`, read the result
   back and clean up, raising the errors `analyze()` would.

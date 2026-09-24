@@ -266,15 +266,6 @@ class SparkForensicsOperator(BaseOperator):
             raise AirflowException("SparkForensics deferred analysis resumed without a trigger event")
         for line in (event.get("log_chunk") or "").splitlines():
             self.log.info("[remote] %s", line)
-        if not event.get("done", True):
-            # Older SSH providers' triggers could report progress before
-            # the job finished; keep waiting on the same job.
-            self.defer(
-                trigger=self.backend.trigger_for(job, log_offset=event.get("log_offset", 0)),
-                method_name="execute_complete",
-                kwargs={"job": job, "log_ref": log_ref, "report_dest": report_dest, "thresholds": thresholds},
-                timeout=self.backend.defer_timeout(job),
-            )  # raises TaskDeferred
 
         resolved_ref = log_ref_from_dict(log_ref)
         try:

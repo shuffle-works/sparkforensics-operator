@@ -22,7 +22,6 @@ def test_describe_names_where_each_log_lives():
 @pytest.mark.parametrize(
     "log_ref",
     [
-        LocalEventLog(Path("/tmp/app.log")),
         RemoteEventLog("onprem_ssh", "/logs/app-1"),
         HistoryServerApp("http://shs:18080", "app-1"),
         HistoryServerApp("http://shs:18080", "app-1", "2"),
@@ -35,5 +34,9 @@ def test_log_refs_round_trip_through_json(log_ref):
 def test_log_ref_serialization_rejects_anything_else():
     with pytest.raises(TypeError, match="Not an event log reference"):
         log_ref_to_dict(Path("/tmp/app.log"))
+    with pytest.raises(TypeError, match="Not an event log reference"):
+        log_ref_to_dict(LocalEventLog(Path("/tmp/app.log")))
     with pytest.raises(ValueError, match="Not a serialized event log reference"):
         log_ref_from_dict({"kind": "s3"})
+    with pytest.raises(ValueError, match="Not a serialized event log reference"):
+        log_ref_from_dict({"kind": "local", "path": "/tmp/app.log"})

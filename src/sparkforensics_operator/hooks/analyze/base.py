@@ -63,7 +63,7 @@ class DeferrableAnalyzeHook(AnalyzeHook):
         behind, so a retry or clear never runs two analyses at once."""
 
     @abstractmethod
-    def trigger_for(self, job: dict, log_offset: int = 0) -> Any:
+    def trigger_for(self, job: dict) -> Any:
         """The trigger to defer on until the job finishes."""
 
     @abstractmethod

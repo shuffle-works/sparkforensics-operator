@@ -59,9 +59,9 @@ EventLogRef = Union[LocalEventLog, RemoteEventLog, HistoryServerApp]
 def log_ref_to_dict(log_ref: EventLogRef) -> dict:
     """A JSON-native form of log_ref (str/None values only), for state that
     must cross a deferral: Airflow serializes a deferred task's resume
-    kwargs, and dataclasses and Paths don't survive that on every version."""
-    if isinstance(log_ref, LocalEventLog):
-        return {"kind": "local", "path": str(log_ref.path)}
+    kwargs, and dataclasses don't survive that on every version. Only the
+    references a deferrable backend reads (RemoteEventLog, HistoryServerApp)
+    are supported."""
     if isinstance(log_ref, RemoteEventLog):
         return {"kind": "remote", "ssh_conn_id": log_ref.ssh_conn_id, "path": log_ref.path}
     if isinstance(log_ref, HistoryServerApp):
@@ -77,8 +77,6 @@ def log_ref_to_dict(log_ref: EventLogRef) -> dict:
 def log_ref_from_dict(data: dict) -> EventLogRef:
     """Inverse of log_ref_to_dict."""
     kind = data.get("kind")
-    if kind == "local":
-        return LocalEventLog(Path(data["path"]))
     if kind == "remote":
         return RemoteEventLog(ssh_conn_id=data["ssh_conn_id"], path=data["path"])
     if kind == "history_server_app":
