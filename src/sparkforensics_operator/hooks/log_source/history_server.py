@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
 import requests
@@ -16,8 +16,9 @@ from .base import LogSourceHook
 class HistoryServerLogSourceHook(LogSourceHook):
     """Downloads a Spark job's event log from a Spark History Server's REST
     API: GET {base_url}/api/v1/applications/{app_id}[/{attempt_id}]/logs,
-    which always returns a zip (one entry for a single event-log file,
-    multiple events_<n>_... entries for a rolling log)."""
+    which always returns a zip (one bare entry for a single event-log file;
+    for a rolling log, the events_<n>_... segments under one
+    eventlog_v2_<appId>/ folder)."""
 
     def __init__(
         self,
@@ -84,16 +85,43 @@ class HistoryServerLogSourceHook(LogSourceHook):
                 zf.extractall(extract_dir)
             zip_path.unlink()
 
-            if len(names) == 1:
-                return extract_dir / names[0]
-            if any(_ROLLING_ENTRY_RE.match(Path(name).name) for name in names):
-                return extract_dir
-            raise AirflowException(
-                f"Unexpected Spark History Server log archive contents for app {self.app_id}: {names}"
-            )
+            # Zip directory entries ("folder/") carry no data; judge the layout
+            # by the file entries alone.
+            file_names = [name for name in names if not name.endswith("/")]
+            if len(file_names) == 1 and "/" not in file_names[0]:
+                return extract_dir / file_names[0]
+            return extract_dir / self._rolling_log_folder(file_names)
         except Exception:
             remove_if_owned(self._owned_temp_root)
             raise
+
+    def _rolling_log_folder(self, file_names: list[str]) -> str:
+        """Returns the one folder a rolling-log zip's entries live under.
+
+        Spark's RollingEventLogFilesFileReader.zipEventLogFiles writes every
+        entry as eventlog_v2_<appId>/<file>. sparkforensics-analyze only
+        checks the direct children of the path it's given for events_<n>_
+        files, so the caller must hand it that folder, not the extraction
+        root. Any other layout raises rather than guessing which folder holds
+        the log."""
+        parts = [PurePosixPath(name).parts for name in file_names]
+        folders = {entry_parts[0] for entry_parts in parts if len(entry_parts) == 2}
+        if len(folders) != 1 or any(len(entry_parts) != 2 for entry_parts in parts):
+            raise AirflowException(
+                f"Unexpected Spark History Server log archive contents for app {self.app_id}: "
+                "expected a single event-log file or a rolling log whose entries are all "
+                "directly under one eventlog_v2_<appId>/ folder, but the entries are not "
+                f"under exactly one folder: {file_names}"
+            )
+        (folder,) = folders
+        if folder in ("/", ".", "..") or not any(
+            _ROLLING_ENTRY_RE.match(entry_parts[1]) for entry_parts in parts
+        ):
+            raise AirflowException(
+                f"Unexpected Spark History Server log archive contents for app {self.app_id}: "
+                f"folder {folder!r} has no events_<n>_ rolling-log entries: {file_names}"
+            )
+        return folder
 
     def cleanup(self, path: Path) -> None:
         remove_if_owned(self._owned_temp_root)
