@@ -108,9 +108,11 @@ breach that raises still gets a notification out first.
   here is a wall-clock bound on the whole run, and the command runs under
   coreutils `timeout` so the remote process stops too (closing a non-PTY
   channel doesn't signal it). Exit 124 is that timeout; 126/127 from the
-  remote shell means the binary is missing or not executable there.
+  remote shell means the CLI or `timeout` is missing or not executable
+  there.
 - `report.py`, `Report`/`ThresholdResult` dataclasses, plus parsing of the
-  CLI's JSON `--out` file and its stderr threshold lines. No
+  CLI's JSON report (`--out` file or stdout) and its stderr threshold
+  lines. No
   threshold-evaluation *logic* lives here: sparkforensics's own CLI decides
   pass/violation/inconclusive, this module only parses what it printed, so
   it can never drift from what the CLI actually enforces.
