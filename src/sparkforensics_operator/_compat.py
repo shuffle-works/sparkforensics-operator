@@ -13,11 +13,14 @@ BaseOperatorLink must still be imported from airflow.models.baseoperator.
 """
 try:
     from airflow.sdk import BaseOperator, BaseOperatorLink
+
+    AIRFLOW_V3_PLUS = True
 except ImportError:  # Airflow 2.x has no airflow.sdk package
+    AIRFLOW_V3_PLUS = False
     from airflow.models.baseoperator import BaseOperator
     try:
         from airflow.models.baseoperatorlink import BaseOperatorLink  # Airflow >= 2.8
     except ImportError:  # Airflow 2.6/2.7
         from airflow.models.baseoperator import BaseOperatorLink
 
-__all__ = ["BaseOperator", "BaseOperatorLink"]
+__all__ = ["AIRFLOW_V3_PLUS", "BaseOperator", "BaseOperatorLink"]

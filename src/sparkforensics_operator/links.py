@@ -1,49 +1,43 @@
 """
-ReportLink reads the destination sinks.persist() wrote to (auto-pushed to
-XCom under "return_value" by execute()'s return value) and turns it into a
-clickable link on the task in the Airflow UI.
+ReportLink turns the report destination into a clickable link on the task
+in the Airflow UI. Where get_link runs differs between Airflow majors:
 
-Reading an XCom by ti_key from an operator link is NOT part of Airflow 3's
-declared airflow.sdk public interface, it reaches into airflow.models,
-which is internal and can change between Airflow releases without notice
-(see the plan's "Global constraints" section for the exact APIs this
-mirrors). get_link must therefore never raise: any failure degrades to an
-empty/disabled link rather than breaking the UI. The CI matrix (Task 17)
-is what actually catches this breaking on a future Airflow release.
+- Airflow 2.x: the webserver calls get_link on the deserialized operator
+  every time the task page renders. The link class must be registered
+  through a plugin (see plugin.py) or deserialization drops it. get_link
+  reads the destination sinks.persist() wrote to from XCom (auto-pushed
+  under "return_value" by execute()'s return value); the webserver has
+  metadata-database access, so XCom.get_value is the supported read.
+- Airflow 3.x: the task runner calls get_link once on the worker, after
+  execute(), with the rendered task, and stores the result in XCom under
+  self.xcom_key; the API server renders the link from that XCom. Workers
+  must not read the metadata database, so get_link returns the
+  destination execute() recorded on the operator after sinks.persist()
+  succeeded, or "" when the run failed before persisting a report. Errors
+  propagate to the task runner, which logs them in the task log.
 """
 import logging
 
-from sparkforensics_operator._compat import BaseOperatorLink
+from sparkforensics_operator._compat import AIRFLOW_V3_PLUS, BaseOperatorLink
 
 log = logging.getLogger(__name__)
 
 _XCOM_RETURN_KEY = "return_value"
 
 
-def _xcom_module():
-    import airflow.models.xcom as xcom
-
-    return xcom
-
-
 class ReportLink(BaseOperatorLink):
     name = "SparkForensics report"
 
     def get_link(self, operator, *, ti_key) -> str:
+        if AIRFLOW_V3_PLUS:
+            return operator.persisted_report_dest or ""
         try:
-            xcom = _xcom_module()
-            if hasattr(xcom, "XComModel"):  # Airflow 3.x
-                row = xcom.XComModel.get_many(
-                    key=_XCOM_RETURN_KEY,
-                    run_id=ti_key.run_id,
-                    dag_ids=ti_key.dag_id,
-                    task_ids=ti_key.task_id,
-                    map_indexes=ti_key.map_index,
-                ).first()
-                value = xcom.XComModel.deserialize_value(row) if row is not None else None
-            else:  # Airflow 2.x
-                value = xcom.XCom.get_value(ti_key=ti_key, key=_XCOM_RETURN_KEY)
-            return value or ""
+            from airflow.models.xcom import XCom
+
+            value = XCom.get_value(ti_key=ti_key, key=_XCOM_RETURN_KEY)
         except Exception:
-            log.warning("ReportLink could not read the report destination from XCom.", exc_info=True)
+            # Raising here would turn the webserver's extra-links request
+            # into an HTTP 500; an empty link renders as a disabled button.
+            log.exception("ReportLink could not read the report destination from XCom.")
             return ""
+        return value or ""
