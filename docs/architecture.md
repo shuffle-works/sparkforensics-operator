@@ -63,7 +63,10 @@ breach that raises still gets a notification out first.
   reads the `return_value` XCom the operator already pushed. On 3.x the
   task runner calls `get_link` on the worker after `execute()` and stores
   the result in XCom for the API server, so `get_link` returns the
-  rendered `report_dest` instead of reading the metadata database.
+  destination `execute()` recorded on the operator's
+  `persisted_report_dest` instead of reading the metadata database. That
+  is empty when the run failed before `sinks.persist()`, and set on a
+  threshold breach because the report is persisted before the raise.
 - `plugin.py`, `SparkForensicsPlugin`, registered through the
   `airflow.plugins` entry point in `pyproject.toml`. Airflow 2.x drops any
   operator link whose class is not registered when it deserializes a DAG,

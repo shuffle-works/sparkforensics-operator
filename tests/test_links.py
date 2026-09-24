@@ -4,7 +4,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from sparkforensics_operator import links
+from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.links import ReportLink
+from sparkforensics_operator.operator import SparkForensicsOperator
+from sparkforensics_operator.report import Report, ThresholdResult
 
 
 @pytest.fixture
@@ -54,19 +57,66 @@ def test_get_link_logs_the_error_and_returns_empty_string_when_xcom_read_fails_o
     assert "db unavailable" in str(record.exc_info[1])
 
 
-def test_get_link_returns_the_rendered_report_dest_without_reading_xcom_on_airflow_3(airflow_3, fake_xcom):
-    operator = MagicMock(report_dest="s3://reports/run-1/report.json")
+def _operator(tmp_path, report, **kwargs):
+    log_source = MagicMock()
+    log_source.fetch.return_value = tmp_path / "app.log"
+    backend = MagicMock()
+    backend.analyze.return_value = report
+    return SparkForensicsOperator(
+        task_id="run_forensics", log_source=log_source, backend=backend,
+        report_dest=str(tmp_path / "report.json"), **kwargs,
+    )
 
-    result = ReportLink().get_link(operator, ti_key=MagicMock())
 
-    assert result == "s3://reports/run-1/report.json"
+def _report(*threshold_results):
+    return Report(
+        schema_version=3, summary={"impactBandCounts": {"critical": 0, "warning": 0, "info": 0}},
+        findings=[], recommendations=[], clean_checks=[], threshold_results=list(threshold_results),
+        exit_code=0,
+    )
+
+
+def test_get_link_returns_the_persisted_destination_after_a_successful_run_on_airflow_3(
+    airflow_3, fake_xcom, tmp_path
+):
+    op = _operator(tmp_path, _report())
+    destination = op.execute({})
+
+    result = ReportLink().get_link(op, ti_key=MagicMock())
+
+    assert result == destination == str(tmp_path / "report.json")
     fake_xcom.get_value.assert_not_called()
+
+
+def test_get_link_returns_the_persisted_destination_after_a_threshold_breach_on_airflow_3(
+    airflow_3, tmp_path
+):
+    op = _operator(
+        tmp_path, _report(ThresholdResult("max-runtime", "violation", "too slow")),
+        max_runtime_ms=1000,
+    )
+    with pytest.raises(ThresholdBreached):
+        op.execute({})
+
+    assert ReportLink().get_link(op, ti_key=MagicMock()) == str(tmp_path / "report.json")
+
+
+def test_get_link_returns_empty_string_when_the_run_failed_before_persisting_on_airflow_3(
+    airflow_3, tmp_path
+):
+    op = _operator(tmp_path, _report())
+    op.backend.analyze.side_effect = RuntimeError("analyze failed")
+    with pytest.raises(RuntimeError):
+        op.execute({})
+
+    assert ReportLink().get_link(op, ti_key=MagicMock()) == ""
+    assert not (tmp_path / "report.json").exists()
 
 
 def test_get_link_propagates_errors_to_the_task_runner_on_airflow_3(airflow_3):
     # Airflow 3's task runner wraps get_link in its own try/except and logs
     # the exception in the task log, so ReportLink must not hide it.
-    operator = object()  # no report_dest attribute
+    operator = object()  # no persisted_report_dest attribute
 
     with pytest.raises(AttributeError):
         ReportLink().get_link(operator, ti_key=MagicMock())

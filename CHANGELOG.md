@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ReportLink` is registered through an `airflow.plugins` entry point, so
   it survives DAG serialization instead of being dropped as "not
   registered".
-- On Airflow 3.x, `ReportLink` returns the rendered `report_dest` when the
-  task runner computes the link on the worker, instead of querying the
+- On Airflow 3.x, `ReportLink` returns the destination the run persisted
+  its report to (recorded by `execute()` on the operator, including on a
+  threshold breach, and empty when the run failed before persisting) when
+  the task runner computes the link on the worker, instead of querying the
   metadata database through `airflow.models.xcom.XComModel`. A failed XCom
   read on Airflow 2.x is now logged as an error with its traceback.
 

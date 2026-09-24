@@ -128,8 +128,12 @@ publishes them.
   for a "ReportLink could not read the report destination from XCom"
   error and its traceback. The report itself was still persisted and is
   still in XCom under `return_value`. On Airflow 3.x the worker computes
-  the link after the task runs; a failure there shows in the task log as
-  "Failed to push an xcom for task operator extra link".
+  the link after the task runs, from the destination the run actually
+  persisted. The link is blank by design when the task failed before
+  persisting a report (for example the event log fetch or the analysis
+  raised); check the task log for that error. A failure computing the
+  link itself shows in the task log as "Failed to push an xcom for task
+  operator extra link".
 - **The "SparkForensics report" link is missing from the task page
   entirely (Airflow 2.x)**, the webserver renders from the serialized DAG,
   and Airflow drops `ReportLink` during deserialization unless the

@@ -11,9 +11,10 @@ in the Airflow UI. Where get_link runs differs between Airflow majors:
 - Airflow 3.x: the task runner calls get_link once on the worker, after
   execute(), with the rendered task, and stores the result in XCom under
   self.xcom_key; the API server renders the link from that XCom. Workers
-  must not read the metadata database, so get_link returns the rendered
-  report_dest instead of reading XCom. Errors propagate to the task
-  runner, which logs them in the task log.
+  must not read the metadata database, so get_link returns the
+  destination execute() recorded on the operator after sinks.persist()
+  succeeded, or "" when the run failed before persisting a report. Errors
+  propagate to the task runner, which logs them in the task log.
 """
 import logging
 
@@ -29,7 +30,7 @@ class ReportLink(BaseOperatorLink):
 
     def get_link(self, operator, *, ti_key) -> str:
         if AIRFLOW_V3_PLUS:
-            return operator.report_dest or ""
+            return operator.persisted_report_dest or ""
         try:
             from airflow.models.xcom import XCom
 

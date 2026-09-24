@@ -22,6 +22,6 @@
 - **Report destination**, where `sinks.persist()` wrote the report JSON
   (a local path, `file://` path, or `s3://` URI); this is what's returned
   from `execute()`/the callback, auto-pushed to XCom, and shown by
-  `ReportLink` on Airflow 2.x. On Airflow 3.x `ReportLink` shows the
-  rendered `report_dest` instead, which names the same location (a
-  `file://` URI keeps its scheme there).
+  `ReportLink`. On Airflow 3.x `ReportLink` reads it from the operator's
+  `persisted_report_dest` instead of XCom; it stays empty when the run
+  failed before a report was persisted.

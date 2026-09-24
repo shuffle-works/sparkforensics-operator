@@ -148,16 +148,24 @@ class SparkForensicsOperator(BaseOperator):
         self.on_threshold_breach = on_threshold_breach
         self.notifier = notifier
         self.aws_conn_id = aws_conn_id
+        # Where this run's report was persisted; read by ReportLink on Airflow 3.
+        self.persisted_report_dest: str | None = None
 
     def execute(self, context: dict) -> str:
-        return run_spark_forensics(
-            context,
-            log_source=self.log_source,
-            backend=self.backend,
-            report_dest=self.report_dest,
-            thresholds=self.thresholds,
-            on_threshold_breach=self.on_threshold_breach,
-            notifier=self.notifier,
-            log=self.log,
-            aws_conn_id=self.aws_conn_id,
-        )
+        try:
+            destination = run_spark_forensics(
+                context,
+                log_source=self.log_source,
+                backend=self.backend,
+                report_dest=self.report_dest,
+                thresholds=self.thresholds,
+                on_threshold_breach=self.on_threshold_breach,
+                notifier=self.notifier,
+                log=self.log,
+                aws_conn_id=self.aws_conn_id,
+            )
+        except ThresholdBreached as breach:
+            self.persisted_report_dest = breach.destination
+            raise
+        self.persisted_report_dest = destination
+        return destination
