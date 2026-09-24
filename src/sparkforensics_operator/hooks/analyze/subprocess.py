@@ -14,8 +14,9 @@ _USABLE_OUT_FILE_EXIT_CODES = {0, 1, 3}
 
 class SubprocessAnalyzeHook(AnalyzeHook):
     """Shells out to `sparkforensics-analyze <log_path> --format json --out
-    <tmpfile> [threshold flags]`. Requires Node.js 18+ and the sparkforensics-cli npm package
-    (`npm install -g sparkforensics-cli`) installed on the worker, with sparkforensics-analyze resolvable on
+    <tmpfile> [threshold flags]`. Requires Node.js 18+ and the
+    sparkforensics-cli npm package (`npm install -g sparkforensics-cli`)
+    installed on the worker, with sparkforensics-analyze resolvable on
     PATH (or pass analyze_bin=<full path>)."""
 
     def __init__(self, analyze_bin: str = "sparkforensics-analyze", timeout: int = 900):
