@@ -67,9 +67,13 @@ publishes them.
   read/connect stalled (a slow-trickling connection). Raise `timeout` for
   large event logs, or check network throughput to the History Server.
 - **Task fails with "Unexpected Spark History Server log archive contents
-  for app {app_id}"**, the History Server's log zip had neither a single
-  entry nor rolling-log (`events_<n>_...`) entries, an archive layout
-  `HistoryServerLogSourceHook` doesn't recognize. Raised directly during
+  for app {app_id}"**, the History Server's log zip was neither a single
+  bare event-log file nor a rolling log whose `events_<n>_...` entries all
+  sit directly under one `eventlog_v2_<appId>/` folder (the layout Spark's
+  History Server writes). "not under exactly one folder" means the entries
+  are flat, nested deeper, or split across folders (e.g. several attempts:
+  set `attempt_id`); "has no events_<n>_ rolling-log entries" means the one
+  folder holds no rolling segments. Raised directly during
   `fetch()`, before `sparkforensics-analyze` ever runs; check the exception
   message's entry-name list against what the History Server actually
   returned.
