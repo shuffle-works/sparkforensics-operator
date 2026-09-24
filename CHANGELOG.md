@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Install instructions and the binary-not-found error now name the
+  `sparkforensics-cli` npm package and require Node.js 18+.
+- `__version__` is read from the installed package metadata instead of a
+  hardcoded string that had drifted to 0.1.0.
+- README links are absolute, so they work on the PyPI project page.
 - The "SparkForensics report" link now shows in the Airflow 2.x UI.
   `ReportLink` is registered through an `airflow.plugins` entry point, so
   it survives DAG serialization instead of being dropped as "not

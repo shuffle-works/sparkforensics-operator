@@ -14,8 +14,8 @@ _USABLE_OUT_FILE_EXIT_CODES = {0, 1, 3}
 
 class SubprocessAnalyzeHook(AnalyzeHook):
     """Shells out to `sparkforensics-analyze <log_path> --format json --out
-    <tmpfile> [threshold flags]`. Requires Node.js (engines
-    '>=22.18.0 <23.0.0 || >=23.6.0') and the sparkforensics npm package
+    <tmpfile> [threshold flags]`. Requires Node.js 18+ and the
+    sparkforensics-cli npm package (`npm install -g sparkforensics-cli`)
     installed on the worker, with sparkforensics-analyze resolvable on
     PATH (or pass analyze_bin=<full path>)."""
 
@@ -45,7 +45,7 @@ class SubprocessAnalyzeHook(AnalyzeHook):
             except FileNotFoundError as e:
                 raise AirflowException(
                     f"sparkforensics-analyze binary not found: {self.analyze_bin!r}. "
-                    "Install the sparkforensics npm package on this worker, or pass "
+                    "Install it with `npm install -g sparkforensics-cli` on this worker, or pass "
                     "analyze_bin=<full path to sparkforensics-analyze>."
                 ) from e
             except subprocess.TimeoutExpired as e:

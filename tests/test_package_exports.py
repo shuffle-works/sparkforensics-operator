@@ -28,3 +28,9 @@ def test_top_level_package_re_exports_the_public_surface():
         "SubprocessAnalyzeHook",
         "Notifier",
     }
+
+
+def test_version_matches_installed_distribution():
+    from importlib.metadata import version
+
+    assert pkg.__version__ == version("sparkforensics-operator")
