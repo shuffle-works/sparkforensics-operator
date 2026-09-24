@@ -16,12 +16,45 @@ SparkForensicsOperator(
     on_threshold_breach: str = "fail",        # "fail" | "warn" | "ignore"
     notifier: Notifier | None = None,
     aws_conn_id: str | None = None,           # non-default Airflow AWS connection for s3:// report_dest
+    deferrable: bool | None = None,           # see "Deferrable execution" below
     **base_operator_kwargs,
 )
 ```
 
 Returns (and auto-pushes to XCom as `return_value`) the `report_dest`
 string it actually persisted to.
+
+### Deferrable execution
+
+`deferrable=True` runs the analysis as a detached job on the SSH host and
+defers the task until it finishes, so no worker slot is held while the CLI
+runs. It needs a backend that can run detached, a `DeferrableAnalyzeHook`:
+`SSHAnalyzeHook` is the only one shipped. Any other backend with
+`deferrable=True` raises `ValueError` when the DAG is parsed.
+
+Left at `None`, `deferrable` follows Airflow's `[operators]
+default_deferrable` setting, but only for a backend that can defer: with
+`default_deferrable = True`, a `SubprocessAnalyzeHook` task still runs
+synchronously instead of failing. `deferrable=False` always runs
+synchronously.
+
+A deferred run produces the same persisted report, threshold results,
+`ReportLink`, XCom and notifier calls as a synchronous one, and raises the
+same errors for the same outcome (exit codes, missing binary, timeout,
+unparseable report, SSH failures). The deferral itself needs a running
+triggerer; see the runbook's "Deferred runs" section for what else the
+deployment needs and how retries, timeouts and clears behave.
+
+```python
+SparkForensicsOperator(
+    task_id="forensics",
+    log_source=RemotePathLogSourceHook(ssh_conn_id="onprem_ssh", path_template="/spark-events/{run_id}"),
+    backend=SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=1800),
+    report_dest="s3://reports/{{ run_id }}/app.json",
+    max_spill_gb=10,
+    deferrable=True,
+)
+```
 
 All public classes are importable from the top-level package, e.g.
 `from sparkforensics_operator import SparkForensicsOperator, ThresholdBreached, LogSourceHook, AnalyzeHook, HistoryServerLogSourceHook`.
@@ -34,7 +67,8 @@ would only re-run the same fetch+analyze cycle to reach the same result.
 ## `spark_forensics_callback`
 
 Same keyword arguments as `SparkForensicsOperator` (minus `task_id` and any
-`BaseOperator` kwargs). Returns a callable to attach as
+`BaseOperator` kwargs). A callback cannot defer: `deferrable=True` raises
+`ValueError`. Returns a callable to attach as
 `on_success_callback` on the upstream Spark task:
 
 ```python
@@ -100,7 +134,14 @@ package:
 
 `LogSourceHook.cleanup(log_ref)` receives the same reference after
 analysis. A custom `LogSourceHook` implements `resolve()`; a custom
-`AnalyzeHook` sets `supported_log_refs` and implements `_analyze()`.
+`AnalyzeHook` sets `supported_log_refs` and implements `_analyze()`. In a
+deferred run, `cleanup()` is called on the fresh operator instance that
+resumes the task, so it can't rely on state `resolve()` left on the hook.
+
+`log_ref_to_dict(log_ref)` and `log_ref_from_dict(data)` (in
+`sparkforensics_operator.log_ref`) convert a reference to and from plain
+JSON values; the deferrable mode uses them to carry it across the
+deferral.
 
 Which log source works with which backend:
 
@@ -149,7 +190,7 @@ An unsupported pairing raises `AirflowException` ("... cannot analyze
   `LogSourceHook`, e.g.
   `lambda base_url: HistoryServerLogSourceHook(base_url=base_url, app_id=...)`.
   Requires the `ssh` extra
-  (`apache-airflow-providers-ssh>=5.0`, `apache-airflow-providers-sftp>=4.0`);
+  (`apache-airflow-providers-ssh>=6.0.1`, `apache-airflow-providers-sftp>=4.0`);
   note the `ssh` extra's own effective floor is `apache-airflow>=2.11`
   (transitively, via the ssh provider), higher than this package's overall
   `apache-airflow>=2.6` floor.
@@ -180,7 +221,7 @@ aren't) auto-cleaned.
 - `SubprocessAnalyzeHook(analyze_bin="sparkforensics-analyze", timeout=900)`,
   runs the CLI on the Airflow worker. Reads `LocalEventLog` and
   `HistoryServerApp`.
-- `SSHAnalyzeHook(ssh_conn_id, analyze_bin="sparkforensics-analyze", timeout=900)`,
+- `SSHAnalyzeHook(ssh_conn_id, analyze_bin="sparkforensics-analyze", timeout=900, remote_base_dir=None, poll_interval=5)`,
   runs the CLI on the host behind `ssh_conn_id` (the same Airflow SSH
   connection `SSHOperator` uses) and reads the JSON report from its stdout.
   Reads `RemoteEventLog` on the same `ssh_conn_id` and `HistoryServerApp`.
@@ -189,10 +230,35 @@ aren't) auto-cleaned.
   shell-quoted. Requires the `ssh` extra on the worker, and coreutils
   `timeout`, Node.js 18+ and `sparkforensics-cli` on the SSH host; the
   worker needs none of them.
+  With `SparkForensicsOperator(deferrable=True)`, the CLI runs as a
+  detached job instead, writing its report to a file under
+  `remote_base_dir/<task instance>/<job>/`, and the triggerer checks on it
+  every `poll_interval` seconds. `remote_base_dir` defaults to
+  `$HOME/.sparkforensics/jobs` of the SSH user; set it to an absolute path
+  without `$`, `` ` ``, `"`, `\`, `..` or control characters (a
+  `ValueError` otherwise). The deferred mode also needs bash on the SSH
+  host, and uses `setsid` and `pkill` there when present to stop a job.
 
 Both build the same CLI arguments, parse the same report and threshold
 output, and treat exit codes the same way: 0, 1 and 3 produce a `Report`,
 2 and anything else raise `AirflowException` with the CLI's stderr.
+
+A custom backend that can run detached subclasses `DeferrableAnalyzeHook`
+(an `AnalyzeHook`, exported from the top-level package) and implements, on
+top of `_analyze()`:
+
+- `submit(log_ref, thresholds, context) -> dict`, start the job and return
+  it as JSON-native values; first stop and remove anything an earlier try
+  of the same task instance left behind.
+- `trigger_for(job, log_offset=0)`, the trigger to defer on.
+- `defer_timeout(job) -> timedelta`, how long to wait before giving up.
+- `collect(job, event, log_ref, thresholds) -> Report`, read the result
+  back and clean up, raising the errors `analyze()` would.
+- `abandon(context)`, stop and remove the task instance's job after a
+  failed or timed-out deferral.
+
+The job dict is everything that crosses the deferral: `collect()` runs on
+a different hook instance, rebuilt from the DAG file.
 
 ## Thresholds
 

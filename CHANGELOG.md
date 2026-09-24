@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of downloading it to the worker first. Works with both backends.
 - Event log references (`LocalEventLog`, `RemoteEventLog`,
   `HistoryServerApp`), exported from the top-level package.
+- Deferrable remote analysis: `SparkForensicsOperator(deferrable=True)`
+  with `SSHAnalyzeHook` submits the CLI as a detached job on the SSH host
+  through the SSH provider's remote-job wrapper, defers on its
+  `SSHRemoteJobTrigger`, and resumes to read the report file back, so no
+  worker slot is held while the analysis runs. Deferred and synchronous
+  runs persist the same report and raise the same errors. `deferrable`
+  left unset follows `[operators] default_deferrable` for backends that
+  can defer. Needs a triggerer with the `ssh` extra installed.
+- `SSHAnalyzeHook(remote_base_dir=..., poll_interval=...)` for the
+  deferrable mode's job directory and trigger poll interval.
+- `DeferrableAnalyzeHook`, the interface a backend implements to support
+  `deferrable=True`, exported from the top-level package.
 
 ### Changed
 
@@ -35,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SSHTunneledLogSourceHook` rejects a wrapped hook that returns anything
   but a `LocalEventLog`, since the tunnel is closed by the time the
   reference would be used.
+- Breaking: the `ssh` extra requires `apache-airflow-providers-ssh>=6.0.1`
+  (was `>=5.0`), the first release whose remote-job helpers quote paths.
+- `spark_forensics_callback(deferrable=True)` raises `ValueError`, since a
+  callback has no task to defer.
 - The exit-2 error now also names a failed History Server fetch as a
   cause, and a report that isn't valid JSON raises `AirflowException`
   instead of a bare `JSONDecodeError`.

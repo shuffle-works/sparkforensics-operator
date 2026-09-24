@@ -28,7 +28,9 @@ runs as part of the DAG, right where the Spark task just ran.
 - Run the analysis on the Airflow worker, or on an SSH host that already
   sees the logs, such as the node running the Spark History Server. With
   remote analysis the log never crosses the network, and the workers
-  (including managed ones like MWAA) don't need Node.js.
+  (including managed ones like MWAA) don't need Node.js. With
+  `deferrable=True` the task also gives up its worker slot while the
+  remote analysis runs, and a triggerer waits on it instead.
 - Budget thresholds mirror `sparkforensics-analyze`'s own CLI flags (max
   runtime, spill, skew, failed-task rate, min efficiency); only the ones
   you configure are enforced, and a breach raises `ThresholdBreached`
@@ -40,8 +42,8 @@ runs as part of the DAG, right where the Spark task just ran.
   ZenDuty, whatever you use) gets a best-effort pass/fail summary; a
   delivery failure never fails the task itself.
 - Tested against both Airflow 2.6+ and Airflow 3.0+ (CI matrix, Python
-  3.9-3.12). 153 tests, 97% coverage, no live Spark/Airflow/Node needed to
-  run them: everything is mocked.
+  3.9-3.12). No live Spark, Airflow or Node is needed to run the tests:
+  everything but the shell on the stand-in SSH host is mocked.
 
 ## Quick start
 
@@ -107,6 +109,12 @@ check_spark_job = SparkForensicsOperator(
 
 `RemotePathLogSourceHook(ssh_conn_id="shs_node", path_template="/spark-logs/{run_id}")`
 points `SSHAnalyzeHook` at an event log path on that host instead.
+
+Add `deferrable=True` to that operator to release the worker slot while
+the analysis runs: the CLI runs as a detached job on the SSH host and the
+triggerer polls it, which needs a running triggerer with
+`sparkforensics-operator[ssh]` installed. See
+[Deferrable execution](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/api-reference.md#deferrable-execution).
 
 Whichever host runs the analysis (the worker for `SubprocessAnalyzeHook`,
 the SSH host for `SSHAnalyzeHook`) needs Node.js 18+ and the

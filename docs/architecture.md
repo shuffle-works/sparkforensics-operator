@@ -46,6 +46,8 @@ breach that raises still gets a notification out first.
 - `log_ref.py`, the `EventLogRef` kinds (`LocalEventLog`,
   `RemoteEventLog`, `HistoryServerApp`): frozen dataclasses saying where a
   log is, the only thing a log source and a backend share.
+  `log_ref_to_dict`/`log_ref_from_dict` turn one into plain JSON values
+  and back, for the deferral's resume kwargs.
 - `hooks/log_source/{base,history_server,filesystem,xcom}.py`, fetch the
   event log to a local path and return it as a `LocalEventLog`.
   `LogSourceHook.cleanup(log_ref)` (no-op by
@@ -88,8 +90,11 @@ breach that raises still gets a notification out first.
   bookkeeping (create if `dest_dir` is unset, `rmtree` on cleanup/error if
   owned) shared by `sftp.py`/`history_server.py`.
 - `hooks/analyze/base.py`, `AnalyzeHook`: `analyze(log_ref, thresholds)`
-  checks the reference against `supported_log_refs`, then calls the
-  backend's `_analyze()`.
+  checks the reference against `supported_log_refs` (`check_log_ref()`),
+  then calls the backend's `_analyze()`. `DeferrableAnalyzeHook` adds the
+  detached-job interface the deferrable mode drives (`submit`,
+  `trigger_for`, `defer_timeout`, `collect`, `abandon`); see "Deferrable
+  execution" below.
 - `hooks/analyze/_cli.py`, the CLI contract every backend shares: argument
   building for each reference kind (a positional path, or
   `--shs-base-url`/`--app-id`/`--attempt-id`), threshold flags, exit-code
@@ -109,7 +114,15 @@ breach that raises still gets a notification out first.
   coreutils `timeout` so the remote process stops too (closing a non-PTY
   channel doesn't signal it). Exit 124 is that timeout; 126/127 from the
   remote shell means the CLI or `timeout` is missing or not executable
-  there.
+  there. One function, `_report_from_run`, maps an exit code, report text
+  and stderr to a `Report` or an error for both the synchronous and the
+  deferred path, so the two can't drift apart.
+- `hooks/analyze/_remote_job.py`, the shell commands of the deferred
+  path: the task-instance directory naming, the sweep that stops and
+  removes an earlier try's job, the CLI command with `--out` and stderr
+  redirected into the job directory, and thin wrappers over the SSH
+  provider's `RemoteJobPaths`, `build_posix_wrapper_command` and
+  `build_posix_cleanup_command`.
 - `report.py`, `Report`/`ThresholdResult` dataclasses, plus parsing of the
   CLI's JSON report (`--out` file or stdout) and its stderr threshold
   lines. No
@@ -136,9 +149,74 @@ breach that raises still gets a notification out first.
   and the webserver renders from the serialized DAG, so without it the
   link never shows. Airflow 3.x needs no registration.
 - `operator.py`, `SparkForensicsOperator` + the shared
-  `run_spark_forensics` core.
+  `run_spark_forensics` core, whose second half, `handle_report()`
+  (persist, warn, notify, apply `on_threshold_breach`), is also what a
+  deferred run's `execute_complete()` calls.
 - `callback.py`, `spark_forensics_callback(**kwargs)`, an
   `on_success_callback` factory sharing the same core.
+
+## Deferrable execution
+
+`SparkForensicsOperator(deferrable=True)` with `SSHAnalyzeHook` frees the
+worker slot while the CLI runs on the SSH host:
+
+```
+worker:     execute()  resolve log_ref -> backend.submit() -> defer(trigger_for(job), kwargs)
+triggerer:  SSHRemoteJobTrigger polls exit_code, streams stdout.log
+worker:     execute_complete(event, job, log_ref, report_dest, thresholds)
+              -> backend.collect()  read stderr + report.json, remove the job dir
+              -> handle_report()    same persist/notify/threshold code as a sync run
+```
+
+Composition, not subclassing `SSHRemoteJobOperator`. The operator stays a
+plain `BaseOperator` whose backend is pluggable; `SSHAnalyzeHook` uses the
+SSH provider's building blocks (`RemoteJobPaths`, `generate_job_id`,
+`build_posix_wrapper_command`, `build_posix_cleanup_command` and
+`SSHRemoteJobTrigger`) behind the `DeferrableAnalyzeHook` interface.
+Subclassing would have made the SSH provider an import-time dependency of
+the operator, breaking the non-ssh Airflow 2.6 floor. It would also have
+tied the operator to one backend and inherited an `execute_complete()`
+that removes the job directory before anything reads it and fails every
+non-zero exit, where exits 1 and 3 are usable reports here. No trigger of
+our own is written: the provider's is the one the triggerer runs.
+
+State across the deferral. Airflow resumes on a fresh operator rebuilt
+from the DAG file, so nothing set on the instance before `defer()`
+survives. Everything `execute_complete()` needs travels in the resume
+kwargs, as JSON-native values that Airflow 2's `BaseSerialization` and
+Airflow 3's serde both round-trip: the job dict (connection id, CLI
+binary, `timeout`, every remote path), the log reference as a dict, the
+rendered `report_dest` and the thresholds the job was submitted with. The
+notifier and `on_threshold_breach` come from the fresh instance.
+
+The job on the host. The CLI runs under the same coreutils `timeout` as
+the synchronous path, writes its report to `--out` inside the job
+directory and its stderr (the threshold lines) to a file next to it. The
+provider's wrapper merges stdout and stderr into the log the trigger
+streams, so the report is never parsed from that log. Each task instance
+(dag, task, run, map index) gets its own directory under
+`remote_base_dir`, and every `submit()` first stops whatever an earlier
+try left running there and removes it. That is what keeps a retry or a
+clear from running two analyses at once. Stopping a job signals its whole
+session (`pkill -s`): the provider's own group kill misses the CLI,
+because coreutils `timeout` moves itself into a process group of its own.
+A pid is only signalled while its command line still names its job
+directory, so a pid reused after a reboot is left alone.
+
+Failure paths. A trigger error event makes `collect()` stop and remove
+the job before raising. A deferral that times out (the backend's
+`defer_timeout`, `timeout` plus 120 seconds, or the task's
+`execution_timeout`) resumes with `next_method="__fail__"`, which never
+reaches `execute_complete()`; `resume_execution()` is overridden to call
+`backend.abandon(context)` first. The runbook's "Deferred runs" section
+lists the behaviour for each case.
+
+Why `apache-airflow-providers-ssh>=6.0.1`. Releases before it put the
+job paths into the wrapper unquoted and validate cleanup only against the
+default base directory; before 5.0.4 they also record the launcher's pid,
+so a kill misses the command itself. 6.0.1 still splices paths into a double-quoted string inside
+the job script, so `remote_base_dir` and the resolved `$HOME` are
+rejected if they contain `$`, `` ` ``, `"`, `\` or control characters.
 
 ## Deferred
 
@@ -158,10 +236,3 @@ itself, like the CLI's `--shs-base-url`), using an MCP Python client (e.g.
 then `diagnoseRun` + `evaluateBudgetsForRun`. `SSHAnalyzeHook` already
 covers the main reason to want it, running the analysis off the worker next
 to the logs.
-
-**Deferrable execution.** A slow analyze run blocks a worker slot for the
-full analyze duration, whether it runs on the worker (`subprocess`), on an
-SSH host (`SSHAnalyzeHook` holds the SSH session open while it waits), or
-behind a future `http` backend.
-See the design spec's own "Future: deferrable execution" section for the
-three options and why none is needed yet.
