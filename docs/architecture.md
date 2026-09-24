@@ -1,8 +1,9 @@
 # Architecture
 
-One operator, pluggable strategy Hooks (not config-driven branching): three
+One operator, pluggable strategy Hooks (not config-driven branching): five
 `LogSourceHook` implementations (Spark History Server REST API, filesystem/
-mounted-HDFS path pattern, XCom) and one `AnalyzeHook` implementation
+mounted-HDFS path pattern, XCom, SFTP, and History Server through an SSH
+tunnel) and one `AnalyzeHook` implementation
 (subprocess against the `sparkforensics-analyze` CLI). Both trigger shapes (the standalone `SparkForensicsOperator` and the `spark_forensics_callback`
 `on_success_callback` factory) converge on one function,
 `operator.run_spark_forensics(context, ...)`, so there is exactly one
