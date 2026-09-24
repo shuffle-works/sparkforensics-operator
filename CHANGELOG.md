@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Install instructions and the binary-not-found error now name the
+  `sparkforensics-cli` npm package and require Node.js 18+.
+- `__version__` is read from the installed package metadata instead of a
+  hardcoded string that had drifted to 0.1.0.
+- README links are absolute, so they work on the PyPI project page.
+
 ## [0.1.1] - 2026-09-20
 
 No functional changes. Republished after a repository infrastructure

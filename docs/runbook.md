@@ -2,9 +2,10 @@
 
 ## Prerequisites on the worker
 
-- Node.js matching `sparkforensics`'s `engines` field:
-  `>=22.18.0 <23.0.0 || >=23.6.0`.
-- The `sparkforensics` npm package installed, with `sparkforensics-analyze`
+- Node.js 18 or newer (the `sparkforensics-cli` package declares
+  `node >=18`).
+- The `sparkforensics-cli` npm package installed
+  (`npm install -g sparkforensics-cli`), with `sparkforensics-analyze`
   resolvable on `PATH`, or pass `SubprocessAnalyzeHook(analyze_bin=<full path>)`.
 - `pip install sparkforensics-operator[s3]` if `report_dest` is `s3://...`.
   Uses the `aws_default` Airflow connection unless `aws_conn_id` is set.

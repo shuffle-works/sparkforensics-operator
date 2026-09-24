@@ -6,7 +6,7 @@ notifies on the result.
 
 ## Stack
 Python 3.9+, apache-airflow 2.6+ or 3.0+, pytest. Runtime dependency: Node.js
-(engines `>=22.18.0 <23.0.0 || >=23.6.0`) + the `sparkforensics` npm package
+18+ + the `sparkforensics-cli` npm package (`npm install -g sparkforensics-cli`)
 on the worker, for the `sparkforensics-analyze` CLI the subprocess backend
 shells out to.
 
@@ -18,9 +18,5 @@ shells out to.
   specific Airflow major version.
 
 ## Design docs
-- `docs/superpowers/specs/2026-09-05-sparkforensics-operator-design.md`, the original design spec.
-- `docs/superpowers/plans/2026-09-05-sparkforensics-operator.md`, the
-  implementation plan, including every upstream sparkforensics CLI/API
-  fact and every Airflow-2-vs-3 compat fact this codebase depends on.
 - `docs/architecture.md`, `docs/api-reference.md`, `docs/runbook.md`,
   `docs/glossary.md`, see below.

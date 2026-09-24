@@ -1,3 +1,5 @@
+from importlib.metadata import version
+
 from sparkforensics_operator.callback import spark_forensics_callback
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.base import AnalyzeHook
@@ -11,7 +13,7 @@ from sparkforensics_operator.hooks.log_source.xcom import XComLogSourceHook
 from sparkforensics_operator.notify import Notifier
 from sparkforensics_operator.operator import SparkForensicsOperator
 
-__version__ = "0.1.0"
+__version__ = version("sparkforensics-operator")
 
 __all__ = [
     "SparkForensicsOperator",

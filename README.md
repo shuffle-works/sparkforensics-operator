@@ -1,7 +1,7 @@
 # sparkforensics-operator
 
 [![CI](https://github.com/shuffle-works/sparkforensics-operator/actions/workflows/ci.yml/badge.svg)](https://github.com/shuffle-works/sparkforensics-operator/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/shuffle-works/sparkforensics-operator/blob/main/LICENSE)
 
 An Airflow operator that runs [sparkforensics](https://github.com/shuffle-works/sparkforensics)
 analysis on a Spark job's event log right after it finishes, then acts on
@@ -81,10 +81,10 @@ run_spark_job = SparkSubmitOperator(
 )
 ```
 
-The worker needs Node.js (`>=22.18.0 <23.0.0 || >=23.6.0`) and the
-`sparkforensics` npm package installed, so `sparkforensics-analyze` is
+The worker needs Node.js 18+ and the `sparkforensics-cli` npm package
+(`npm install -g sparkforensics-cli`), so `sparkforensics-analyze` is
 resolvable on `PATH`. Add the `s3` extra if `report_dest` is `s3://...`.
-Full details in [`docs/runbook.md`](docs/runbook.md).
+Full details in [`docs/runbook.md`](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/runbook.md).
 
 ## Development
 
@@ -102,12 +102,12 @@ tox -e py311-airflow3
 
 ## Learn more
 
-- [Architecture](docs/architecture.md), components and design decisions
-- [API reference](docs/api-reference.md), the full operator/hook/threshold
+- [Architecture](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/architecture.md), components and design decisions
+- [API reference](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/api-reference.md), the full operator/hook/threshold
   surface
-- [Runbook](docs/runbook.md), worker prerequisites and troubleshooting
-- [Glossary](docs/glossary.md), domain terms
+- [Runbook](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/runbook.md), worker prerequisites and troubleshooting
+- [Glossary](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/glossary.md), domain terms
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/shuffle-works/sparkforensics-operator/blob/main/LICENSE)
