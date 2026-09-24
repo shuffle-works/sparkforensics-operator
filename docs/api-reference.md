@@ -83,6 +83,40 @@ an operator's own return value would use). It's discoverable via
 `ti.xcom_pull(task_ids="run_spark_job")`, even though no `ReportLink` is
 attached to that task by default.
 
+## Event log references
+
+`LogSourceHook.resolve(context)` returns an `EventLogRef` saying where the
+log is, and `AnalyzeHook.analyze(log_ref, thresholds)` reads it from there.
+All three kinds are frozen dataclasses importable from the top-level
+package:
+
+- `LocalEventLog(path: Path)`, a file or rolling-log directory on the
+  Airflow worker.
+- `RemoteEventLog(ssh_conn_id: str, path: str)`, a file or rolling-log
+  directory on the host behind `ssh_conn_id`.
+- `HistoryServerApp(base_url: str, app_id: str, attempt_id: str | None = None)`,
+  a Spark History Server application the CLI fetches itself.
+  `base_url` must be reachable from wherever the analysis runs.
+
+`LogSourceHook.cleanup(log_ref)` receives the same reference after
+analysis. A custom `LogSourceHook` implements `resolve()`; a custom
+`AnalyzeHook` sets `supported_log_refs` and implements `_analyze()`.
+
+Which log source works with which backend:
+
+| log source | resolves to | `SubprocessAnalyzeHook` (worker) | `SSHAnalyzeHook` (SSH host) |
+|---|---|---|---|
+| `HistoryServerLogSourceHook` | `LocalEventLog` | yes | no |
+| `FilesystemLogSourceHook` | `LocalEventLog` | yes | no |
+| `XComLogSourceHook` | `LocalEventLog` | yes | no |
+| `SFTPLogSourceHook` | `LocalEventLog` | yes | no |
+| `SSHTunneledLogSourceHook` | `LocalEventLog` | yes | no |
+| `RemotePathLogSourceHook` | `RemoteEventLog` | no | yes, same `ssh_conn_id` |
+| `HistoryServerAppLogSourceHook` | `HistoryServerApp` | yes, `base_url` as seen from the worker | yes, `base_url` as seen from the SSH host |
+
+An unsupported pairing raises `AirflowException` ("... cannot analyze
+...; it reads: ...") from `analyze()` before the CLI runs.
+
 ## `LogSourceHook` implementations
 
 - `HistoryServerLogSourceHook(base_url, app_id, attempt_id=None, dest_dir=None, timeout=300)`.
@@ -119,15 +153,44 @@ attached to that task by default.
   note the `ssh` extra's own effective floor is `apache-airflow>=2.11`
   (transitively, via the ssh provider), higher than this package's overall
   `apache-airflow>=2.6` floor.
+  The wrapped hook must fetch the log (return a `LocalEventLog`) while the
+  tunnel is open; a hook that returns another reference kind is rejected.
+  For a History Server reachable only from the SSH host, pairing
+  `HistoryServerAppLogSourceHook` with `SSHAnalyzeHook` avoids downloading
+  the log at all.
+- `RemotePathLogSourceHook(ssh_conn_id, path_template)`, an event log that
+  stays on the host behind `ssh_conn_id`, for `SSHAnalyzeHook` with the same
+  `ssh_conn_id`. `path_template` supports the same sanitized substitutions
+  as `FilesystemLogSourceHook`. It does no I/O: a missing path surfaces as
+  the CLI's exit-2 error.
+- `HistoryServerAppLogSourceHook(base_url, app_id, attempt_id=None)`, a
+  History Server application passed to the CLI as
+  `--shs-base-url`/`--app-id`/`--attempt-id` instead of being downloaded.
+  `app_id`/`attempt_id` are plain values, as for
+  `HistoryServerLogSourceHook`. Same no-auth limitation as
+  `HistoryServerLogSourceHook`.
 
-Each hook's `fetch()`-returned path is cleaned up automatically after
-analysis, but only when the hook created that path itself: see the
+Each fetching hook's `resolve()`-returned path is cleaned up automatically
+after analysis, but only when the hook created that path itself: see the
 runbook's "Disk fills up" entry for exactly which configurations are (and
 aren't) auto-cleaned.
 
 ## `AnalyzeHook` implementations
 
-- `SubprocessAnalyzeHook(analyze_bin="sparkforensics-analyze", timeout=900)`
+- `SubprocessAnalyzeHook(analyze_bin="sparkforensics-analyze", timeout=900)`,
+  runs the CLI on the Airflow worker. Reads `LocalEventLog` and
+  `HistoryServerApp`.
+- `SSHAnalyzeHook(ssh_conn_id, analyze_bin="sparkforensics-analyze", timeout=900)`,
+  runs the CLI on the host behind `ssh_conn_id` (the same Airflow SSH
+  connection `SSHOperator` uses) and reads the JSON report from its stdout.
+  Reads `RemoteEventLog` on the same `ssh_conn_id` and `HistoryServerApp`.
+  `timeout` bounds the whole remote run in seconds. Every argument is
+  shell-quoted. Requires the `ssh` extra on the worker, and Node.js 18+
+  plus `sparkforensics-cli` on the SSH host; the worker needs neither.
+
+Both build the same CLI arguments, parse the same report and threshold
+output, and treat exit codes the same way: 0, 1 and 3 produce a `Report`,
+2 and anything else raise `AirflowException` with the CLI's stderr.
 
 ## Thresholds
 

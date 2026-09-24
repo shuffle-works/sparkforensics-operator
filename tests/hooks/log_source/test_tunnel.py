@@ -1,9 +1,11 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from airflow.exceptions import AirflowException
 
 from sparkforensics_operator.hooks.log_source.tunnel import SSHTunneledLogSourceHook
+from sparkforensics_operator.log_ref import HistoryServerApp, LocalEventLog
 
 pytest.importorskip("airflow.providers.ssh.hooks.ssh")
 
@@ -28,23 +30,23 @@ def _hook(hook_factory, ssh_conn_id="onprem_ssh", remote_host="shs.internal", re
     )
 
 
-def test_fetch_builds_the_base_url_from_the_tunnels_local_bind_port_and_delegates():
+def test_resolve_builds_the_base_url_from_the_tunnels_local_bind_port_and_delegates():
     tunnel = _FakeTunnel(local_bind_port=54321)
     mock_ssh_hook = MagicMock()
     mock_ssh_hook.get_tunnel.return_value = tunnel
     inner_hook = MagicMock()
-    inner_hook.fetch.return_value = "log-path"
+    inner_hook.resolve.return_value = LocalEventLog(Path("log-path"))
     hook_factory = MagicMock(return_value=inner_hook)
     hook = _hook(hook_factory)
 
     with patch("airflow.providers.ssh.hooks.ssh.SSHHook", return_value=mock_ssh_hook) as mock_cls:
-        result = hook.fetch({"some": "context"})
+        result = hook.resolve({"some": "context"})
 
     mock_cls.assert_called_once_with(ssh_conn_id="onprem_ssh")
     mock_ssh_hook.get_tunnel.assert_called_once_with(remote_port=18080, remote_host="shs.internal")
     hook_factory.assert_called_once_with("http://127.0.0.1:54321")
-    inner_hook.fetch.assert_called_once_with({"some": "context"})
-    assert result == "log-path"
+    inner_hook.resolve.assert_called_once_with({"some": "context"})
+    assert result == LocalEventLog(Path("log-path"))
     assert tunnel.exited is True
 
 
@@ -53,57 +55,71 @@ def test_cleanup_delegates_to_the_inner_hook_built_by_the_factory():
     mock_ssh_hook = MagicMock()
     mock_ssh_hook.get_tunnel.return_value = tunnel
     inner_hook = MagicMock()
+    inner_hook.resolve.return_value = LocalEventLog(Path("log-path"))
     hook_factory = MagicMock(return_value=inner_hook)
     hook = _hook(hook_factory)
 
     with patch("airflow.providers.ssh.hooks.ssh.SSHHook", return_value=mock_ssh_hook):
-        hook.fetch({})
-    hook.cleanup("log-path")
+        log_ref = hook.resolve({})
+    hook.cleanup(log_ref)
 
-    inner_hook.cleanup.assert_called_once_with("log-path")
+    inner_hook.cleanup.assert_called_once_with(log_ref)
 
 
-def test_cleanup_is_a_no_op_if_fetch_was_never_called():
+def test_cleanup_is_a_no_op_if_resolve_was_never_called():
     hook = _hook(hook_factory=MagicMock())
 
-    hook.cleanup("some-path")  # must not raise
+    hook.cleanup(LocalEventLog(Path("some-path")))  # must not raise
 
 
-def test_fetch_wraps_an_ssh_connection_failure_in_an_airflowexception():
+def test_resolve_wraps_an_ssh_connection_failure_in_an_airflowexception():
     hook = _hook(hook_factory=MagicMock())
 
     with patch(
         "airflow.providers.ssh.hooks.ssh.SSHHook", side_effect=OSError("no route to host"),
     ):
         with pytest.raises(AirflowException, match="onprem_ssh"):
-            hook.fetch({})
+            hook.resolve({})
 
 
-def test_fetch_propagates_the_inner_hooks_own_airflowexception_unwrapped():
+def test_resolve_propagates_the_inner_hooks_own_airflowexception_unwrapped():
     tunnel = _FakeTunnel(local_bind_port=1234)
     mock_ssh_hook = MagicMock()
     mock_ssh_hook.get_tunnel.return_value = tunnel
     inner_hook = MagicMock()
-    inner_hook.fetch.side_effect = AirflowException("Spark History Server log download failed (500)")
+    inner_hook.resolve.side_effect = AirflowException("Spark History Server log download failed (500)")
     hook_factory = MagicMock(return_value=inner_hook)
     hook = _hook(hook_factory)
 
     with patch("airflow.providers.ssh.hooks.ssh.SSHHook", return_value=mock_ssh_hook):
         with pytest.raises(AirflowException) as exc_info:
-            hook.fetch({})
+            hook.resolve({})
         assert str(exc_info.value) == "Spark History Server log download failed (500)"
 
 
-def test_fetch_propagates_the_inner_hooks_own_non_airflow_exception_unwrapped():
+def test_resolve_propagates_the_inner_hooks_own_non_airflow_exception_unwrapped():
     tunnel = _FakeTunnel(local_bind_port=1234)
     mock_ssh_hook = MagicMock()
     mock_ssh_hook.get_tunnel.return_value = tunnel
     inner_hook = MagicMock()
-    inner_hook.fetch.side_effect = ValueError("connection refused")
+    inner_hook.resolve.side_effect = ValueError("connection refused")
     hook_factory = MagicMock(return_value=inner_hook)
     hook = _hook(hook_factory)
 
     with patch("airflow.providers.ssh.hooks.ssh.SSHHook", return_value=mock_ssh_hook):
         with pytest.raises(ValueError) as exc_info:
-            hook.fetch({})
+            hook.resolve({})
         assert str(exc_info.value) == "connection refused"
+
+
+def test_resolve_rejects_a_reference_that_would_outlive_the_tunnel():
+    tunnel = _FakeTunnel(local_bind_port=1234)
+    mock_ssh_hook = MagicMock()
+    mock_ssh_hook.get_tunnel.return_value = tunnel
+    inner_hook = MagicMock()
+    inner_hook.resolve.return_value = HistoryServerApp(base_url="http://127.0.0.1:1234", app_id="app-1")
+    hook = _hook(MagicMock(return_value=inner_hook))
+
+    with patch("airflow.providers.ssh.hooks.ssh.SSHHook", return_value=mock_ssh_hook):
+        with pytest.raises(AirflowException, match="not a LocalEventLog"):
+            hook.resolve({})

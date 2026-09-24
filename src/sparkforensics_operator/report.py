@@ -63,7 +63,13 @@ class Report:
 
 
 def parse_report_json(path: Path) -> Report:
-    data = json.loads(Path(path).read_text())
+    return parse_report_text(Path(path).read_text())
+
+
+def parse_report_text(text: str) -> Report:
+    """Parses the CLI's JSON report, as written to its --out file or, with
+    no --out, to stdout."""
+    data = json.loads(text)
     return Report(
         schema_version=data["schemaVersion"],
         summary=data["summary"],

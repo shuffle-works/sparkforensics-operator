@@ -7,8 +7,9 @@ notifies on the result.
 ## Stack
 Python 3.9+, apache-airflow 2.6+ or 3.0+, pytest. Runtime dependency: Node.js
 18+ + the `sparkforensics-cli` npm package (`npm install -g sparkforensics-cli`)
-on the worker, for the `sparkforensics-analyze` CLI the subprocess backend
-shells out to.
+wherever the analysis runs: the worker for `SubprocessAnalyzeHook`, the SSH
+host for `SSHAnalyzeHook`. Log sources resolve an `EventLogRef` (`log_ref.py`)
+that backends consume; see `docs/architecture.md`.
 
 ## Commands
 - `pip install -e ".[test,s3,ssh]"`, install for local dev.

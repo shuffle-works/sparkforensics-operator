@@ -5,6 +5,8 @@ from pathlib import Path
 
 from airflow.exceptions import AirflowException
 
+from sparkforensics_operator.log_ref import LocalEventLog
+
 from ._dest_root import dest_for
 from ._path_template import _template_vars
 from .base import LogSourceHook
@@ -23,13 +25,13 @@ class FilesystemLogSourceHook(LogSourceHook):
         self.path_template = path_template
         self.dest_dir = dest_dir
 
-    def fetch(self, context: dict) -> Path:
+    def resolve(self, context: dict) -> LocalEventLog:
         rendered = self.path_template.format(**_template_vars(context))
         source = Path(rendered)
         if not source.exists():
             raise AirflowException(f"Configured log path does not exist: {source}")
         if self.dest_dir is None:
-            return source
+            return LocalEventLog(source)
 
         dest_root = Path(self.dest_dir)
         dest_root.mkdir(parents=True, exist_ok=True)
@@ -38,11 +40,12 @@ class FilesystemLogSourceHook(LogSourceHook):
             shutil.copytree(source, dest, dirs_exist_ok=True)
         else:
             shutil.copy2(source, dest)
-        return dest
+        return LocalEventLog(dest)
 
-    def cleanup(self, path: Path) -> None:
+    def cleanup(self, log_ref: LocalEventLog) -> None:
         if self.dest_dir is None:
-            return  # fetch() returned the caller's own path; never delete it.
+            return  # resolve() returned the caller's own path; never delete it.
+        path = log_ref.path
         if path.is_dir():
             shutil.rmtree(path, ignore_errors=True)
         else:

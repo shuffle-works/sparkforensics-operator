@@ -2,6 +2,8 @@ from pathlib import Path
 
 from airflow.exceptions import AirflowException
 
+from sparkforensics_operator.log_ref import LocalEventLog
+
 from .base import LogSourceHook
 
 
@@ -15,7 +17,7 @@ class XComLogSourceHook(LogSourceHook):
         self.task_id = task_id
         self.xcom_key = xcom_key
 
-    def fetch(self, context: dict) -> Path:
+    def resolve(self, context: dict) -> LocalEventLog:
         value = context["ti"].xcom_pull(task_ids=self.task_id, key=self.xcom_key)
         if not value:
             raise AirflowException(
@@ -24,4 +26,4 @@ class XComLogSourceHook(LogSourceHook):
         path = Path(value)
         if not path.exists():
             raise AirflowException(f"XCom-provided event log path does not exist: {path}")
-        return path
+        return LocalEventLog(path)

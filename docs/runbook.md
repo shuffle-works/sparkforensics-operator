@@ -2,15 +2,16 @@
 
 ## Prerequisites on the worker
 
-- Node.js 18 or newer (the `sparkforensics-cli` package declares
-  `node >=18`).
-- The `sparkforensics-cli` npm package installed
+- With `SubprocessAnalyzeHook`, Node.js 18 or newer (the
+  `sparkforensics-cli` package declares `node >=18`) and the
+  `sparkforensics-cli` npm package installed
   (`npm install -g sparkforensics-cli`), with `sparkforensics-analyze`
   resolvable on `PATH`, or pass `SubprocessAnalyzeHook(analyze_bin=<full path>)`.
+  With `SSHAnalyzeHook` the worker needs neither: see the next section.
 - `pip install sparkforensics-operator[s3]` if `report_dest` is `s3://...`.
   Uses the `aws_default` Airflow connection unless `aws_conn_id` is set.
-- `pip install sparkforensics-operator[ssh]` if using `SFTPLogSourceHook`
-  or `SSHTunneledLogSourceHook`. Both reuse the `ssh_conn_id` Airflow
+- `pip install sparkforensics-operator[ssh]` if using `SFTPLogSourceHook`,
+  `SSHTunneledLogSourceHook` or `SSHAnalyzeHook`. All reuse the `ssh_conn_id` Airflow
   Connection already configured for `SSHOperator`: no new connection
   type to set up. Note: this extra's floor
   (`apache-airflow-providers-ssh>=5.0`) transitively requires
@@ -19,6 +20,33 @@
 - Any dependency your own `Notifier` implementation needs (e.g. a
   provider package for Slack/Teams/PagerDuty, an SMTP library) is on you
   to install; this package declares none for notification.
+
+## Prerequisites on the SSH host (remote analysis)
+
+`SSHAnalyzeHook` runs `sparkforensics-analyze` on the host behind its
+`ssh_conn_id`, typically the node running the Spark History Server or one
+that mounts the event log directory. The log is read there and never
+crosses the network; only the JSON report comes back. That also means the
+Airflow workers, including managed ones such as Amazon MWAA where
+installing Node.js is awkward, don't need Node.js or the CLI at all: they
+only need this package with the `ssh` extra and network access to the SSH
+host.
+
+On the SSH host:
+
+- Install Node.js 18 or newer and `npm install -g sparkforensics-cli` for
+  the user `ssh_conn_id` logs in as.
+- Check the binary resolves in a non-interactive session, the kind
+  `SSHAnalyzeHook` opens: `ssh <user>@<host> 'command -v sparkforensics-analyze'`.
+  A non-interactive session often skips the profile that puts `nvm` or
+  a custom npm prefix on `PATH`; if the command prints nothing, pass the
+  full path from an interactive `command -v sparkforensics-analyze` as
+  `SSHAnalyzeHook(analyze_bin=...)`.
+- For `HistoryServerAppLogSourceHook`, `base_url` is resolved on this
+  host, so `http://localhost:18080` reaches a History Server running on
+  it. Check it with `ssh <user>@<host> 'curl -s http://localhost:18080/api/v1/applications?limit=1'`.
+- For `RemotePathLogSourceHook`, the login user needs read access to the
+  rendered path.
 
 ## Releasing to PyPI
 
@@ -43,20 +71,51 @@ publishes them.
   or the npm package isn't installed on this worker, or `analyze_bin`
   points at the wrong path. Verify with
   `which sparkforensics-analyze` on the worker.
-- **Task fails with "sparkforensics-analyze failed to parse the event log or
-  was given bad arguments (exit 2)"**, the fetched log isn't a valid Spark
-  event log/rolling-log directory, or an unsupported CLI argument was
-  passed. Check the raised `AirflowException`'s message, which includes the
-  CLI's stderr.
+- **Task fails with "sparkforensics-analyze [on the SSH host (...)] failed
+  to parse the event log, could not fetch it from the Spark History Server,
+  or was given bad arguments (exit 2)"**, the log isn't a valid Spark
+  event log/rolling-log directory, the path doesn't exist on the host
+  running the analysis (`RemotePathLogSourceHook` does not check it
+  beforehand), the CLI's `--shs-base-url` fetch failed (wrong `base_url`,
+  `app_id` or `attempt_id`, or the History Server is unreachable from that
+  host), or an unsupported CLI argument was passed. Check the raised
+  `AirflowException`'s message, which includes the CLI's stderr.
+- **Task fails with "sparkforensics-analyze binary not found or not
+  executable on the SSH host (ssh_conn_id=...)"**, the remote shell exited
+  126 or 127. The CLI isn't installed for the SSH login user, or it is but
+  a non-interactive session doesn't have it on `PATH`. See "Prerequisites
+  on the SSH host" above; passing `analyze_bin=<full path>` is the usual
+  fix.
+- **Task fails with "SSH remote analysis failed (ssh_conn_id=...,
+  command=...)"**, an SSH transport failure while `SSHAnalyzeHook` connected
+  or read the command's output (auth failure, host unreachable, dropped
+  connection). The wrapped error is in the message; check `ssh_conn_id`
+  against the host.
+- **Task fails with "... cannot analyze ...; it reads: ..."**, the log
+  source and backend don't fit together, e.g. `SSHAnalyzeHook` with a log
+  the worker downloaded, or `SubprocessAnalyzeHook` with
+  `RemotePathLogSourceHook`. See the log source/backend table in
+  `docs/api-reference.md`. "cannot analyze an event log on a different SSH
+  host" means `RemotePathLogSourceHook` and `SSHAnalyzeHook` were given
+  different `ssh_conn_id`s.
+- **Task fails with "sparkforensics-analyze exited ... but its JSON report
+  could not be parsed"**, the CLI exited 0, 1 or 3 but its report was not
+  valid JSON. With `SSHAnalyzeHook` the usual cause is the login shell
+  printing a banner or message to stdout on non-interactive sessions (e.g.
+  an `echo` in `~/.bashrc`); make it print only for interactive shells.
 - **Task fails with "sparkforensics-analyze exited with unexpected code
   {returncode}"**, the CLI exited with a code other than 0, 1, 2 or 3 (e.g.
   an OOM kill or a wrapper-script failure). The `--out` file is not trusted
   for these codes; check the exception message's stderr fragment for the
   underlying cause.
 - **Task fails with "sparkforensics-analyze timed out after {timeout}s"**,
-  the CLI didn't finish within `SubprocessAnalyzeHook`'s configured
-  `timeout` (default 900s). Raise `timeout` for large or rolling event
-  logs, or check the worker for resource contention.
+  the CLI didn't finish within the backend's configured `timeout` (default
+  900s). Raise `timeout` for large or rolling event logs, or check the
+  worker (or, with "on the SSH host", that host) for resource contention.
+  `SSHAnalyzeHook` closes the SSH channel on timeout, but the remote
+  process gets no signal and may keep running until it finishes; check for
+  a leftover `sparkforensics-analyze` process on the host if timeouts
+  repeat.
 - **Task fails with "Spark History Server log download failed
   ({status_code})"**, the History Server rejected the `GET .../logs`
   request, e.g. the app_id/attempt_id doesn't exist or the server is
@@ -174,3 +233,6 @@ publishes them.
     delegates `cleanup()` to whatever inner hook `hook_factory` built, so
     the wrapped hook's own entry above (e.g.
     `HistoryServerLogSourceHook`'s) applies.
+  - `RemotePathLogSourceHook` and `HistoryServerAppLogSourceHook` write
+    nothing to the worker. `SSHAnalyzeHook` reads the report from stdout,
+    so it leaves no file on the SSH host either.

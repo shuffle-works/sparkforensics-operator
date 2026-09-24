@@ -13,6 +13,12 @@ def test_top_level_package_re_exports_the_public_surface():
     assert pkg.SSHTunneledLogSourceHook is not None
     assert pkg.AnalyzeHook is not None
     assert pkg.SubprocessAnalyzeHook is not None
+    assert pkg.SSHAnalyzeHook is not None
+    assert pkg.RemotePathLogSourceHook is not None
+    assert pkg.HistoryServerAppLogSourceHook is not None
+    assert pkg.LocalEventLog is not None
+    assert pkg.RemoteEventLog is not None
+    assert pkg.HistoryServerApp is not None
     assert pkg.Notifier is not None
     assert set(pkg.__all__) == {
         "SparkForensicsOperator",
@@ -20,12 +26,19 @@ def test_top_level_package_re_exports_the_public_surface():
         "ThresholdBreached",
         "LogSourceHook",
         "HistoryServerLogSourceHook",
+        "HistoryServerAppLogSourceHook",
         "FilesystemLogSourceHook",
         "XComLogSourceHook",
         "SFTPLogSourceHook",
         "SSHTunneledLogSourceHook",
+        "RemotePathLogSourceHook",
+        "EventLogRef",
+        "LocalEventLog",
+        "RemoteEventLog",
+        "HistoryServerApp",
         "AnalyzeHook",
         "SubprocessAnalyzeHook",
+        "SSHAnalyzeHook",
         "Notifier",
     }
 

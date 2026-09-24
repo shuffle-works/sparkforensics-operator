@@ -32,9 +32,12 @@ def run_spark_forensics(
     """The one code path shared by SparkForensicsOperator.execute() and the
     spark_forensics_callback() factory (Task 15)."""
     _validate_on_threshold_breach(on_threshold_breach)
-    log_path = log_source.fetch(context)
+    # Where the log is (log_source) and where it is analyzed (backend) are
+    # independent: the reference may point at a file the worker fetched, a
+    # path on an SSH host, or a History Server app the backend reads itself.
+    log_ref = log_source.resolve(context)
     try:
-        report = backend.analyze(log_path, thresholds)
+        report = backend.analyze(log_ref, thresholds)
 
         report_json = {
             "schemaVersion": report.schema_version,
@@ -104,14 +107,16 @@ def run_spark_forensics(
 
         return destination
     finally:
-        log_source.cleanup(log_path)
+        log_source.cleanup(log_ref)
 
 
 class SparkForensicsOperator(BaseOperator):
-    """Fetches a Spark job's event log, analyzes it with sparkforensics,
+    """Resolves a Spark job's event log, analyzes it with sparkforensics,
     persists the report, evaluates thresholds, and optionally notifies via
-    a caller-supplied Notifier. log_source and backend are pluggable
-    strategy Hooks (see hooks/log_source/* and hooks/analyze/*)."""
+    a caller-supplied Notifier. log_source (where the log is) and backend
+    (where the analysis runs) are pluggable strategy Hooks (see
+    hooks/log_source/* and hooks/analyze/*), composed through the
+    EventLogRef the log source resolves (see log_ref.py)."""
 
     operator_extra_links = (ReportLink(),)
     template_fields: Sequence[str] = ("report_dest",)
