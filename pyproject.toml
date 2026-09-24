@@ -33,6 +33,9 @@ Homepage = "https://github.com/shuffle-works/sparkforensics-operator"
 Repository = "https://github.com/shuffle-works/sparkforensics-operator"
 Issues = "https://github.com/shuffle-works/sparkforensics-operator/issues"
 
+[project.entry-points."airflow.plugins"]
+sparkforensics_operator = "sparkforensics_operator.plugin:SparkForensicsPlugin"
+
 [project.optional-dependencies]
 s3 = ["apache-airflow-providers-amazon>=8.0"]
 ssh = ["apache-airflow-providers-ssh>=5.0", "apache-airflow-providers-sftp>=4.0"]

@@ -1,54 +1,72 @@
+import logging
 from unittest.mock import MagicMock
 
+import pytest
+
+from sparkforensics_operator import links
 from sparkforensics_operator.links import ReportLink
 
 
-def test_get_link_returns_the_xcom_return_value_on_airflow_2(monkeypatch):
+@pytest.fixture
+def airflow_2(monkeypatch):
+    monkeypatch.setattr(links, "AIRFLOW_V3_PLUS", False)
+
+
+@pytest.fixture
+def airflow_3(monkeypatch):
+    monkeypatch.setattr(links, "AIRFLOW_V3_PLUS", True)
+
+
+@pytest.fixture
+def fake_xcom(monkeypatch):
+    fake = MagicMock()
+    monkeypatch.setattr("airflow.models.xcom.XCom", fake)
+    return fake
+
+
+def test_get_link_returns_the_xcom_return_value_on_airflow_2(airflow_2, fake_xcom):
     ti_key = MagicMock()
-    fake_xcom_module = MagicMock()
-    fake_xcom_module.XCom.get_value.return_value = "s3://reports/app-1.json"
-    # Simulate Airflow 2.x: no XComModel on the xcom module.
-    del fake_xcom_module.XComModel
-    monkeypatch.setattr("sparkforensics_operator.links._xcom_module", lambda: fake_xcom_module)
+    fake_xcom.get_value.return_value = "s3://reports/app-1.json"
 
-    link = ReportLink()
-    result = link.get_link(MagicMock(), ti_key=ti_key)
+    result = ReportLink().get_link(MagicMock(), ti_key=ti_key)
 
     assert result == "s3://reports/app-1.json"
-    fake_xcom_module.XCom.get_value.assert_called_once_with(ti_key=ti_key, key="return_value")
+    fake_xcom.get_value.assert_called_once_with(ti_key=ti_key, key="return_value")
 
 
-def test_get_link_returns_the_xcom_return_value_on_airflow_3(monkeypatch):
-    ti_key = MagicMock(run_id="run-1", dag_id="dag-1", task_id="task-1", map_index=-1)
-    fake_xcom_module = MagicMock()
-    fake_row = MagicMock()
-    fake_xcom_module.XComModel.get_many.return_value.first.return_value = fake_row
-    fake_xcom_module.XComModel.deserialize_value.return_value = "s3://reports/app-1.json"
-    monkeypatch.setattr("sparkforensics_operator.links._xcom_module", lambda: fake_xcom_module)
+def test_get_link_returns_empty_string_when_no_xcom_value_exists_on_airflow_2(airflow_2, fake_xcom):
+    fake_xcom.get_value.return_value = None
 
-    link = ReportLink()
-    result = link.get_link(MagicMock(), ti_key=ti_key)
-
-    assert result == "s3://reports/app-1.json"
-    fake_xcom_module.XComModel.get_many.assert_called_once_with(
-        key="return_value", run_id="run-1", dag_ids="dag-1", task_ids="task-1", map_indexes=-1,
-    )
+    assert ReportLink().get_link(MagicMock(), ti_key=MagicMock()) == ""
 
 
-def test_get_link_returns_empty_string_on_any_failure(monkeypatch):
-    def boom():
-        raise RuntimeError("db unavailable")
+def test_get_link_logs_the_error_and_returns_empty_string_when_xcom_read_fails_on_airflow_2(
+    airflow_2, fake_xcom, caplog
+):
+    fake_xcom.get_value.side_effect = RuntimeError("db unavailable")
 
-    monkeypatch.setattr("sparkforensics_operator.links._xcom_module", boom)
+    with caplog.at_level(logging.ERROR, logger="sparkforensics_operator.links"):
+        result = ReportLink().get_link(MagicMock(), ti_key=MagicMock())
 
-    link = ReportLink()
-    assert link.get_link(MagicMock(), ti_key=MagicMock()) == ""
+    assert result == ""
+    [record] = caplog.records
+    assert record.levelno == logging.ERROR
+    assert "db unavailable" in str(record.exc_info[1])
 
 
-def test_get_link_returns_empty_string_when_no_xcom_value_exists(monkeypatch):
-    fake_xcom_module = MagicMock()
-    fake_xcom_module.XComModel.get_many.return_value.first.return_value = None
-    monkeypatch.setattr("sparkforensics_operator.links._xcom_module", lambda: fake_xcom_module)
+def test_get_link_returns_the_rendered_report_dest_without_reading_xcom_on_airflow_3(airflow_3, fake_xcom):
+    operator = MagicMock(report_dest="s3://reports/run-1/report.json")
 
-    link = ReportLink()
-    assert link.get_link(MagicMock(), ti_key=MagicMock()) == ""
+    result = ReportLink().get_link(operator, ti_key=MagicMock())
+
+    assert result == "s3://reports/run-1/report.json"
+    fake_xcom.get_value.assert_not_called()
+
+
+def test_get_link_propagates_errors_to_the_task_runner_on_airflow_3(airflow_3):
+    # Airflow 3's task runner wraps get_link in its own try/except and logs
+    # the exception in the task log, so ReportLink must not hide it.
+    operator = object()  # no report_dest attribute
+
+    with pytest.raises(AttributeError):
+        ReportLink().get_link(operator, ti_key=MagicMock())

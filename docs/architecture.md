@@ -59,8 +59,16 @@ breach that raises still gets a notification out first.
   that best-effort, never raising. No concrete notifier ships in this
   package.
 - `links.py`, `ReportLink`, a clickable "SparkForensics report" link on
-  the task in the Airflow UI, reading the XCom the operator already
-  pushed.
+  the task in the Airflow UI. On 2.x the webserver calls `get_link`, which
+  reads the `return_value` XCom the operator already pushed. On 3.x the
+  task runner calls `get_link` on the worker after `execute()` and stores
+  the result in XCom for the API server, so `get_link` returns the
+  rendered `report_dest` instead of reading the metadata database.
+- `plugin.py`, `SparkForensicsPlugin`, registered through the
+  `airflow.plugins` entry point in `pyproject.toml`. Airflow 2.x drops any
+  operator link whose class is not registered when it deserializes a DAG,
+  and the webserver renders from the serialized DAG, so without it the
+  link never shows. Airflow 3.x needs no registration.
 - `operator.py`, `SparkForensicsOperator` + the shared
   `run_spark_forensics` core.
 - `callback.py`, `spark_forensics_callback(**kwargs)`, an

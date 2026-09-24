@@ -122,20 +122,24 @@ publishes them.
   the evidence that threshold needs (e.g. no `ApplicationEnd`, no
   trustworthy task-level metrics). Logged as a warning regardless of
   `on_threshold_breach`; this is not itself a failure condition.
-- **The "SparkForensics report" link in the UI is blank**, `ReportLink`
-  reads XCom via an Airflow-internal API (not the stable `airflow.sdk`
-  surface) and degrades to an empty link on any failure rather than
-  breaking the UI. Check the scheduler/webserver/API-server log for a
-  "ReportLink could not read the report destination from XCom" warning: that's this package's own internal-API guard, not silent data loss (the
-  report itself was still persisted and is still in XCom under
-  `return_value`).
-- **The "SparkForensics report" link is blank only in the UI, never in
-  logs**, `ReportLink` runs in the webserver/API-server process, not just
-  the worker. If `sparkforensics-operator` is installed on workers but not
-  on the webserver/API-server, `get_link` fails there and shows the same
-  blank-link symptom above even though tasks run fine. Make sure the
-  package is installed on every process that renders the DAG UI, not only
-  on workers.
+- **The "SparkForensics report" link in the UI is blank**, on Airflow 2.x
+  the webserver reads the link from XCom and shows an empty link if that
+  read fails, rather than breaking the task page. Check the webserver log
+  for a "ReportLink could not read the report destination from XCom"
+  error and its traceback. The report itself was still persisted and is
+  still in XCom under `return_value`. On Airflow 3.x the worker computes
+  the link after the task runs; a failure there shows in the task log as
+  "Failed to push an xcom for task operator extra link".
+- **The "SparkForensics report" link is missing from the task page
+  entirely (Airflow 2.x)**, the webserver renders from the serialized DAG,
+  and Airflow drops `ReportLink` during deserialization unless the
+  package's `airflow.plugins` entry point is registered. The DAG
+  processor/scheduler log then shows "Operator Link class
+  'sparkforensics_operator.links.ReportLink' not registered". Make sure
+  `sparkforensics-operator` is installed (as a package, not only copied
+  onto the DAGs folder) on every process that serializes or renders the
+  DAG, not only on workers, and check `airflow plugins` lists
+  `sparkforensics_operator`.
 - **Disk fills up on a worker that runs this operator repeatedly**, a
   single event log can be hundreds of MB to several GB, so this matters on
   a busy worker. Each `LogSourceHook` now cleans up after itself, but only

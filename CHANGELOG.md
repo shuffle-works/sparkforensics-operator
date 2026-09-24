@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The "SparkForensics report" link now shows in the Airflow 2.x UI.
+  `ReportLink` is registered through an `airflow.plugins` entry point, so
+  it survives DAG serialization instead of being dropped as "not
+  registered".
+- On Airflow 3.x, `ReportLink` returns the rendered `report_dest` when the
+  task runner computes the link on the worker, instead of querying the
+  metadata database through `airflow.models.xcom.XComModel`. A failed XCom
+  read on Airflow 2.x is now logged as an error with its traceback.
+
 ## [0.1.1] - 2026-09-20
 
 No functional changes. Republished after a repository infrastructure
