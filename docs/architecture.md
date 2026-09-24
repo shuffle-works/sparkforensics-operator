@@ -105,7 +105,9 @@ breach that raises still gets a notification out first.
   It reads the paramiko channel itself rather than through
   `SSHHook.exec_ssh_client_command`, which bounds only each idle read and
   logs every stdout line (the whole report) to the task log; `timeout`
-  here is a wall-clock bound on the whole run. Exit 126/127 from the
+  here is a wall-clock bound on the whole run, and the command runs under
+  coreutils `timeout` so the remote process stops too (closing a non-PTY
+  channel doesn't signal it). Exit 124 is that timeout; 126/127 from the
   remote shell means the binary is missing or not executable there.
 - `report.py`, `Report`/`ThresholdResult` dataclasses, plus parsing of the
   CLI's JSON `--out` file and its stderr threshold lines. No

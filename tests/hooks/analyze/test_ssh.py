@@ -86,7 +86,7 @@ def test_analyze_runs_the_cli_on_the_ssh_host_against_a_remote_path_and_reads_st
     )
 
     assert shlex.split(command) == [
-        "sparkforensics-analyze", "/logs/app-1", "--format", "json", "--max-runtime", "10000",
+        "timeout", "60", "sparkforensics-analyze", "/logs/app-1", "--format", "json", "--max-runtime", "10000",
     ]
     assert client.exec_command.call_args.kwargs == {"timeout": 60}
     assert report.schema_version == 3
@@ -103,7 +103,7 @@ def test_analyze_passes_a_history_server_app_to_the_remote_cli():
     )
 
     assert shlex.split(command) == [
-        "sparkforensics-analyze", "--shs-base-url", "http://localhost:18080", "--app-id", "app-1",
+        "timeout", "900", "sparkforensics-analyze", "--shs-base-url", "http://localhost:18080", "--app-id", "app-1",
         "--attempt-id", "1", "--format", "json",
     ]
 
@@ -115,7 +115,7 @@ def test_analyze_quotes_every_argument_for_the_remote_shell():
 
     _, command, _ = _run(hook, RemoteEventLog(ssh_conn_id="onprem_ssh", path=hostile_path), {}, channel)
 
-    assert shlex.split(command)[:2] == ["/opt/node bin/sparkforensics-analyze", hostile_path]
+    assert shlex.split(command)[2:4] == ["/opt/node bin/sparkforensics-analyze", hostile_path]
     assert f"'{hostile_path}'" in command
 
 
@@ -184,6 +184,16 @@ def test_analyze_times_out_on_wall_clock_and_closes_the_channel():
     assert "/logs/app-1" in str(exc_info.value)
     assert channel.closed
     fake_time.sleep.assert_called_once()
+
+
+def test_analyze_raises_the_timeout_error_when_the_remote_timeout_stops_the_cli():
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=5)
+    channel = _FakeChannel(exit_status=124)
+
+    with pytest.raises(AirflowException, match="timed out after 5s on the SSH host") as exc_info:
+        _run(hook, RemoteEventLog("onprem_ssh", "/logs/app-1"), {}, channel)
+
+    assert "/logs/app-1" in str(exc_info.value)
 
 
 def test_analyze_wraps_an_ssh_failure_in_an_airflowexception():

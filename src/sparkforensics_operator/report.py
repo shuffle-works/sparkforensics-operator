@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
 THRESHOLD_CLI_FLAGS = {
     "max_runtime_ms": "--max-runtime",
@@ -60,10 +59,6 @@ class Report:
     @property
     def inconclusive(self) -> bool:
         return any(r.status == "inconclusive" for r in self.threshold_results)
-
-
-def parse_report_json(path: Path) -> Report:
-    return parse_report_text(Path(path).read_text())
 
 
 def parse_report_text(text: str) -> Report:

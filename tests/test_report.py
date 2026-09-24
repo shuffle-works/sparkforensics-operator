@@ -4,7 +4,7 @@ from sparkforensics_operator.report import (
     THRESHOLD_CLI_FLAGS,
     Report,
     ThresholdResult,
-    parse_report_json,
+    parse_report_text,
     parse_threshold_results,
 )
 
@@ -26,11 +26,8 @@ SAMPLE_JSON = {
 }
 
 
-def test_parse_report_json_reads_the_cli_out_file(tmp_path):
-    out_path = tmp_path / "report.json"
-    out_path.write_text(json.dumps(SAMPLE_JSON))
-
-    report = parse_report_json(out_path)
+def test_parse_report_text_reads_the_cli_json_report():
+    report = parse_report_text(json.dumps(SAMPLE_JSON))
 
     assert report.schema_version == 3
     assert report.summary["impactBandCounts"]["critical"] == 1
@@ -38,23 +35,19 @@ def test_parse_report_json_reads_the_cli_out_file(tmp_path):
     assert report.threshold_results == []
 
 
-def test_parse_report_json_captures_evidence_availability_and_detectors(tmp_path):
-    out_path = tmp_path / "report.json"
+def test_parse_report_text_captures_evidence_availability_and_detectors():
     data = dict(SAMPLE_JSON, evidenceAvailability={"taskLevel": False}, detectors=["spill", "skew"])
-    out_path.write_text(json.dumps(data))
 
-    report = parse_report_json(out_path)
+    report = parse_report_text(json.dumps(data))
 
     assert report.evidence_availability == {"taskLevel": False}
     assert report.detectors == ["spill", "skew"]
 
 
-def test_parse_report_json_defaults_evidence_availability_and_detectors_when_absent(tmp_path):
-    out_path = tmp_path / "report.json"
+def test_parse_report_text_defaults_evidence_availability_and_detectors_when_absent():
     data = {k: v for k, v in SAMPLE_JSON.items() if k not in ("evidenceAvailability", "detectors")}
-    out_path.write_text(json.dumps(data))
 
-    report = parse_report_json(out_path)
+    report = parse_report_text(json.dumps(data))
 
     assert report.evidence_availability is None
     assert report.detectors == []

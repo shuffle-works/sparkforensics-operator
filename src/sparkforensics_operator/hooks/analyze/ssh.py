@@ -14,6 +14,8 @@ from .base import AnalyzeHook
 # POSIX shells exit 127 for "command not found" and 126 for "found but not
 # executable".
 _SHELL_COMMAND_NOT_FOUND_EXIT_CODES = {126, 127}
+# coreutils `timeout` exits 124 when it had to stop the command.
+_REMOTE_TIMEOUT_EXIT_CODE = 124
 _READ_CHUNK_BYTES = 1024 * 1024
 _POLL_INTERVAL_S = 0.1
 
@@ -52,9 +54,15 @@ class SSHAnalyzeHook(AnalyzeHook):
 
         # shlex.join quotes every argument for the remote POSIX shell, so a
         # rendered path, app id or analyze_bin can't inject shell syntax.
-        command = shlex.join(build_cli_args(self.analyze_bin, log_ref, thresholds))
+        # Closing a non-PTY channel doesn't signal the remote process, so
+        # coreutils `timeout` bounds it on the host itself.
+        command = shlex.join(
+            ["timeout", str(self.timeout), *build_cli_args(self.analyze_bin, log_ref, thresholds)]
+        )
         returncode, stdout, stderr = self._run_remote(command, log_ref)
 
+        if returncode == _REMOTE_TIMEOUT_EXIT_CODE:
+            raise self._timeout_error(log_ref)
         if returncode in _SHELL_COMMAND_NOT_FOUND_EXIT_CODES:
             raise AirflowException(
                 f"sparkforensics-analyze binary not found or not executable{self._where}: "
@@ -66,6 +74,12 @@ class SSHAnalyzeHook(AnalyzeHook):
             )
         check_exit_code(returncode, stderr, self._where)
         return build_report(stdout, thresholds, stderr, returncode, self._where)
+
+    def _timeout_error(self, log_ref: EventLogRef) -> AirflowException:
+        return AirflowException(
+            f"sparkforensics-analyze timed out after {self.timeout}s"
+            f"{self._where} analyzing {log_ref.describe()}."
+        )
 
     def _run_remote(self, command: str, log_ref: EventLogRef) -> tuple[int, str, str]:
         """Returns (exit status, stdout, stderr). Reads the channel directly
@@ -99,10 +113,7 @@ class SSHAnalyzeHook(AnalyzeHook):
                         break
                     if time.monotonic() > deadline:
                         channel.close()
-                        raise AirflowException(
-                            f"sparkforensics-analyze timed out after {self.timeout}s"
-                            f"{self._where} analyzing {log_ref.describe()}."
-                        )
+                        raise self._timeout_error(log_ref)
                     if not received:
                         time.sleep(_POLL_INTERVAL_S)
                 returncode = channel.recv_exit_status()

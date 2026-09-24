@@ -184,9 +184,11 @@ aren't) auto-cleaned.
   runs the CLI on the host behind `ssh_conn_id` (the same Airflow SSH
   connection `SSHOperator` uses) and reads the JSON report from its stdout.
   Reads `RemoteEventLog` on the same `ssh_conn_id` and `HistoryServerApp`.
-  `timeout` bounds the whole remote run in seconds. Every argument is
-  shell-quoted. Requires the `ssh` extra on the worker, and Node.js 18+
-  plus `sparkforensics-cli` on the SSH host; the worker needs neither.
+  `timeout` bounds the whole remote run in seconds, on the worker and on
+  the SSH host through coreutils `timeout`. Every argument is
+  shell-quoted. Requires the `ssh` extra on the worker, and coreutils
+  `timeout`, Node.js 18+ and `sparkforensics-cli` on the SSH host; the
+  worker needs none of them.
 
 Both build the same CLI arguments, parse the same report and threshold
 output, and treat exit codes the same way: 0, 1 and 3 produce a `Report`,

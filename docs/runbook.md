@@ -42,6 +42,8 @@ On the SSH host:
   a custom npm prefix on `PATH`; if the command prints nothing, pass the
   full path from an interactive `command -v sparkforensics-analyze` as
   `SSHAnalyzeHook(analyze_bin=...)`.
+- Coreutils `timeout` must be on that `PATH` too (it is on any standard
+  Linux host), since `SSHAnalyzeHook` wraps the CLI in it.
 - For `HistoryServerAppLogSourceHook`, `base_url` is resolved on this
   host, so `http://localhost:18080` reaches a History Server running on
   it. Check it with `ssh <user>@<host> 'curl -s http://localhost:18080/api/v1/applications?limit=1'`.
@@ -112,10 +114,9 @@ publishes them.
   the CLI didn't finish within the backend's configured `timeout` (default
   900s). Raise `timeout` for large or rolling event logs, or check the
   worker (or, with "on the SSH host", that host) for resource contention.
-  `SSHAnalyzeHook` closes the SSH channel on timeout, but the remote
-  process gets no signal and may keep running until it finishes; check for
-  a leftover `sparkforensics-analyze` process on the host if timeouts
-  repeat.
+  `SSHAnalyzeHook` runs the CLI under coreutils `timeout` on the SSH host,
+  so the remote process is stopped after the same `timeout` even though
+  closing the SSH channel sends it no signal.
 - **Task fails with "Spark History Server log download failed
   ({status_code})"**, the History Server rejected the `GET .../logs`
   request, e.g. the app_id/attempt_id doesn't exist or the server is
@@ -134,7 +135,7 @@ publishes them.
   are flat, nested deeper, or split across folders (e.g. several attempts:
   set `attempt_id`); "has no events_<n>_ rolling-log entries" means the one
   folder holds no rolling segments. Raised directly during
-  `fetch()`, before `sparkforensics-analyze` ever runs; check the exception
+  `resolve()`, before `sparkforensics-analyze` ever runs; check the exception
   message's entry-name list against what the History Server actually
   returned.
 - **Task fails with "Configured log path does not exist"**,
@@ -148,7 +149,7 @@ publishes them.
   message's rendered path and `ssh_conn_id` against the on-prem host.
 - **Task fails with "SFTP log fetch failed (ssh_conn_id=...)"**, an
   SSH/SFTP transport-level failure (auth failure, host unreachable,
-  network timeout) during `SFTPLogSourceHook.fetch()`. Check the
+  network timeout) during `SFTPLogSourceHook.resolve()`. Check the
   exception message's `ssh_conn_id` and remote path against the
   Airflow Connection and on-prem host; the wrapped underlying error is in
   the message.
@@ -158,7 +159,7 @@ publishes them.
   wrapped hook. Check `ssh_conn_id` and `remote_host:remote_port` against
   the on-prem host.
 - **Task fails with "SSH tunnel teardown failed after a successful
-  fetch (ssh_conn_id=...)"**, the wrapped hook's `fetch()` already
+  fetch (ssh_conn_id=...)"**, the wrapped hook's `resolve()` already
   succeeded, but closing the SSH tunnel afterward raised. The fetched
   result is lost even though the log was retrieved; check `ssh_conn_id`
   against the on-prem host for a mid-task disconnect, then rerun the
@@ -213,7 +214,7 @@ publishes them.
   a busy worker. Each `LogSourceHook` now cleans up after itself, but only
   a path it created:
   - `HistoryServerLogSourceHook` with no `dest_dir` downloads to a private
-    temp dir and removes it automatically after analysis, including if `fetch()` itself fails partway through.
+    temp dir and removes it automatically after analysis, including if `resolve()` itself fails partway through.
   - `FilesystemLogSourceHook` with `dest_dir` set copies the log there and
     removes that copy automatically after analysis.
   - `HistoryServerLogSourceHook` with `dest_dir` set writes into a
@@ -223,7 +224,7 @@ publishes them.
   - `FilesystemLogSourceHook` with no `dest_dir` returns the caller's own
     event log path unmodified; this package never deletes it.
   - `SFTPLogSourceHook` with no `dest_dir` downloads to a private temp dir
-    and removes it automatically after analysis, including if `fetch()`
+    and removes it automatically after analysis, including if `resolve()`
     itself fails partway through.
   - `SFTPLogSourceHook` with `dest_dir` set writes into a caller-managed
     shared directory the hook doesn't own, so it is **not** auto-cleaned.
