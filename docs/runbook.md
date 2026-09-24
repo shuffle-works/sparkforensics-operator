@@ -84,10 +84,11 @@ publishes them.
   `AirflowException`'s message, which includes the CLI's stderr.
 - **Task fails with "sparkforensics-analyze binary not found or not
   executable on the SSH host (ssh_conn_id=...)"**, the remote shell exited
-  126 or 127. The CLI isn't installed for the SSH login user, or it is but
-  a non-interactive session doesn't have it on `PATH`. See "Prerequisites
-  on the SSH host" above; passing `analyze_bin=<full path>` is the usual
-  fix.
+  126 or 127. The CLI, or the coreutils `timeout` it runs under, isn't
+  installed for the SSH login user, or it is but a non-interactive session
+  doesn't have it on `PATH`; the stderr in the message names which one.
+  See "Prerequisites on the SSH host" above; for the CLI, passing
+  `analyze_bin=<full path>` is the usual fix.
 - **Task fails with "SSH remote analysis failed (ssh_conn_id=...,
   command=...)"**, an SSH transport failure while `SSHAnalyzeHook` connected
   or read the command's output (auth failure, host unreachable, dropped

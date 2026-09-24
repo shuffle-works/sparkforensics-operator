@@ -66,7 +66,8 @@ class SSHAnalyzeHook(AnalyzeHook):
         if returncode in _SHELL_COMMAND_NOT_FOUND_EXIT_CODES:
             raise AirflowException(
                 f"sparkforensics-analyze binary not found or not executable{self._where}: "
-                f"{self.analyze_bin!r} (exit {returncode}). Install it on that host with "
+                f"{self.analyze_bin!r} or the coreutils `timeout` it runs under (exit {returncode}). "
+                "Check the stderr below for which one. Install the CLI on that host with "
                 "`npm install -g sparkforensics-cli` (Node.js 18+), or pass "
                 "analyze_bin=<full path to sparkforensics-analyze>: a non-interactive SSH "
                 "session may not load the PATH a login shell sets (e.g. for nvm). "

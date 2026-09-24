@@ -145,6 +145,7 @@ def test_analyze_raises_a_clear_error_when_the_binary_is_missing_on_the_ssh_host
     message = str(exc_info.value)
     assert "ssh_conn_id='onprem_ssh'" in message
     assert "npm install -g sparkforensics-cli" in message
+    assert "coreutils `timeout`" in message
     assert "not found" in message
 
 
