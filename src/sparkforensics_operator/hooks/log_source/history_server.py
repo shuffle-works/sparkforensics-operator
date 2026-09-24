@@ -8,6 +8,8 @@ from urllib.parse import quote
 import requests
 from airflow.exceptions import AirflowException
 
+from sparkforensics_operator.log_ref import LocalEventLog
+
 from ._dest_root import make_dest_root, remove_if_owned
 from ._rolling_log import _ROLLING_ENTRY_RE
 from .base import LogSourceHook
@@ -43,7 +45,7 @@ class HistoryServerLogSourceHook(LogSourceHook):
         segments.append("logs")
         return f"{self.base_url}/{'/'.join(segments)}"
 
-    def fetch(self, context: dict) -> Path:
+    def resolve(self, context: dict) -> LocalEventLog:
         url = self._build_url()
         response = requests.get(url, timeout=self.timeout, stream=True)
         if response.status_code != 200:
@@ -89,8 +91,8 @@ class HistoryServerLogSourceHook(LogSourceHook):
             # by the file entries alone.
             file_names = [name for name in names if not name.endswith("/")]
             if len(file_names) == 1 and "/" not in file_names[0]:
-                return extract_dir / file_names[0]
-            return extract_dir / self._rolling_log_folder(file_names)
+                return LocalEventLog(extract_dir / file_names[0])
+            return LocalEventLog(extract_dir / self._rolling_log_folder(file_names))
         except Exception:
             remove_if_owned(self._owned_temp_root)
             raise
@@ -123,5 +125,5 @@ class HistoryServerLogSourceHook(LogSourceHook):
             )
         return folder
 
-    def cleanup(self, path: Path) -> None:
+    def cleanup(self, log_ref: LocalEventLog) -> None:
         remove_if_owned(self._owned_temp_root)

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from airflow.exceptions import AirflowException
 
+from sparkforensics_operator.log_ref import LocalEventLog
+
 from ._dest_root import dest_for, make_dest_root, remove_if_owned
 from ._path_template import _template_vars
 from ._rolling_log import _ROLLING_ENTRY_RE
@@ -29,7 +31,7 @@ class SFTPLogSourceHook(LogSourceHook):
         self.dest_dir = dest_dir
         self._owned_temp_root: Path | None = None
 
-    def fetch(self, context: dict) -> Path:
+    def resolve(self, context: dict) -> LocalEventLog:
         from airflow.providers.sftp.hooks.sftp import SFTPHook
 
         remote_path = self.path_template.format(**_template_vars(context))
@@ -82,7 +84,7 @@ class SFTPLogSourceHook(LogSourceHook):
                     max_workers=min(8, len(rolling_entries))
                 ) as pool:
                     list(pool.map(_download, rolling_entries))
-                return source_dir
+                return LocalEventLog(source_dir)
 
             source_name = Path(remote_path).name
             if not source_name:
@@ -92,7 +94,7 @@ class SFTPLogSourceHook(LogSourceHook):
                 )
             local_path = dest_for(dest_root, remote_path)
             sftp_hook.retrieve_file(remote_path, str(local_path))
-            return local_path
+            return LocalEventLog(local_path)
         except AirflowException:
             remove_if_owned(self._owned_temp_root)
             raise
@@ -103,5 +105,5 @@ class SFTPLogSourceHook(LogSourceHook):
                 f"remote_path={remote_path!r}): {e}"
             ) from e
 
-    def cleanup(self, path: Path) -> None:
+    def cleanup(self, log_ref: LocalEventLog) -> None:
         remove_if_owned(self._owned_temp_root)

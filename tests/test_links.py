@@ -6,6 +6,7 @@ import pytest
 from sparkforensics_operator import links
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.links import ReportLink
+from sparkforensics_operator.log_ref import LocalEventLog
 from sparkforensics_operator.operator import SparkForensicsOperator
 from sparkforensics_operator.report import Report, ThresholdResult
 
@@ -59,7 +60,7 @@ def test_get_link_logs_the_error_and_returns_empty_string_when_xcom_read_fails_o
 
 def _operator(tmp_path, report, **kwargs):
     log_source = MagicMock()
-    log_source.fetch.return_value = tmp_path / "app.log"
+    log_source.resolve.return_value = LocalEventLog(tmp_path / "app.log")
     backend = MagicMock()
     backend.analyze.return_value = report
     return SparkForensicsOperator(

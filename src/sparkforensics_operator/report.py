@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
 THRESHOLD_CLI_FLAGS = {
     "max_runtime_ms": "--max-runtime",
@@ -62,8 +61,10 @@ class Report:
         return any(r.status == "inconclusive" for r in self.threshold_results)
 
 
-def parse_report_json(path: Path) -> Report:
-    data = json.loads(Path(path).read_text())
+def parse_report_text(text: str) -> Report:
+    """Parses the CLI's JSON report, as written to its --out file or, with
+    no --out, to stdout."""
+    data = json.loads(text)
     return Report(
         schema_version=data["schemaVersion"],
         summary=data["summary"],

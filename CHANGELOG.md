@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Remote analysis: `SSHAnalyzeHook` runs `sparkforensics-analyze` on the
+  host behind an Airflow SSH connection, such as the Spark History Server's
+  node, and reads the JSON report from its stdout. The event log never
+  reaches the Airflow worker, and the worker no longer needs Node.js.
+  Requires the `ssh` extra.
+- `RemotePathLogSourceHook`, an event log path on an SSH host, left in
+  place for `SSHAnalyzeHook`.
+- `HistoryServerAppLogSourceHook`, a History Server application the CLI
+  fetches itself through `--shs-base-url`/`--app-id`/`--attempt-id`,
+  instead of downloading it to the worker first. Works with both backends.
+- Event log references (`LocalEventLog`, `RemoteEventLog`,
+  `HistoryServerApp`), exported from the top-level package.
+
+### Changed
+
+- Breaking: `LogSourceHook.fetch(context) -> Path` is now
+  `LogSourceHook.resolve(context) -> EventLogRef`, and
+  `LogSourceHook.cleanup()` receives that reference. The fetching hooks
+  return a `LocalEventLog`.
+- Breaking: `AnalyzeHook.analyze()` takes an `EventLogRef` instead of a
+  path. Custom backends set `supported_log_refs` and implement
+  `_analyze()`; `analyze()` rejects a reference kind the backend can't read
+  before running anything.
+- `SSHTunneledLogSourceHook` rejects a wrapped hook that returns anything
+  but a `LocalEventLog`, since the tunnel is closed by the time the
+  reference would be used.
+- The exit-2 error now also names a failed History Server fetch as a
+  cause, and a report that isn't valid JSON raises `AirflowException`
+  instead of a bare `JSONDecodeError`.
+
 ### Fixed
 
 - Install instructions and the binary-not-found error now name the
