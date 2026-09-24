@@ -5,7 +5,7 @@ the JSON report plus stderr threshold lines into a Report.
 """
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import PurePath
 
 from airflow.exceptions import AirflowException
 
@@ -27,7 +27,7 @@ def build_cli_args(
     analyze_bin: str,
     log_ref: EventLogRef,
     thresholds: dict,
-    out_path: Path | None = None,
+    out_path: PurePath | None = None,
 ) -> list[str]:
     """Without out_path the CLI writes the JSON report to stdout."""
     args = [analyze_bin, *_log_ref_args(log_ref), "--format", "json"]

@@ -22,6 +22,7 @@ def spark_forensics_callback(
     on_threshold_breach: str = "fail",
     notifier=None,
     aws_conn_id: str | None = None,
+    deferrable: bool = False,
 ) -> Callable[[dict], None]:
     """Builds an on_success_callback for the upstream Spark task, sharing
     SparkForensicsOperator's exact execute() logic via run_spark_forensics.
@@ -31,7 +32,16 @@ def spark_forensics_callback(
     never fails the upstream task. Set on_threshold_breach="fail" here only
     to get that log-and-continue behavior on breach; it will not fail the
     DAG the way the standalone-operator trigger shape does.
+
+    A callback runs outside any task, so it cannot defer: deferrable=True
+    raises ValueError. Use SparkForensicsOperator(deferrable=True) instead.
     """
+    if deferrable:
+        raise ValueError(
+            "spark_forensics_callback cannot defer: an on_success_callback runs outside "
+            "any task, with no worker slot to free and no task to resume. Use "
+            "SparkForensicsOperator(deferrable=True) as a downstream task instead."
+        )
     thresholds = {
         "max_runtime_ms": max_runtime_ms,
         "max_spill_gb": max_spill_gb,

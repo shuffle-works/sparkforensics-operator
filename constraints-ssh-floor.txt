@@ -1,0 +1,11 @@
+# Used by tox's py311-airflow2sshmin env to test the ssh extra at its
+# declared floors (pyproject.toml): the first SSH provider release whose
+# remote-job helpers quote paths and take a base directory for cleanup,
+# which the deferrable mode relies on, on the oldest Airflow that provider
+# supports, and the sftp extra's own floor. Applied to every pip invocation
+# tox makes for that env (see tox.ini), so installing this package's extras
+# can't resolve past these pins. Move these whenever pyproject.toml's ssh
+# extra floors move.
+apache-airflow==2.11.0
+apache-airflow-providers-ssh==6.0.1
+apache-airflow-providers-sftp==4.0.0

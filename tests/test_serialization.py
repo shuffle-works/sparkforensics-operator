@@ -4,6 +4,8 @@ from unittest.mock import MagicMock
 from airflow import DAG
 
 from sparkforensics_operator._compat import AIRFLOW_V3_PLUS
+from sparkforensics_operator.hooks.analyze.ssh import SSHAnalyzeHook
+from sparkforensics_operator.hooks.log_source.remote_path import RemotePathLogSourceHook
 from sparkforensics_operator.links import ReportLink
 from sparkforensics_operator.operator import SparkForensicsOperator
 
@@ -36,3 +38,20 @@ def test_report_link_survives_a_dag_serialization_round_trip():
         assert link.xcom_key == ReportLink().xcom_key
     else:
         assert isinstance(link, ReportLink)
+
+
+def test_a_deferrable_ssh_operator_survives_a_dag_serialization_round_trip():
+    # The scheduler and API server only ever see the serialized DAG; the
+    # hooks are rebuilt from the DAG file when the task runs or resumes.
+    with DAG(dag_id="sparkforensics_deferrable", start_date=datetime(2026, 1, 1), schedule=None) as dag:
+        SparkForensicsOperator(
+            task_id="run_forensics",
+            log_source=RemotePathLogSourceHook(ssh_conn_id="onprem_ssh", path_template="/logs/{run_id}"),
+            backend=SSHAnalyzeHook(ssh_conn_id="onprem_ssh"),
+            report_dest="/tmp/sparkforensics/{{ run_id }}/report.json",
+            deferrable=True,
+        )
+
+    round_tripped = _DagSerializer.from_dict(_DagSerializer.to_dict(dag))
+
+    assert "run_forensics" in round_tripped.task_dict
