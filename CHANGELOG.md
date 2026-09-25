@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-25
+
 ### Added
 
 - Remote analysis: `SSHAnalyzeHook` runs `sparkforensics-analyze` on the
@@ -107,6 +109,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cause, and a report that isn't valid JSON raises `AirflowException`
   instead of a bare `JSONDecodeError`.
 
+### Removed
+
+- Breaking: `sparkforensics_operator.report.parse_report_json()`. The
+  analyze backends parse the CLI's JSON report internally; there is no
+  replacement.
+
 ### Fixed
 
 - Install instructions and the binary-not-found error now name the
@@ -146,5 +154,7 @@ Initial release.
 - Generic `Notifier` interface for threshold-breach alerting.
 - PyPI trusted-publishing GitHub Actions workflow (OIDC, no stored token).
 
+[Unreleased]: https://github.com/shuffle-works/sparkforensics-operator/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.2.0
 [0.1.1]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.1.1
 [0.1.0]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.1.0
