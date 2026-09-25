@@ -421,6 +421,22 @@ def test_on_kill_on_a_fresh_operator_abandons_the_submitted_job_with_the_running
     assert backend.abandoned == [(context, JOB)]
 
 
+def test_on_kill_still_abandons_when_the_submitted_job_cannot_be_read_from_xcom(tmp_path):
+    # With no job, the backend falls back to the task instance's own scope.
+    ti = _TI()
+    ti.xcom_pull = MagicMock(side_effect=RuntimeError("metadata DB unreachable"))
+    backend = FakeDeferrableHook()
+    op = _operator(backend, tmp_path)
+    context = {"ti": ti}
+
+    with patch("sparkforensics_operator.operator.current_context", return_value=context), \
+            patch.object(op.log, "warning") as warning:
+        op.on_kill()
+
+    assert backend.abandoned == [(context, None)]
+    warning.assert_called_once()
+
+
 def test_airflow2_execution_timeout_during_the_deferral_stops_the_submitted_job(tmp_path):
     # Airflow 2 resumes a deferral whose execution_timeout already ran out by
     # raising AirflowTaskTimeout and calling on_kill() on the fresh operator,

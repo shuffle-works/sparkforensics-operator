@@ -407,6 +407,23 @@ def test_a_trigger_error_still_raises_when_the_job_cannot_be_stopped(host):
     hook.abandon(ti_context())
 
 
+def test_a_failed_cleanup_is_logged_and_the_report_is_still_returned(host):
+    host.fake_cli(f"printf '%s' '{json.dumps(SAMPLE_JSON)}' | emit\n")
+    hook = _hook()
+    job, _, collect = _run_deferred(hook)
+
+    with patch(
+        "sparkforensics_operator.hooks.analyze._remote_job.cleanup_job_command",
+        return_value="sh -c 'echo read-only file system >&2; exit 1'",
+    ), patch.object(hook.log, "warning") as warning:
+        report = collect()
+
+    assert report.findings == SAMPLE_JSON["findings"]
+    assert Path(job["job_dir"]).exists()
+    assert "exit 1: read-only file system" in str(warning.call_args)
+    hook.abandon(ti_context())
+
+
 def test_a_connection_dropping_while_reading_the_result_raises_a_clear_airflowexception(host):
     host.fake_cli(f"printf '%s' '{json.dumps(SAMPLE_JSON)}' | emit\n")
     hook = _hook()
