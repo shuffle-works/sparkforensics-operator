@@ -5,6 +5,7 @@ import logging
 from typing import Callable
 
 from sparkforensics_operator.exceptions import ThresholdBreached
+from sparkforensics_operator.hooks._templating import render_with_task_env
 from sparkforensics_operator.operator import run_spark_forensics
 from sparkforensics_operator.summary import validate_report_url_template
 
@@ -42,8 +43,9 @@ def spark_forensics_callback(
     Airflow renders no callback arguments, so the callback renders
     report_dest and the hooks' template_fields itself, with the upstream
     task's Jinja environment and the callback's context, the same values
-    the operator would see. It renders copies: the hooks passed here are
-    shared by every run of the upstream task.
+    the operator would see. Strings are rendered as templates, never read as
+    template files by the upstream task's template_ext. It renders copies:
+    the hooks passed here are shared by every run of the upstream task.
     """
     if deferrable:
         raise ValueError(
@@ -66,9 +68,9 @@ def spark_forensics_callback(
         run_log_source, run_backend, run_report_dest = copy.copy(log_source), copy.copy(backend), report_dest
         task = context.get("task")
         if task is not None:
-            run_log_source = task.render_template(run_log_source, context)
-            run_backend = task.render_template(run_backend, context)
-            run_report_dest = task.render_template(run_report_dest, context)
+            run_log_source = render_with_task_env(task, run_log_source, context)
+            run_backend = render_with_task_env(task, run_backend, context)
+            run_report_dest = render_with_task_env(task, run_report_dest, context)
         try:
             destination = run_spark_forensics(
                 context,

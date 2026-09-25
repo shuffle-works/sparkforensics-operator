@@ -154,3 +154,47 @@ def test_the_callback_renders_report_dest_and_hook_arguments_with_the_upstream_t
 
     # The hook passed to the factory is shared by every run: never rendered in place.
     assert log_source.path_template == "/logs/{{ run_id }}"
+
+
+class _JsonTemplatingOperator(SparkForensicsOperator):
+    # Like EmrAddStepsOperator: its own template fields may name .json template files.
+    template_ext = (".json",)
+
+
+def test_the_callback_never_reads_its_values_as_the_upstream_tasks_template_files(tmp_path):
+    log_source = RemotePathLogSourceHook(ssh_conn_id="onprem_ssh", path_template="/logs/{{ run_id }}/app.json")
+    backend = MagicMock(spec=["analyze"])
+    backend.analyze.return_value = _report()
+    callback = spark_forensics_callback(
+        log_source=log_source, backend=backend, report_dest=str(tmp_path / "{{ run_id }}" / "app.json"),
+    )
+    upstream = _JsonTemplatingOperator(task_id="spark", log_source=log_source, backend=backend, report_dest="x")
+
+    callback({"run_id": "run_1", "task": upstream, "ti": MagicMock()})
+
+    assert backend.analyze.call_args.args[0] == RemoteEventLog("onprem_ssh", "/logs/run_1/app.json")
+    assert (tmp_path / "run_1" / "app.json").exists()
+    assert upstream.template_ext == (".json",)
+
+
+def test_the_tunnel_never_reads_its_inner_hooks_values_as_the_tasks_template_files():
+    pytest.importorskip("airflow.providers.ssh.hooks.ssh")
+    inner = {}
+
+    def factory(base_url):
+        inner["hook"] = HistoryServerLogSourceHook(base_url=base_url, app_id="{{ params.app }}.json")
+        inner["hook"].locate = MagicMock(return_value=MagicMock(spec=["path"]))
+        return inner["hook"]
+
+    hook = SSHTunneledLogSourceHook(ssh_conn_id="onprem_ssh", remote_host="shs", remote_port=18080, hook_factory=factory)
+    upstream = _JsonTemplatingOperator(task_id="spark", log_source=hook, backend=SubprocessAnalyzeHook(), report_dest="x")
+    tunnel = MagicMock()
+    tunnel.__enter__.return_value.local_bind_port = 5555
+    ssh_hook = MagicMock()
+    ssh_hook.get_tunnel.return_value = tunnel
+
+    with patch("airflow.providers.ssh.hooks.ssh.SSHHook", return_value=ssh_hook):
+        with pytest.raises(AirflowException):  # the mocked inner result is no LocalEventLog
+            hook.locate({"params": {"app": "app-9"}, "task": upstream})
+
+    assert inner["hook"].app_id == "app-9.json"

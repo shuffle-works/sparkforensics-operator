@@ -296,8 +296,10 @@ Three details keep this safe.
 `locate()` time, with the task's context, since that hook does not exist
 when Airflow renders the task. `spark_forensics_callback` runs outside
 any template rendering, so it renders `report_dest`, `log_source` and
-`backend` itself, on copies, through the upstream task's
-`render_template()`.
+`backend` itself, on copies, with the upstream task's Jinja environment.
+Both render through a copy of the task with an empty `template_ext`, so a
+value ending in `.json` is rendered as a string, not looked up as a
+template file on an EMR or Spark-on-Kubernetes upstream.
 
 ## Summary XCom and report URL
 

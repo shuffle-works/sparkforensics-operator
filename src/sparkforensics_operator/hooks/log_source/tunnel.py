@@ -5,6 +5,7 @@ from typing import Callable
 from sparkforensics_operator._compat import AirflowException
 from sparkforensics_operator.log_ref import EventLogRef, LocalEventLog
 
+from .._templating import render_with_task_env
 from .base import LogSourceHook
 
 
@@ -54,7 +55,7 @@ class SSHTunneledLogSourceHook(LogSourceHook):
                 # this one, so render its template fields the same way.
                 task = context.get("task")
                 if task is not None:
-                    task.render_template(self._inner, context)
+                    render_with_task_env(task, self._inner, context)
                 result = self._inner.locate(context)
                 fetch_succeeded = True
             if not isinstance(result, LocalEventLog):

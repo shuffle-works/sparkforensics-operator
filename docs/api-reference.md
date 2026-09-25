@@ -132,8 +132,11 @@ run_spark_job = SparkSubmitOperator(
 
 Airflow does not render callback arguments, so the callback renders
 them itself when it runs: `report_dest` and the templated arguments of
-`log_source` and `backend`, through the upstream task's
-`render_template()` with the callback's context. `{{ run_id }}` in
+`log_source` and `backend`, with the upstream task's Jinja environment
+(its DAG's macros and filters) and the callback's context. Every value
+is rendered as a template string, never loaded as a template file, so a
+`report_dest` ending in `.json` works on an upstream task whose
+`template_ext` includes `.json` (EMR, Spark on Kubernetes). `{{ run_id }}` in
 `report_dest` works as it does on the operator. The hooks are rendered as
 copies, so the instances passed to the factory stay templates for the
 next run. `report_url_template` is not rendered: it is filled from the
