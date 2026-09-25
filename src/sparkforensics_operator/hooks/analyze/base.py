@@ -44,6 +44,11 @@ class AnalyzeHook(BaseHook, ABC):
         """Run the analysis; log_ref is already known to be one of
         supported_log_refs."""
 
+    def on_kill(self) -> None:
+        """Called from SparkForensicsOperator.on_kill() when the task is
+        killed while analyze() runs in this process, to stop the analysis.
+        No-op by default."""
+
 
 class DeferrableAnalyzeHook(AnalyzeHook):
     """An AnalyzeHook that can also run the analysis as a detached job, so

@@ -11,21 +11,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sparkforensics_operator._compat import AIRFLOW_V3_PLUS
+from sparkforensics_operator._compat import AIRFLOW_V3_PLUS, TaskDeferred
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.ssh import SSHAnalyzeHook
 from sparkforensics_operator.hooks.log_source.remote_path import RemotePathLogSourceHook
 from sparkforensics_operator.links import ReportLink
 from sparkforensics_operator.operator import SparkForensicsOperator
 
-from ._local_ssh import SAMPLE_JSON, LocalHost, needs_posix_host, run_trigger, ti_context
+from ._local_ssh import SAMPLE_JSON, LocalHost, needs_posix_host, pid_alive, run_trigger, ti_context, wait_until
 
 pytest.importorskip("airflow.providers.ssh.triggers.ssh_remote_job")
-
-try:
-    from airflow.sdk.exceptions import TaskDeferred
-except ImportError:  # Airflow 2
-    from airflow.exceptions import TaskDeferred
 
 pytestmark = needs_posix_host
 
@@ -139,4 +134,21 @@ def test_deferred_and_synchronous_runs_give_identical_results(host, tmp_path, on
     }
     assert (outcomes["sync"]["breach"] is not None) == (on_threshold_breach == "fail")
     # Nothing left on the host.
+    assert not any((host.home / ".sparkforensics" / "jobs").iterdir())
+
+
+def test_killing_a_deferrable_task_while_it_runs_stops_the_remote_job(tmp_path):
+    host = LocalHost(tmp_path)
+    host.fake_cli(f"echo $$ > {host.home}/cli_pid; sleep 30\n")
+    with host.patched():
+        op = _operator(str(tmp_path / "report.json"), True, None, "fail")
+        context = {**ti_context(), "run_id": "manual__2026-01-01"}
+        with pytest.raises(TaskDeferred):
+            op.execute(context)
+        assert wait_until(lambda: (host.home / "cli_pid").exists())
+        pid = int((host.home / "cli_pid").read_text())
+
+        op.on_kill()
+
+    assert wait_until(lambda: not pid_alive(pid))
     assert not any((host.home / ".sparkforensics" / "jobs").iterdir())

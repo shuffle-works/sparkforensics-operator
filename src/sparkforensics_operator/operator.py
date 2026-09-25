@@ -3,11 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
-from airflow.configuration import conf
 from airflow.exceptions import AirflowException
 
 from sparkforensics_operator import sinks
-from sparkforensics_operator._compat import BaseOperator
+from sparkforensics_operator._compat import BaseOperator, conf
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.base import DeferrableAnalyzeHook
 from sparkforensics_operator.links import ReportLink
@@ -203,8 +202,12 @@ class SparkForensicsOperator(BaseOperator):
         self.deferrable = deferrable
         # Where this run's report was persisted; read by ReportLink on Airflow 3.
         self.persisted_report_dest: str | None = None
+        # The context of the execute()/execute_complete() running in this
+        # process, for on_kill(); never read across a deferral.
+        self._kill_context: dict | None = None
 
     def execute(self, context: dict) -> str:
+        self._kill_context = context
         if self.deferrable:
             self._submit_and_defer(context)  # raises TaskDeferred
         try:
@@ -274,6 +277,7 @@ class SparkForensicsOperator(BaseOperator):
     ) -> str:
         """Resumes a deferred run on a worker once the trigger fires: reads
         the report back and acts on it exactly as execute() does."""
+        self._kill_context = context
         if not event:
             raise AirflowException("SparkForensics deferred analysis resumed without a trigger event")
         for line in (event.get("log_chunk") or "").splitlines():
@@ -297,6 +301,27 @@ class SparkForensicsOperator(BaseOperator):
             self.log_source.cleanup(resolved_ref)
         self.persisted_report_dest = destination
         return destination
+
+    def on_kill(self) -> None:
+        """Stops the remote analysis when the task is killed while this
+        process runs it: the deferrable path abandons the task instance's
+        remote job, the synchronous path asks the backend to stop its run.
+        Airflow runs no process for a task while it is deferred, so a kill,
+        clear or mark-failed then reaches the job only through the next
+        try's sweep (see docs/runbook.md)."""
+        context = self._kill_context
+        if context is None:
+            return
+        try:
+            if self.deferrable and isinstance(self.backend, DeferrableAnalyzeHook):
+                self.backend.abandon(context)
+            elif callable(getattr(self.backend, "on_kill", None)):
+                self.backend.on_kill()
+        except Exception:
+            self.log.warning(
+                "Could not stop the remote analysis on kill; its own timeout, or the "
+                "next try of this task, stops it.", exc_info=True,
+            )
 
     def resume_execution(self, next_method: str, next_kwargs: dict | None, context: dict):
         # Airflow resumes a deferral that timed out (the backend's

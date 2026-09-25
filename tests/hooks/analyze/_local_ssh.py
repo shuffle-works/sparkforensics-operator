@@ -74,8 +74,12 @@ class LocalHost:
     # paramiko-like client, for SSHHook.get_conn()
 
     def _run(self, command: str, timeout=None) -> subprocess.CompletedProcess:
+        # paramiko's exec_command timeout only bounds each channel read; the
+        # remote command's own `timeout` must be what ends it here too, so
+        # the local run gets headroom past it.
         return subprocess.run(
-            ["sh", "-c", command], cwd=self.home, env=self.env, capture_output=True, timeout=timeout
+            ["sh", "-c", command], cwd=self.home, env=self.env, capture_output=True,
+            timeout=None if timeout is None else timeout + 30,
         )
 
     @contextmanager

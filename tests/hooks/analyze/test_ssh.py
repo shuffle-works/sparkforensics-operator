@@ -1,5 +1,5 @@
 import json
-import shlex
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -7,6 +7,8 @@ from airflow.exceptions import AirflowException
 
 from sparkforensics_operator.hooks.analyze.ssh import SSHAnalyzeHook
 from sparkforensics_operator.log_ref import HistoryServerApp, LocalEventLog, RemoteEventLog
+
+from ._local_ssh import LocalHost, needs_posix_host, pid_alive, wait_until
 
 pytest.importorskip("airflow.providers.ssh.hooks.ssh")
 
@@ -77,46 +79,125 @@ def _run(hook, log_ref, thresholds, channel):
     return report, command, client
 
 
-def test_analyze_runs_the_cli_on_the_ssh_host_against_a_remote_path_and_reads_stdout():
+@pytest.fixture
+def host(tmp_path):
+    host = LocalHost(tmp_path)
+    with host.patched():
+        yield host
+
+
+def _jobs_left(host):
+    base = host.home / ".sparkforensics" / "jobs"
+    return list(base.iterdir()) if base.exists() else []
+
+
+@needs_posix_host
+def test_analyze_runs_the_cli_on_the_ssh_host_against_a_remote_path_and_reads_stdout(host):
+    host.fake_cli(f"printf '%s' '{json.dumps(SAMPLE_JSON)}' | emit\n")
     hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=60)
-    channel = _FakeChannel(stdout=json.dumps(SAMPLE_JSON).encode())
 
-    report, command, client = _run(
-        hook, RemoteEventLog(ssh_conn_id="onprem_ssh", path="/logs/app-1"), {"max_runtime_ms": 10_000}, channel,
-    )
+    report = hook.analyze(RemoteEventLog(ssh_conn_id="onprem_ssh", path="/logs/app-1"), {"max_runtime_ms": 10_000})
 
-    assert shlex.split(command) == [
-        "timeout", "60", "sparkforensics-analyze", "/logs/app-1", "--format", "json", "--max-runtime", "10000",
-    ]
-    assert client.exec_command.call_args.kwargs == {"timeout": 60}
+    assert host.argv() == ["/logs/app-1", "--format", "json", "--max-runtime", "10000"]
     assert report.schema_version == 3
     assert report.exit_code == 0
     assert report.threshold_results[0].status == "pass"
+    assert _jobs_left(host) == []
 
 
-def test_analyze_passes_a_history_server_app_to_the_remote_cli():
+@needs_posix_host
+def test_analyze_passes_a_history_server_app_to_the_remote_cli(host):
+    host.fake_cli(f"printf '%s' '{json.dumps(SAMPLE_JSON)}' | emit\n")
     hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
-    channel = _FakeChannel(stdout=json.dumps(SAMPLE_JSON).encode())
 
-    _, command, _ = _run(
-        hook, HistoryServerApp(base_url="http://localhost:18080", app_id="app-1", attempt_id="1"), {}, channel,
-    )
+    hook.analyze(HistoryServerApp(base_url="http://localhost:18080", app_id="app-1", attempt_id="1"), {})
 
-    assert shlex.split(command) == [
-        "timeout", "900", "sparkforensics-analyze", "--shs-base-url", "http://localhost:18080", "--app-id", "app-1",
-        "--attempt-id", "1", "--format", "json",
+    assert host.argv() == [
+        "--shs-base-url", "http://localhost:18080", "--app-id", "app-1", "--attempt-id", "1", "--format", "json",
     ]
 
 
-def test_analyze_quotes_every_argument_for_the_remote_shell():
-    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", analyze_bin="/opt/node bin/sparkforensics-analyze")
-    channel = _FakeChannel(stdout=json.dumps(SAMPLE_JSON).encode())
-    hostile_path = "/logs/app-1; rm -rf ~ $(whoami) `id`"
+@needs_posix_host
+def test_analyze_quotes_every_argument_for_the_remote_shell(host):
+    cli = host.fake_cli(f"printf '%s' '{json.dumps(SAMPLE_JSON)}' | emit\n", name="spark forensics's analyze")
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", analyze_bin=str(cli))
+    hostile_path = "/logs/app-1; touch pwned $(touch pwned2) `touch pwned3` \"x\" 'y' &"
 
-    _, command, _ = _run(hook, RemoteEventLog(ssh_conn_id="onprem_ssh", path=hostile_path), {}, channel)
+    hook.analyze(RemoteEventLog(ssh_conn_id="onprem_ssh", path=hostile_path), {})
 
-    assert shlex.split(command)[2:4] == ["/opt/node bin/sparkforensics-analyze", hostile_path]
-    assert f"'{hostile_path}'" in command
+    assert host.argv()[0] == hostile_path
+    assert not list(host.home.rglob("pwned*"))
+
+
+@needs_posix_host
+def test_the_remote_timeout_stops_a_synchronous_cli_and_its_children(host):
+    host.fake_cli(f"""\
+        echo $$ > {host.home}/cli_pid
+        sleep 30 &
+        echo $! > {host.home}/child_pid
+        wait
+    """)
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=1)
+
+    with pytest.raises(AirflowException, match="timed out after 1s on the SSH host"):
+        hook.analyze(RemoteEventLog("onprem_ssh", "/logs/app-1"), {})
+
+    for name in ("cli_pid", "child_pid"):
+        pid = int((host.home / name).read_text())
+        assert wait_until(lambda: not pid_alive(pid)), f"{name} {pid} still running"
+    assert _jobs_left(host) == []
+
+
+@needs_posix_host
+def test_on_kill_stops_a_running_synchronous_analysis_on_the_host(host):
+    host.fake_cli(f"""\
+        echo $$ > {host.home}/cli_pid
+        sleep 30 &
+        echo $! > {host.home}/child_pid
+        wait
+    """)
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=60)
+    outcome = {}
+
+    def _analyze():
+        try:
+            hook.analyze(RemoteEventLog("onprem_ssh", "/logs/app-1"), {})
+        except AirflowException as e:
+            outcome["error"] = e
+
+    worker = threading.Thread(target=_analyze)
+    worker.start()
+    assert wait_until(lambda: (host.home / "child_pid").exists())
+
+    hook.on_kill()
+    worker.join(timeout=20)
+
+    assert not worker.is_alive()
+    assert "error" in outcome
+    for name in ("cli_pid", "child_pid"):
+        pid = int((host.home / name).read_text())
+        assert wait_until(lambda: not pid_alive(pid)), f"{name} {pid} still running"
+    assert _jobs_left(host) == []
+
+
+def test_on_kill_does_nothing_when_no_analysis_is_running():
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
+
+    with patch("airflow.providers.ssh.hooks.ssh.SSHHook") as ssh_cls:
+        hook.on_kill()
+
+    ssh_cls.assert_not_called()
+
+
+@needs_posix_host
+def test_analyze_fails_clearly_when_its_job_directory_cannot_be_created(host):
+    blocker = host.home / "not-a-dir"
+    blocker.write_text("")
+    host.fake_cli(f"printf '%s' '{json.dumps(SAMPLE_JSON)}' | emit\n")
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", remote_base_dir=str(blocker / "jobs"))
+
+    with pytest.raises(AirflowException, match="unexpected code 125: mkdir"):
+        hook.analyze(RemoteEventLog("onprem_ssh", "/logs/app-1"), {})
 
 
 def test_analyze_parses_threshold_violations_from_remote_stderr():
@@ -225,3 +306,52 @@ def test_analyze_rejects_a_log_fetched_to_the_worker(tmp_path):
             hook.analyze(LocalEventLog(tmp_path / "app.log"), {})
 
     ssh_cls.assert_not_called()
+
+
+class _KillableChannel(_FakeChannel):
+    """A channel that runs until on_kill() closes it; close() itself fails,
+    as closing a dropped connection can."""
+
+    def __init__(self):
+        super().__init__(exit_status=None)
+
+    def exit_status_ready(self):
+        return self.closed
+
+    def recv_exit_status(self):
+        return 143
+
+    def close(self):
+        self.closed = True
+        raise EOFError("connection already gone")
+
+
+def test_on_kill_closes_the_live_channel_and_sweeps_the_remote_job():
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
+    running = _KillableChannel()
+    sweep = _FakeChannel(exit_status=0)
+    ssh_hook, client = _ssh_hook_for(running)
+    client.exec_command.side_effect = [
+        (MagicMock(), MagicMock(channel=running), MagicMock()),
+        (MagicMock(), MagicMock(channel=sweep), MagicMock()),
+    ]
+    outcome = {}
+
+    def _analyze():
+        try:
+            hook.analyze(RemoteEventLog("onprem_ssh", "/logs/app-1"), {})
+        except AirflowException as e:
+            outcome["error"] = e
+
+    with patch("airflow.providers.ssh.hooks.ssh.SSHHook", return_value=ssh_hook):
+        worker = threading.Thread(target=_analyze)
+        worker.start()
+        assert wait_until(lambda: hook._sync_channel is running)
+        hook.on_kill()
+        worker.join(timeout=10)
+
+    assert running.closed
+    assert "unexpected code 143" in str(outcome["error"])
+    # The run's command, then the sweep that stops it on the host (what the
+    # sweep does there is covered against a real shell above).
+    assert client.exec_command.call_count == 2

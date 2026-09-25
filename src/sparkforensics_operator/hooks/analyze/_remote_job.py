@@ -70,13 +70,16 @@ def _base_dir_expr(remote_base_dir: str | None) -> str:
 
 # Stops every job under "$scope" that has not written its exit code yet,
 # then removes "$scope". A pid is signalled only while its command line
-# still names its own job directory: after a host reboot the recorded pid
-# may belong to an unrelated process. The provider's wrapper makes the job a
-# session leader under setsid, so its pid is also its session id: signalling
-# the session reaches coreutils `timeout` and the CLI too, which a process
-# group kill would miss, since `timeout` moves itself into a group of its
-# own. Without pkill, or on a host without setsid, it falls back to the
-# group and then the single process, as the provider's own kill does.
+# still names its own job directory (by its unique name: a synchronous
+# job's script holds the path unexpanded): after a host reboot the recorded
+# pid may belong to an unrelated process. The provider's wrapper makes the
+# detached job a session leader under setsid, so its pid is also its
+# session id: signalling the session reaches coreutils `timeout` and the CLI
+# too, which a process group kill would miss, since `timeout` moves itself
+# into a group of its own. Without pkill, or on a host without setsid, it
+# falls back to the group and then the single process, as the provider's
+# own kill does. A synchronous job's script forwards the signal itself
+# (sync_analysis_command).
 _SWEEP_SCOPE = """\
 if [ -d "$scope" ]; then
   for pid_file in "$scope"/*/pid; do
@@ -87,7 +90,7 @@ if [ -d "$scope" ]; then
     [ "$p" -gt 1 ] 2>/dev/null || continue
     args=$(tr '\\000' ' ' < "/proc/$p/cmdline" 2>/dev/null || ps -ww -o args= -p "$p" 2>/dev/null || true)
     case "$args" in
-      *"$job_dir"*)
+      *"${job_dir##*/}"*)
         pkill -TERM -s "$p" 2>/dev/null ||
           kill -TERM -"$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true ;;
     esac
@@ -150,6 +153,55 @@ def analysis_command(
         ]
     )
     return f"{{ {cli} 2>{shlex.quote(stderr_file)}; }}"
+
+
+# The synchronous run as a trackable job: the CLI's stdout and stderr stay
+# on the SSH channel, as before, but its pid is recorded under a job
+# directory so on_kill can stop it with the same sweep as a detached job.
+# Closing the channel alone would not: a non-PTY channel sends the remote
+# process no signal. The script's own pid is the one recorded; on TERM it signals
+# coreutils `timeout`'s own process group (the CLI and its children) and
+# removes its directory. Exit 125, which `timeout` itself uses for its own
+# failures, means the job directory could not be set up.
+_SYNC_JOB_SCRIPT = """\
+set -u
+base={base}
+scope="$base"/{scope}
+job_dir="$scope"/{job_name}
+mkdir -p -- "$scope" || exit 125
+mkdir -m 700 -- "$job_dir" || exit 125
+echo "$$" > "$job_dir/pid" || exit 125
+child=
+finish() {{ rm -rf -- "$job_dir"; rmdir -- "$scope" 2>/dev/null; }}
+trap 'if [ -n "$child" ]; then kill -TERM -"$child" 2>/dev/null || kill -TERM "$child" 2>/dev/null; fi; finish; exit 143' TERM HUP INT
+{cli} &
+child=$!
+wait "$child"
+ec=$?
+finish
+exit "$ec"
+"""
+
+
+def sync_analysis_command(
+    remote_base_dir: str | None,
+    scope: str,
+    job_name: str,
+    analyze_bin: str,
+    log_ref: EventLogRef,
+    thresholds: dict,
+    timeout: int,
+) -> str:
+    """The synchronous path's command: the same CLI invocation, writing the
+    report to stdout, run as a job abandon_scope_command(scope) can stop."""
+    cli = shlex.join(["timeout", str(timeout), *build_cli_args(analyze_bin, log_ref, thresholds)])
+    script = _SYNC_JOB_SCRIPT.format(
+        base=_base_dir_expr(remote_base_dir),
+        scope=shlex.quote(scope),
+        job_name=shlex.quote(job_name),
+        cli=cli,
+    )
+    return f"sh -c {shlex.quote(script)}"
 
 
 def submit_command(command: str, job_id: str, scope_dir: str) -> tuple[str, dict]:

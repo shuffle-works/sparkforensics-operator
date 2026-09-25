@@ -23,4 +23,17 @@ except ImportError:  # Airflow 2.x has no airflow.sdk package
     except ImportError:  # Airflow 2.6/2.7
         from airflow.models.baseoperator import BaseOperatorLink
 
-__all__ = ["AIRFLOW_V3_PLUS", "BaseOperator", "BaseOperatorLink"]
+# From Airflow 3.2 (Task SDK 1.2) the SDK has its own configuration and
+# TaskDeferred; their Airflow 2 homes still work there but through the
+# compatibility shims the SDK is retiring. Airflow 2.x and 3.0/3.1 only
+# have the old homes.
+try:
+    from airflow.sdk.configuration import conf
+except ImportError:
+    from airflow.configuration import conf
+try:
+    from airflow.sdk.exceptions import TaskDeferred
+except ImportError:
+    from airflow.exceptions import TaskDeferred
+
+__all__ = ["AIRFLOW_V3_PLUS", "BaseOperator", "BaseOperatorLink", "TaskDeferred", "conf"]

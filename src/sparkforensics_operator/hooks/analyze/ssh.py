@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import shlex
+import secrets
 import time
 from datetime import timedelta
 from typing import Any
@@ -11,7 +11,7 @@ from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, Remot
 from sparkforensics_operator.report import Report
 
 from . import _remote_job
-from ._cli import USABLE_REPORT_EXIT_CODES, build_cli_args, build_report, check_exit_code
+from ._cli import USABLE_REPORT_EXIT_CODES, build_report, check_exit_code
 from .base import DeferrableAnalyzeHook
 
 # POSIX shells exit 127 for "command not found" and 126 for "found but not
@@ -70,6 +70,9 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         self.timeout = timeout
         self.remote_base_dir = remote_base_dir
         self.poll_interval = poll_interval
+        # The synchronous run in progress in this process, for on_kill().
+        self._sync_scope: str | None = None
+        self._sync_channel = None
 
     @property
     def _where(self) -> str:
@@ -85,14 +88,23 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
             )
 
     def _analyze(self, log_ref: EventLogRef, thresholds: dict) -> Report:
-        # shlex.join quotes every argument for the remote POSIX shell, so a
+        # Every argument is shlex-quoted for the remote POSIX shell, so a
         # rendered path, app id or analyze_bin can't inject shell syntax.
         # Closing a non-PTY channel doesn't signal the remote process, so
-        # coreutils `timeout` bounds it on the host itself.
-        command = shlex.join(
-            ["timeout", str(self.timeout), *build_cli_args(self.analyze_bin, log_ref, thresholds)]
+        # coreutils `timeout` bounds it on the host itself, and the command
+        # records its pid under a job directory of its own so on_kill() can
+        # stop it.
+        token = secrets.token_hex(8)
+        self._sync_scope = f"sync_{token}"
+        command = _remote_job.sync_analysis_command(
+            self.remote_base_dir, self._sync_scope, f"job_{token}",
+            self.analyze_bin, log_ref, thresholds, self.timeout,
         )
-        returncode, stdout, stderr = self._run_remote(command, log_ref)
+        try:
+            returncode, stdout, stderr = self._run_remote(command, log_ref)
+        finally:
+            self._sync_scope = None
+            self._sync_channel = None
         return _report_from_run(
             returncode, stdout, stderr, log_ref, thresholds,
             ssh_conn_id=self.ssh_conn_id, analyze_bin=self.analyze_bin, timeout=self.timeout,
@@ -111,14 +123,31 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
                 return _exec(
                     client, command, self.timeout,
                     on_timeout=lambda: _timeout_error(self.timeout, self.ssh_conn_id, log_ref),
+                    on_channel=lambda channel: setattr(self, "_sync_channel", channel),
                 )
         except AirflowException:
             raise
         except Exception as e:
             raise AirflowException(
-                f"SSH remote analysis failed (ssh_conn_id={self.ssh_conn_id!r}, "
-                f"command={command!r}): {e}"
+                f"SSH remote analysis failed (ssh_conn_id={self.ssh_conn_id!r}) while running "
+                f"sparkforensics-analyze on {log_ref.describe()}: {e}"
             ) from e
+
+    def on_kill(self) -> None:
+        """Stops a running synchronous analysis when the task is killed:
+        closes the channel, then stops the remote CLI with the same sweep a
+        detached job gets, over a fresh connection."""
+        scope, channel = self._sync_scope, self._sync_channel
+        if scope is None:
+            return
+        if channel is not None:
+            try:
+                channel.close()
+            except Exception:
+                self.log.debug("Closing the SSH channel failed", exc_info=True)
+        command = _remote_job.abandon_scope_command(self.remote_base_dir, scope)
+        with self._job_connection("stopping the remote analysis") as client:
+            self._checked(client, command, "stopping the remote analysis")
 
     # Deferrable mode (DeferrableAnalyzeHook). Every value collect() needs is
     # in the job dict, not on self: the operator that resumes is rebuilt
@@ -304,11 +333,14 @@ class _JobConnection:
         )
 
 
-def _exec(client, command: str, timeout: float, on_timeout=None) -> tuple[int, str, str]:
+def _exec(client, command: str, timeout: float, on_timeout=None, on_channel=None) -> tuple[int, str, str]:
     """Runs command on an open paramiko client and returns (exit status,
-    stdout, stderr), bounding the whole run by timeout seconds."""
+    stdout, stderr), bounding the whole run by timeout seconds. on_channel,
+    if given, receives the channel as soon as it is open."""
     stdin, stdout, _ = client.exec_command(command, timeout=timeout)
     channel = stdout.channel
+    if on_channel is not None:
+        on_channel(channel)
     stdin.close()
     channel.shutdown_write()
 

@@ -10,18 +10,13 @@ import pytest
 from airflow.exceptions import AirflowException
 
 from sparkforensics_operator import spark_forensics_callback
-from sparkforensics_operator._compat import AIRFLOW_V3_PLUS, BaseOperator
+from sparkforensics_operator._compat import AIRFLOW_V3_PLUS, BaseOperator, TaskDeferred
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.base import DeferrableAnalyzeHook
 from sparkforensics_operator.hooks.analyze.subprocess import SubprocessAnalyzeHook
 from sparkforensics_operator.log_ref import HistoryServerApp, RemoteEventLog
 from sparkforensics_operator.operator import SparkForensicsOperator
 from sparkforensics_operator.report import Report, ThresholdResult
-
-try:
-    from airflow.sdk.exceptions import TaskDeferred
-except ImportError:  # Airflow 2
-    from airflow.exceptions import TaskDeferred
 
 LOG = RemoteEventLog("onprem_ssh", "/logs/app-1")
 
@@ -303,3 +298,62 @@ def test_the_callback_form_rejects_deferrable():
         spark_forensics_callback(
             log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json", deferrable=True
         )
+
+
+def test_on_kill_while_submitting_or_resuming_abandons_the_remote_job(tmp_path):
+    backend = FakeDeferrableHook()
+    op = _operator(backend, tmp_path)
+    context = {"ti": MagicMock()}
+    with pytest.raises(TaskDeferred):
+        op.execute(context)
+
+    op.on_kill()
+
+    assert backend.abandoned == [context]
+
+
+def test_on_kill_on_a_resumed_operator_abandons_with_its_own_context(tmp_path):
+    kwargs = _defer(_operator(FakeDeferrableHook(), tmp_path)).kwargs
+    backend = FakeDeferrableHook()
+    backend.collect = MagicMock(side_effect=lambda *a: fresh.on_kill() or backend.report)
+    fresh = _operator(backend, tmp_path)
+    context = {"ti": MagicMock()}
+
+    fresh.execute_complete(context, event=_event(), **kwargs)
+
+    assert backend.abandoned == [context]
+
+
+def test_on_kill_of_a_synchronous_run_asks_the_backend_to_stop(tmp_path):
+    backend = FakeDeferrableHook()
+    backend.on_kill = MagicMock()
+    op = _operator(backend, tmp_path, deferrable=False)
+    op.execute({})
+
+    op.on_kill()
+
+    backend.on_kill.assert_called_once_with()
+    assert backend.abandoned == []
+
+
+def test_on_kill_before_execute_does_nothing(tmp_path):
+    backend = FakeDeferrableHook()
+    backend.on_kill = MagicMock()
+
+    _operator(backend, tmp_path).on_kill()
+
+    assert backend.abandoned == []
+    backend.on_kill.assert_not_called()
+
+
+def test_on_kill_failure_is_logged_not_raised(tmp_path):
+    backend = FakeDeferrableHook()
+    backend.abandon = MagicMock(side_effect=AirflowException("host unreachable"))
+    op = _operator(backend, tmp_path)
+    with pytest.raises(TaskDeferred):
+        op.execute({})
+
+    with patch.object(op.log, "warning") as warning:
+        op.on_kill()
+
+    warning.assert_called_once()
