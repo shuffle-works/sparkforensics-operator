@@ -5,6 +5,8 @@ import time
 from datetime import timedelta
 from typing import Any
 
+from packaging.version import Version
+
 from sparkforensics_operator._compat import AirflowException
 from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, RemoteEventLog
 from sparkforensics_operator.report import Report
@@ -26,6 +28,9 @@ _JOB_COMMAND_TIMEOUT_S = 120
 # How long past the job's own time limit the deferral waits before giving up
 # on a job that never reported back (host rebooted, wrapper killed).
 _DEFER_GRACE_S = 120
+# The first SSH provider release whose remote-job helpers quote paths and
+# take a base directory for cleanup; the synchronous path needs neither.
+_DEFERRABLE_MIN_SSH_PROVIDER = Version("6.0.1")
 _PID_LINE = re.compile(rb"^" + re.escape(_remote_job.SYNC_PID_MARKER.encode()) + rb"(\d+)\n", re.M)
 
 
@@ -81,6 +86,18 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
     def _where(self) -> str:
         return _where(self.ssh_conn_id)
 
+    def cannot_defer_reason(self) -> str | None:
+        try:
+            from airflow.providers.ssh import __version__ as provider_version
+        except ImportError:
+            return "the ssh extra (apache-airflow-providers-ssh) is not installed"
+        if Version(provider_version).release < _DEFERRABLE_MIN_SSH_PROVIDER.release:
+            return (
+                f"it needs apache-airflow-providers-ssh>={_DEFERRABLE_MIN_SSH_PROVIDER} "
+                f"(Airflow 2.11+), and {provider_version} is installed"
+            )
+        return None
+
     def _base_dir(self) -> str | None:
         if self.remote_base_dir is not None:
             _remote_job.validate_remote_base_dir(self.remote_base_dir)
@@ -119,24 +136,13 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         rather than through SSHHook.exec_ssh_client_command, which bounds
         only each idle read (not the whole run) and logs every stdout line,
         i.e. the entire JSON report, to the task log."""
-        from airflow.providers.ssh.hooks.ssh import SSHHook
-
-        try:
-            ssh_hook = SSHHook(ssh_conn_id=self.ssh_conn_id)
-            with ssh_hook.get_conn() as client:
-                return _exec(
-                    client, command, self.timeout,
-                    on_timeout=lambda: _timeout_error(self.timeout, self.ssh_conn_id, log_ref),
-                    on_channel=lambda channel: setattr(self, "_sync_channel", channel),
-                    on_pid=lambda pid: setattr(self, "_sync_pid", pid),
-                )
-        except AirflowException:
-            raise
-        except Exception as e:
-            raise AirflowException(
-                f"SSH remote analysis failed (ssh_conn_id={self.ssh_conn_id!r}) while running "
-                f"sparkforensics-analyze on {log_ref.describe()}: {e}"
-            ) from e
+        with self._job_connection(f"running sparkforensics-analyze on {log_ref.describe()}") as client:
+            return _exec(
+                client, command, self.timeout,
+                on_timeout=lambda: _timeout_error(self.timeout, self.ssh_conn_id, log_ref),
+                on_channel=lambda channel: setattr(self, "_sync_channel", channel),
+                on_pid=lambda pid: setattr(self, "_sync_pid", pid),
+            )
 
     def on_kill(self) -> None:
         """Stops a running synchronous analysis when the task is killed:
@@ -263,11 +269,19 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
             ssh_conn_id=ssh_conn_id, analyze_bin=job["analyze_bin"], timeout=job["timeout"],
         )
 
-    def abandon(self, context: Any) -> None:
-        command = _remote_job.abandon_scope_command(
-            self._base_dir(), _remote_job.task_instance_scope(context)
-        )
-        with self._job_connection("stopping the remote analysis job") as client:
+    def abandon(self, context: Any, job: dict | None = None) -> None:
+        # The submitted job's own host and directory, when known: this
+        # hook's ssh_conn_id and remote_base_dir are re-rendered on resume
+        # and may no longer be the ones it was submitted with.
+        if job is not None:
+            ssh_conn_id = job["ssh_conn_id"]
+            command = _remote_job.abandon_scope_dir_command(job["scope_dir"])
+        else:
+            ssh_conn_id = self.ssh_conn_id
+            command = _remote_job.abandon_scope_command(
+                self._base_dir(), _remote_job.task_instance_scope(context)
+            )
+        with self._job_connection("stopping the remote analysis job", ssh_conn_id) as client:
             self._checked(client, command, "stopping the remote analysis job")
 
     def _job_connection(self, what: str, ssh_conn_id: str | None = None):
@@ -330,7 +344,10 @@ class _JobConnection:
 
     def __exit__(self, exc_type, exc, tb):
         self._conn.__exit__(exc_type, exc, tb)
-        if exc is None or isinstance(exc, AirflowException):
+        # Only errors are rewrapped: AirflowTaskTimeout, a task kill and
+        # KeyboardInterrupt are BaseExceptions the task runner must see as
+        # they are, to call the operator's on_kill().
+        if not isinstance(exc, Exception) or isinstance(exc, AirflowException):
             return False
         raise self._error(exc) from exc
 

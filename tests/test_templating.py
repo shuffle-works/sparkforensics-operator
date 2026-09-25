@@ -198,3 +198,27 @@ def test_the_tunnel_never_reads_its_inner_hooks_values_as_the_tasks_template_fil
             hook.locate({"params": {"app": "app-9"}, "task": upstream})
 
     assert inner["hook"].app_id == "app-9.json"
+
+
+@pytest.mark.parametrize("upstream_cls, copies", [(SparkForensicsOperator, 0), (_JsonTemplatingOperator, 1)])
+def test_the_callback_copies_the_upstream_task_at_most_once_per_run(tmp_path, upstream_cls, copies):
+    import copy as copy_module
+
+    log_source = RemotePathLogSourceHook(ssh_conn_id="onprem_ssh", path_template="/logs/{{ run_id }}")
+    backend = MagicMock(spec=["analyze"])
+    backend.analyze.return_value = _report()
+    callback = spark_forensics_callback(log_source=log_source, backend=backend, report_dest=str(tmp_path / "r.json"))
+    upstream = upstream_cls(task_id="spark", log_source=log_source, backend=backend, report_dest="x")
+    real_copy = copy_module.copy
+    copied = []
+
+    def counting_copy(value):
+        if value is upstream:
+            copied.append(value)
+        return real_copy(value)
+
+    with patch("sparkforensics_operator.hooks._templating.copy.copy", side_effect=counting_copy):
+        callback({"run_id": "run_1", "task": upstream, "ti": MagicMock()})
+
+    assert len(copied) == copies
+    assert backend.analyze.call_args.args[0] == RemoteEventLog("onprem_ssh", "/logs/run_1")

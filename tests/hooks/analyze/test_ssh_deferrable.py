@@ -4,7 +4,9 @@ detached job, SSHRemoteJobTrigger really polls it, collect() really reads
 the files back."""
 import importlib
 import json
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from airflow.exceptions import AirflowException
@@ -134,7 +136,10 @@ def test_remote_timeout_kills_the_cli_and_its_children_and_raises_the_timeout_er
     assert not Path(job["scope_dir"]).exists()
 
 
-def test_a_new_try_stops_and_removes_the_previous_try_before_starting(host):
+@pytest.mark.parametrize("procps", [True, False], ids=["pkill", "no-procps"])
+def test_a_new_try_stops_and_removes_the_previous_try_before_starting(host, procps):
+    if not procps:
+        host.hide_procps()
     host.fake_cli(f"echo $$ > {host.home}/cli_pid_$$; sleep 30\n")
     hook = _hook()
     first = hook.submit(LOG, {}, ti_context(try_number=1))
@@ -165,7 +170,10 @@ def test_other_task_instances_are_left_alone(host):
         hook.abandon(ti_context(map_index=1))
 
 
-def test_abandon_kills_the_running_job_and_removes_its_directory(host):
+@pytest.mark.parametrize("procps", [True, False], ids=["pkill", "no-procps"])
+def test_abandon_kills_the_running_job_and_removes_its_directory(host, procps):
+    if not procps:
+        host.hide_procps()
     host.fake_cli(f"echo $$ > {host.home}/cli_pid; sleep 30\n")
     hook = _hook()
     job = hook.submit(LOG, {}, ti_context())
@@ -278,7 +286,10 @@ def test_ssh_failure_at_resume_raises_a_clear_airflowexception(host):
     assert not Path(job["scope_dir"]).exists()
 
 
-def test_a_trigger_error_stops_the_job_and_raises(host):
+@pytest.mark.parametrize("procps", [True, False], ids=["pkill", "no-procps"])
+def test_a_trigger_error_stops_the_job_and_raises(host, procps):
+    if not procps:
+        host.hide_procps()
     host.fake_cli(f"echo $$ > {host.home}/cli_pid; sleep 30\n")
     hook = _hook()
     job = hook.submit(LOG, {}, ti_context())
@@ -420,3 +431,93 @@ def test_a_job_command_that_never_finishes_times_out():
     with pytest.raises(TimeoutError, match="did not finish within 0s"):
         _exec(client, "sleep 99", 0)
     assert channel.closed
+
+
+@pytest.mark.parametrize("procps", [True, False], ids=["pkill", "no-procps"])
+def test_abandon_kills_every_process_of_the_job_not_just_its_wrapper(host, procps):
+    # coreutils `timeout` moves itself and the CLI out of the wrapper's
+    # process group, so only the session reaches them.
+    if not procps:
+        host.hide_procps()
+    host.fake_cli(f"echo $$ > {host.home}/cli_pid; sleep 30 & echo $! > {host.home}/child_pid; wait\n")
+    hook = _hook()
+    job = hook.submit(LOG, {}, ti_context())
+    assert wait_until(lambda: (host.home / "child_pid").exists())
+    pids = [int((host.home / name).read_text()) for name in ("cli_pid", "child_pid")]
+
+    hook.abandon(ti_context(), job)
+
+    for pid in pids:
+        assert wait_until(lambda: not pid_alive(pid)), f"{pid} still running"
+    assert not Path(job["scope_dir"]).exists()
+
+
+def test_abandon_with_the_submitted_job_ignores_the_hooks_current_configuration(host, tmp_path):
+    host.fake_cli(f"echo $$ > {host.home}/cli_pid; sleep 30\n")
+    job = _hook(remote_base_dir=str(tmp_path / "submitted")).submit(LOG, {}, ti_context())
+    assert wait_until(lambda: (host.home / "cli_pid").exists())
+    pid = int((host.home / "cli_pid").read_text())
+    resumed = SSHAnalyzeHook(ssh_conn_id="edited_conn", remote_base_dir=str(tmp_path / "edited"))
+    host_connections = host.connections
+
+    resumed.abandon(ti_context(), json.loads(json.dumps(job)))
+
+    assert wait_until(lambda: not pid_alive(pid))
+    assert not Path(job["scope_dir"]).exists()
+    assert not (tmp_path / "edited").exists()
+    assert host.connections == host_connections + 1
+
+
+def _deployment(url):
+    return patch.dict(os.environ, {"AIRFLOW__API__BASE_URL": url, "AIRFLOW__WEBSERVER__BASE_URL": url})
+
+
+def test_deployments_sharing_the_ssh_user_leave_each_others_jobs_alone(host):
+    host.fake_cli(f"echo $$ > {host.home}/cli_pid_$$; sleep 30\n")
+    hook = _hook()
+    with _deployment("https://airflow-prod.example.com"):
+        prod = hook.submit(LOG, {}, ti_context())
+    assert wait_until(lambda: list(host.home.glob("cli_pid_*")))
+    prod_pid = int(next(host.home.glob("cli_pid_*")).read_text())
+
+    try:
+        with _deployment("https://airflow-staging.example.com/"):
+            staging = hook.submit(LOG, {}, ti_context())
+            hook.abandon(ti_context())
+        assert staging["scope_dir"] != prod["scope_dir"]
+        assert pid_alive(prod_pid)
+        assert Path(prod["job_dir"]).exists()
+        assert not Path(staging["scope_dir"]).exists()
+    finally:
+        hook.abandon(ti_context(), prod)
+
+
+def test_the_task_instance_scope_is_stable_across_tries_of_one_deployment():
+    from sparkforensics_operator.hooks.analyze._remote_job import task_instance_scope
+
+    with _deployment("https://airflow.example.com"):
+        first = task_instance_scope(ti_context(try_number=1))
+    with _deployment("https://airflow.example.com/"):
+        second = task_instance_scope(ti_context(try_number=2))
+
+    assert first == second
+
+
+def test_a_timeout_while_on_the_ssh_host_is_not_rewrapped(host):
+    # The task runner calls on_kill() only for AirflowTaskTimeout itself.
+    from airflow.exceptions import AirflowTaskTimeout
+
+    host.fake_cli("sleep 5\n")
+    host.fail_exec_matching = "bash -c"
+    host.fail_exec_error = AirflowTaskTimeout("Timeout, PID: 1")
+    hook = _hook()
+
+    with pytest.raises(AirflowTaskTimeout):
+        hook.submit(LOG, {}, ti_context())
+    host.fail_exec_matching = "sparkforensics-pid"
+    with pytest.raises(AirflowTaskTimeout):
+        hook.analyze(LOG, {})
+
+    host.fail_exec_matching = None
+    hook.abandon(ti_context())
+

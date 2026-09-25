@@ -12,6 +12,8 @@ module in Airflow 2.8.0. On Airflow 2.6.0/2.7.0,
 airflow.models.baseoperatorlink does not exist yet and BaseOperatorLink
 must still be imported from airflow.models.baseoperator.
 """
+from __future__ import annotations
+
 try:
     from airflow.sdk import BaseOperator, BaseOperatorLink
 
@@ -52,6 +54,21 @@ try:
 except ImportError:
     from airflow.configuration import conf
 
+
+def current_context() -> dict | None:
+    """The context of the task running in this process, or None outside
+    one. Imported lazily: Airflow 2's home for it, airflow.operators.python,
+    is costly to import."""
+    try:
+        from airflow.sdk import get_current_context
+    except ImportError:
+        from airflow.operators.python import get_current_context
+    try:
+        return get_current_context()
+    except Exception:  # raised when no task is running
+        return None
+
+
 __all__ = [
     "AIRFLOW_V3_PLUS",
     "AirflowException",
@@ -62,4 +79,5 @@ __all__ = [
     "BaseOperatorLink",
     "TaskDeferred",
     "conf",
+    "current_context",
 ]

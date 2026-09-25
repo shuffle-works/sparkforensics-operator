@@ -7,7 +7,7 @@ resume kwargs, rebuilding the trigger as the triggerer does, and resuming
 on a fresh operator instance."""
 import importlib
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -145,8 +145,11 @@ def test_deferred_and_synchronous_runs_give_identical_results(host, tmp_path, on
     assert not any((host.home / ".sparkforensics" / "jobs").iterdir())
 
 
-def test_killing_a_deferrable_task_while_it_runs_stops_the_remote_job(tmp_path):
+@pytest.mark.parametrize("procps", [True, False], ids=["pkill", "no-procps"])
+def test_killing_a_deferrable_task_while_it_runs_stops_the_remote_job(tmp_path, procps):
     host = LocalHost(tmp_path)
+    if not procps:
+        host.hide_procps()
     host.fake_cli(f"echo $$ > {host.home}/cli_pid; sleep 30\n")
     with host.patched():
         op = _operator(str(tmp_path / "report.json"), True, None, "fail")
@@ -161,3 +164,46 @@ def test_killing_a_deferrable_task_while_it_runs_stops_the_remote_job(tmp_path):
 
     assert wait_until(lambda: not pid_alive(pid))
     assert not any((host.home / ".sparkforensics" / "jobs").iterdir())
+
+
+@pytest.mark.parametrize("procps", [True, False], ids=["pkill", "no-procps"])
+def test_a_fresh_operator_killed_on_resume_stops_the_job_it_submitted(tmp_path, procps):
+    # Airflow 2 calls on_kill() on the operator it resumes with, and nothing
+    # else, when execution_timeout ran out during the deferral; its
+    # remote_base_dir renders differently from the submitting try's here.
+    host = LocalHost(tmp_path)
+    if not procps:
+        host.hide_procps()
+    host.fake_cli(f"echo $$ > {host.home}/cli_pid; sleep 30 & echo $! > {host.home}/child_pid; wait\n")
+
+    def operator():
+        return SparkForensicsOperator(
+            task_id="forensics",
+            log_source=RemotePathLogSourceHook(ssh_conn_id=CONN, path_template="/logs/{{ run_id }}"),
+            backend=SSHAnalyzeHook(
+                ssh_conn_id=CONN, poll_interval=0.1,
+                remote_base_dir=str(tmp_path) + "/jobs-{{ ti.try_number }}",
+            ),
+            report_dest=str(tmp_path / "report.json"),
+            deferrable=True,
+        )
+
+    with host.patched():
+        submitting = operator()
+        context = ti_context(try_number=1)
+        submitting.render_template_fields(context)
+        with pytest.raises(TaskDeferred):
+            submitting.execute(context)
+        assert wait_until(lambda: (host.home / "child_pid").exists())
+        pids = [int((host.home / name).read_text()) for name in ("cli_pid", "child_pid")]
+
+        fresh = operator()
+        context["ti"].try_number = 2
+        fresh.render_template_fields(context)
+        with patch("sparkforensics_operator.operator.current_context", return_value=context):
+            fresh.on_kill()
+
+    for pid in pids:
+        assert wait_until(lambda: not pid_alive(pid)), f"{pid} still running"
+    assert not any((tmp_path / "jobs-1").iterdir())
+    assert not (tmp_path / "jobs-2").exists()

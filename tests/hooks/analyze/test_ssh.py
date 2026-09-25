@@ -395,3 +395,28 @@ def test_on_kill_before_the_pid_arrives_only_closes_the_channel():
 
     assert running.closed
     assert client.exec_command.call_count == 1
+
+
+def test_deferral_needs_the_ssh_provider_the_remote_job_helpers_come_from(monkeypatch):
+    import airflow.providers.ssh as provider
+
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
+    monkeypatch.setattr(provider, "__version__", "6.0.1")
+    assert hook.cannot_defer_reason() is None
+    monkeypatch.setattr(provider, "__version__", "3.7.1")
+    assert hook.cannot_defer_reason() == (
+        "it needs apache-airflow-providers-ssh>=6.0.1 (Airflow 2.11+), and 3.7.1 is installed"
+    )
+
+
+def test_deferrable_true_on_an_older_ssh_provider_fails_at_dag_parse(monkeypatch):
+    import airflow.providers.ssh as provider
+
+    from sparkforensics_operator.operator import SparkForensicsOperator
+
+    monkeypatch.setattr(provider, "__version__", "3.7.1")
+    with pytest.raises(ValueError, match=r"cannot run SSHAnalyzeHook detached here: it needs apache-airflow-providers-ssh>=6\.0\.1"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=SSHAnalyzeHook(ssh_conn_id="onprem_ssh"),
+            report_dest="/tmp/r.json", deferrable=True,
+        )

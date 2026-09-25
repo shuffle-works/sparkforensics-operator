@@ -62,6 +62,11 @@ class DeferrableAnalyzeHook(AnalyzeHook):
     collect() and abandon() need. See docs/architecture.md's "Deferrable
     execution" section."""
 
+    def cannot_defer_reason(self) -> str | None:
+        """Why this backend cannot run detached in this environment (e.g. a
+        dependency too old), or None when it can."""
+        return None
+
     @abstractmethod
     def submit(self, log_ref: EventLogRef, thresholds: dict, context: Any) -> dict:
         """Start the analysis detached and return the job. log_ref is
@@ -86,6 +91,9 @@ class DeferrableAnalyzeHook(AnalyzeHook):
         job's remote state on success and on failure."""
 
     @abstractmethod
-    def abandon(self, context: Any) -> None:
+    def abandon(self, context: Any, job: dict | None = None) -> None:
         """Stop and remove any job of this task instance, when the
-        deferral failed or timed out and collect() will not run."""
+        deferral failed or timed out, or the task was killed, and collect()
+        will not run. job is the one submit() returned, when the caller
+        still has it; without it, the job is found from context and this
+        hook's own configuration."""

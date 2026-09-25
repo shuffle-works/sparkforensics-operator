@@ -15,7 +15,7 @@ from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.base import DeferrableAnalyzeHook
 from sparkforensics_operator.hooks.analyze.subprocess import SubprocessAnalyzeHook
 from sparkforensics_operator.log_ref import HistoryServerApp, RemoteEventLog
-from sparkforensics_operator.operator import SparkForensicsOperator
+from sparkforensics_operator.operator import REMOTE_JOB_XCOM_KEY, SparkForensicsOperator
 from sparkforensics_operator.report import Report, ThresholdResult
 
 LOG = RemoteEventLog("onprem_ssh", "/logs/app-1")
@@ -63,8 +63,33 @@ class FakeDeferrableHook(DeferrableAnalyzeHook):
         self.collected.append((job, event, log_ref, thresholds))
         return self.report
 
-    def abandon(self, context):
-        self.abandoned.append(context)
+    def abandon(self, context, job=None):
+        self.abandoned.append((context, job))
+
+
+class _TI:
+    """Just enough of a task instance to hold the operator's XComs."""
+
+    def __init__(self, xcoms=None, **attrs):
+        self.dag_id, self.task_id, self.run_id, self.map_index = "spark_dag", "forensics", "manual__1", -1
+        self.start_date = datetime.now(timezone.utc)
+        self.xcoms = {} if xcoms is None else xcoms
+        self.__dict__.update(attrs)
+
+    def xcom_push(self, key, value):
+        self.xcoms[key] = value
+
+    def xcom_pull(self, task_ids, key, map_indexes):
+        assert (task_ids, map_indexes) == (self.task_id, self.map_index)
+        return self.xcoms.get(key)
+
+
+class CannotDeferHereHook(FakeDeferrableHook):
+    def cannot_defer_reason(self):
+        return "it needs apache-airflow-providers-ssh>=6.0.1 (Airflow 2.11+), and 3.7.1 is installed"
+
+
+JOB = {"job_id": "job-1", "timeout": 900}
 
 
 def _operator(backend, tmp_path, **kwargs):
@@ -224,7 +249,7 @@ def test_a_failed_or_timed_out_deferral_abandons_the_remote_job_before_failing(t
     with pytest.raises(Exception, match=error):
         fresh.resume_execution("__fail__", {"error": error}, context)
 
-    assert backend.abandoned == [context]
+    assert backend.abandoned == [(context, None)]
 
 
 @needs_resume_execution
@@ -309,7 +334,7 @@ def test_on_kill_while_submitting_or_resuming_abandons_the_remote_job(tmp_path):
 
     op.on_kill()
 
-    assert backend.abandoned == [context]
+    assert backend.abandoned == [(context, {"job_id": "job-1", "timeout": 900})]
 
 
 def test_on_kill_on_a_resumed_operator_abandons_with_its_own_context(tmp_path):
@@ -321,7 +346,7 @@ def test_on_kill_on_a_resumed_operator_abandons_with_its_own_context(tmp_path):
 
     fresh.execute_complete(context, event=_event(), **kwargs)
 
-    assert backend.abandoned == [context]
+    assert backend.abandoned == [(context, kwargs["job"])]
 
 
 def test_on_kill_of_a_synchronous_run_asks_the_backend_to_stop(tmp_path):
@@ -357,3 +382,122 @@ def test_on_kill_failure_is_logged_not_raised(tmp_path):
         op.on_kill()
 
     warning.assert_called_once()
+
+
+def test_the_submitted_job_is_kept_in_xcom_for_a_later_abandon(tmp_path):
+    ti = _TI()
+
+    _defer(_operator(FakeDeferrableHook(), tmp_path), {"ti": ti})
+
+    assert ti.xcoms == {REMOTE_JOB_XCOM_KEY: JOB}
+
+
+@needs_resume_execution
+def test_a_failed_deferral_abandons_the_job_it_submitted(tmp_path):
+    # Airflow replaced the resume kwargs with the error, and the resumed
+    # hook's configuration may have changed, so the job comes from XCom.
+    submitted = _TI()
+    _defer(_operator(FakeDeferrableHook(), tmp_path), {"ti": submitted})
+    backend = FakeDeferrableHook()
+    context = {"ti": _TI(xcoms=submitted.xcoms)}
+
+    with pytest.raises(Exception, match="Trigger/execution timeout"):
+        _operator(backend, tmp_path).resume_execution(
+            "__fail__", {"error": "Trigger/execution timeout"}, context
+        )
+
+    assert backend.abandoned == [(context, JOB)]
+
+
+def test_on_kill_on_a_fresh_operator_abandons_the_submitted_job_with_the_running_tasks_context(tmp_path):
+    submitted = _TI()
+    _defer(_operator(FakeDeferrableHook(), tmp_path), {"ti": submitted})
+    backend = FakeDeferrableHook()
+    context = {"ti": _TI(xcoms=submitted.xcoms)}
+
+    with patch("sparkforensics_operator.operator.current_context", return_value=context):
+        _operator(backend, tmp_path).on_kill()
+
+    assert backend.abandoned == [(context, JOB)]
+
+
+def test_airflow2_execution_timeout_during_the_deferral_stops_the_submitted_job(tmp_path):
+    # Airflow 2 resumes a deferral whose execution_timeout already ran out by
+    # raising AirflowTaskTimeout and calling on_kill() on the fresh operator,
+    # before it calls resume_execution() or anything else on it.
+    if AIRFLOW_V3_PLUS:
+        pytest.skip("Airflow 2's task runner")
+    from airflow.exceptions import AirflowTaskTimeout
+    from airflow.models import taskinstance
+
+    if not hasattr(taskinstance, "_execute_task"):
+        pytest.skip("taskinstance._execute_task is Airflow >= 2.10")
+    submitted = _TI()
+    _defer(_operator(FakeDeferrableHook(), tmp_path), {"ti": submitted})
+    backend = FakeDeferrableHook()
+    fresh = _operator(backend, tmp_path, execution_timeout=timedelta(minutes=10))
+    ti = _TI(
+        xcoms=submitted.xcoms, task=fresh, next_method="__fail__",
+        next_kwargs={"error": "Trigger/execution timeout"},
+        start_date=datetime.now(timezone.utc) - timedelta(minutes=11),
+    )
+    context = {"ti": ti}
+
+    with taskinstance.set_current_context(context), pytest.raises(AirflowTaskTimeout):
+        taskinstance._execute_task(ti, context, fresh)
+
+    assert backend.abandoned == [(context, JOB)]
+
+
+@pytest.mark.parametrize("failing", ["trigger_for", "defer_timeout", "defer"])
+def test_a_failure_after_submitting_stops_the_job_and_cleans_up(tmp_path, failing):
+    backend = FakeDeferrableHook()
+    op = _operator(backend, tmp_path)
+    target = op if failing == "defer" else backend
+    context = {"ti": _TI()}
+
+    with patch.object(target, failing, side_effect=RuntimeError("boom")), pytest.raises(RuntimeError, match="boom"):
+        op.execute(context)
+
+    assert backend.abandoned == [(context, JOB)]
+    op.log_source.cleanup.assert_called_once_with(LOG)
+
+
+def test_a_timeout_after_submitting_leaves_the_job_to_on_kill(tmp_path):
+    class Timeout(BaseException):
+        pass
+
+    backend = FakeDeferrableHook()
+    backend.trigger_for = MagicMock(side_effect=Timeout())
+    op = _operator(backend, tmp_path)
+    context = {"ti": _TI()}
+
+    with pytest.raises(Timeout):
+        op.execute(context)
+    assert backend.abandoned == []
+    op.log_source.cleanup.assert_called_once_with(LOG)
+
+    op.on_kill()  # what the task runner does next
+
+    assert backend.abandoned == [(context, JOB)]
+
+
+def test_a_failure_to_stop_the_job_after_a_failed_submit_keeps_the_original_error(tmp_path):
+    backend = FakeDeferrableHook()
+    backend.trigger_for = MagicMock(side_effect=RuntimeError("boom"))
+    backend.abandon = MagicMock(side_effect=AirflowException("host unreachable"))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        _operator(backend, tmp_path).execute({"ti": _TI()})
+
+
+def test_deferrable_true_rejects_a_backend_that_cannot_defer_in_this_environment(tmp_path):
+    with pytest.raises(ValueError, match=r"cannot run CannotDeferHereHook detached here: it needs .*6\.0\.1.*drop deferrable=True"):
+        _operator(CannotDeferHereHook(), tmp_path)
+
+
+def test_default_deferrable_config_runs_synchronously_when_the_backend_cannot_defer_here(tmp_path):
+    with patch("sparkforensics_operator.operator.conf.getboolean", return_value=True):
+        op = _operator(CannotDeferHereHook(), tmp_path, deferrable=None)
+
+    assert op.deferrable is False

@@ -9,6 +9,7 @@ the network hop is skipped.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
 import queue
@@ -17,7 +18,7 @@ import subprocess
 import textwrap
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -38,8 +39,16 @@ needs_posix_host = pytest.mark.skipif(
 )
 
 
+# What the procps package installs, which slim images (the official Airflow
+# one among them) leave out.
+PROCPS_TOOLS = frozenset(
+    "free kill pgrep pidof pidwait pkill pmap ps pwdx skill slabtop snice tload top uptime vmstat w watch".split()
+)
+
+
 class LocalHost:
     def __init__(self, root: Path):
+        self.root = root
         self.home = root / "home"
         self.bin_dir = root / "bin"
         self.home.mkdir()
@@ -47,9 +56,25 @@ class LocalHost:
         self.env = {**os.environ, "HOME": str(self.home), "PATH": f"{self.bin_dir}:{os.environ['PATH']}"}
         self.connections = 0
         self.fail_connect: Exception | None = None
-        # Commands containing this string raise instead of running, like a
-        # connection dropping mid-session.
+        # Commands containing this string raise fail_exec_error instead of
+        # running, like a connection dropping mid-session.
         self.fail_exec_matching: str | None = None
+        self.fail_exec_error: BaseException = EOFError("connection dropped")
+
+    def hide_procps(self) -> None:
+        """Takes procps's tools (pkill, ps, ...) off this host's PATH."""
+        tools = self.root / "tools-without-procps"
+        tools.mkdir()
+        for directory in os.environ["PATH"].split(os.pathsep):
+            if not os.path.isdir(directory):
+                continue
+            for entry in os.scandir(directory):
+                link = tools / entry.name
+                if entry.name in PROCPS_TOOLS or link.exists() or not os.access(entry.path, os.X_OK):
+                    continue
+                link.symlink_to(entry.path)
+        self.env["PATH"] = f"{self.bin_dir}:{tools}"
+        assert shutil.which("pkill", path=self.env["PATH"]) is None
 
     def fake_cli(self, body: str, name: str = "sparkforensics-analyze") -> Path:
         """Installs a fake CLI. body is sh; $out is the --out value (empty
@@ -89,7 +114,7 @@ class LocalHost:
 
             def exec_command(self, command, timeout=None):
                 if host.fail_exec_matching and host.fail_exec_matching in command:
-                    raise EOFError("connection dropped")
+                    raise host.fail_exec_error
                 proc = subprocess.Popen(
                     ["sh", "-c", command], cwd=host.home, env=host.env,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -110,9 +135,13 @@ class LocalHost:
         async def _connect(_trigger):
             return _AsyncConn(host)
 
-        with patch("airflow.providers.ssh.hooks.ssh.SSHHook", return_value=ssh_hook), patch(
-            "airflow.providers.ssh.triggers.ssh_remote_job.SSHRemoteJobTrigger._connect", _connect
-        ):
+        with ExitStack() as patches:
+            patches.enter_context(patch("airflow.providers.ssh.hooks.ssh.SSHHook", return_value=ssh_hook))
+            # SSH providers before 6.0 have no remote-job trigger.
+            if importlib.util.find_spec("airflow.providers.ssh.triggers") is not None:
+                patches.enter_context(patch(
+                    "airflow.providers.ssh.triggers.ssh_remote_job.SSHRemoteJobTrigger._connect", _connect
+                ))
             yield
 
 
@@ -201,6 +230,7 @@ def ti_context(try_number: int = 1, map_index: int = -1, run_id: str = "manual__
     ti = SimpleNamespace(
         dag_id="spark_dag", task_id="forensics", run_id=run_id, try_number=try_number, map_index=map_index,
         pushed=pushed, xcom_push=lambda key, value: pushed.__setitem__(key, value),
+        xcom_pull=lambda task_ids, key, map_indexes: pushed.get(key),
     )
     return {"ti": ti, "run_id": run_id}
 

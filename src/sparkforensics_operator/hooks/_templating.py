@@ -20,13 +20,22 @@ class TemplatedHookMixin:
         return f"{type(self).__name__}({fields})"
 
 
-def render_with_task_env(task, value: Any, context: dict) -> Any:
-    """Renders value, and a hook's template_fields in place, with task's Jinja
-    environment (its DAG's macros, filters and user_defined_macros). Strings
-    are always rendered as templates, never read as template files: the
-    task's template_ext names files for its own template fields, and an
-    upstream task's (".json" on EMR operators) would otherwise turn a
-    report_dest such as "s3://.../app.json" into a template-file lookup."""
+def task_renderer(task):
+    """task, or a copy of it, whose render_template() renders a value, and a
+    hook's template_fields in place, with task's Jinja environment (its
+    DAG's macros, filters and user_defined_macros). Strings are always
+    rendered as templates, never read as template files: the task's
+    template_ext names files for its own template fields, and an upstream
+    task's (".json" on EMR operators) would otherwise turn a report_dest
+    such as "s3://.../app.json" into a template-file lookup. Only a task
+    with a template_ext is copied."""
+    if not task.template_ext:
+        return task
     renderer = copy.copy(task)
     renderer.template_ext = ()
-    return renderer.render_template(value, context)
+    return renderer
+
+
+def render_with_task_env(task, value: Any, context: dict) -> Any:
+    """Renders value with task_renderer(task)."""
+    return task_renderer(task).render_template(value, context)

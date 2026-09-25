@@ -22,8 +22,10 @@ jobs:
             tox-env: py312-airflow3
           - python: "3.9"
             tox-env: py39-airflow2min
+          - python: "3.9"
+            tox-env: py39-airflow2sshmin
           - python: "3.11"
-            tox-env: py311-airflow2sshmin
+            tox-env: py311-airflow2deferrablemin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

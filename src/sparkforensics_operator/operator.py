@@ -5,7 +5,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 from sparkforensics_operator import sinks
-from sparkforensics_operator._compat import AirflowException, BaseOperator, conf
+from sparkforensics_operator._compat import (
+    AirflowException,
+    BaseOperator,
+    TaskDeferred,
+    conf,
+    current_context,
+)
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.base import DeferrableAnalyzeHook
 from sparkforensics_operator.links import ReportLink
@@ -18,6 +24,9 @@ from sparkforensics_operator.summary import (
 )
 
 _THRESHOLD_BREACH_ACTIONS = ("fail", "warn", "ignore")
+# The XCom a deferrable run keeps its submitted job under, until the task
+# instance's next try clears it.
+REMOTE_JOB_XCOM_KEY = "sparkforensics_remote_job"
 
 
 def _validate_on_threshold_breach(value: str) -> None:
@@ -213,8 +222,14 @@ class SparkForensicsOperator(BaseOperator):
                 "process, so there is nothing to defer on. Use SSHAnalyzeHook, or drop "
                 "deferrable=True."
             )
+        cannot_defer = backend.cannot_defer_reason() if can_defer else None
+        if deferrable and cannot_defer:
+            raise ValueError(
+                f"deferrable=True cannot run {type(backend).__name__} detached here: "
+                f"{cannot_defer}. Upgrade, or drop deferrable=True to run it synchronously."
+            )
         if deferrable is None:
-            deferrable = can_defer and conf.getboolean(
+            deferrable = can_defer and not cannot_defer and conf.getboolean(
                 "operators", "default_deferrable", fallback=False
             )
         super().__init__(**kwargs)
@@ -237,9 +252,11 @@ class SparkForensicsOperator(BaseOperator):
         # ReportLink on Airflow 3.
         self.persisted_report_dest: str | None = None
         self.persisted_report_url: str | None = None
-        # The context of the execute()/execute_complete() running in this
-        # process, for on_kill(); never read across a deferral.
+        # The context and remote job of the execute()/execute_complete()
+        # running in this process, for on_kill(); never read across a
+        # deferral.
         self._kill_context: dict | None = None
+        self._kill_job: dict | None = None
 
     def render_template_fields(self, context, jinja_env=None) -> None:
         # Airflow renders nested template fields in place. A DAG file may pass
@@ -278,29 +295,44 @@ class SparkForensicsOperator(BaseOperator):
 
     def _submit_and_defer(self, context: dict) -> None:
         log_ref = self.log_source.locate(context)
+        job = None
         try:
             self.backend.check_log_ref(log_ref)
             job = self.backend.submit(log_ref, self.thresholds, context)
-        except BaseException:
+            self._kill_job = job
+            # Airflow replaces the resume kwargs with an error when the
+            # deferral fails or times out, and on_kill() gets no kwargs at
+            # all, so the job is kept where both can find it.
+            ti = context.get("ti")
+            if ti is not None:
+                ti.xcom_push(key=REMOTE_JOB_XCOM_KEY, value=job)
+            # Everything execute_complete() needs travels in these kwargs,
+            # which Airflow serializes with the deferral; the operator that
+            # resumes is a fresh instance rebuilt from the DAG file. They
+            # carry the values this try rendered and submitted with, so a
+            # DAG edited while the task is deferred can't pair this job's
+            # output with other settings. Only notifier and
+            # on_threshold_breach come from the fresh instance.
+            self.defer(
+                trigger=self.backend.trigger_for(job),
+                method_name="execute_complete",
+                kwargs={
+                    "job": job,
+                    "log_ref": log_ref_to_dict(log_ref),
+                    "report_dest": self.report_dest,
+                    "thresholds": dict(self.thresholds),
+                },
+                timeout=self._defer_timeout(job, context),
+            )
+        except TaskDeferred:
+            raise
+        except BaseException as e:
+            # A job submitted but never deferred on would run unwatched. A
+            # timeout or kill reaches on_kill(), which stops it instead.
+            if job is not None and isinstance(e, Exception):
+                self._abandon_quietly(context, job)
             self.log_source.cleanup(log_ref)
             raise
-        # Everything execute_complete() needs travels in these kwargs, which
-        # Airflow serializes with the deferral; the operator that resumes is
-        # a fresh instance rebuilt from the DAG file. They carry the values
-        # this try rendered and submitted with, so a DAG edited while the
-        # task is deferred can't pair this job's output with other settings.
-        # Only notifier and on_threshold_breach come from the fresh instance.
-        self.defer(
-            trigger=self.backend.trigger_for(job),
-            method_name="execute_complete",
-            kwargs={
-                "job": job,
-                "log_ref": log_ref_to_dict(log_ref),
-                "report_dest": self.report_dest,
-                "thresholds": dict(self.thresholds),
-            },
-            timeout=self._defer_timeout(job, context),
-        )
 
     def _defer_timeout(self, job: dict, context: dict) -> timedelta:
         # Airflow 2 caps a deferral at execution_timeout itself; Airflow 3's
@@ -326,6 +358,7 @@ class SparkForensicsOperator(BaseOperator):
         """Resumes a deferred run on a worker once the trigger fires: reads
         the report back and acts on it exactly as execute() does."""
         self._kill_context = context
+        self._kill_job = job
         if not event:
             raise AirflowException("SparkForensics deferred analysis resumed without a trigger event")
         for line in (event.get("log_chunk") or "").splitlines():
@@ -358,13 +391,20 @@ class SparkForensicsOperator(BaseOperator):
         remote job, the synchronous path asks the backend to stop its run.
         Airflow runs no process for a task while it is deferred, so a kill,
         clear or mark-failed then reaches the job only through the next
-        try's sweep (see docs/runbook.md)."""
+        try's sweep (see docs/runbook.md).
+
+        Airflow 2 can call this on the fresh operator it resumes a deferral
+        with before running any of its methods, when execution_timeout ran
+        out during the deferral, so the context then comes from the running
+        task and the job from XCom."""
         context = self._kill_context
+        if context is None:
+            context = current_context()
         if context is None:
             return
         try:
             if self.deferrable and isinstance(self.backend, DeferrableAnalyzeHook):
-                self.backend.abandon(context)
+                self.backend.abandon(context, self._kill_job or self._submitted_job(context))
             elif callable(getattr(self.backend, "on_kill", None)):
                 self.backend.on_kill()
         except Exception:
@@ -385,11 +425,29 @@ class SparkForensicsOperator(BaseOperator):
                 "SparkForensics deferred analysis did not finish (%s); stopping and "
                 "removing the remote job.", error,
             )
-            try:
-                self.backend.abandon(context)
-            except Exception:
-                self.log.warning(
-                    "Could not stop and remove the remote job; the next try of this "
-                    "task does.", exc_info=True,
-                )
+            self._abandon_quietly(context, self._submitted_job(context))
         return super().resume_execution(next_method, next_kwargs, context)
+
+    def _submitted_job(self, context: dict) -> dict | None:
+        """The job this try submitted, from the XCom _submit_and_defer()
+        pushed; None if there is none or it cannot be read."""
+        ti = context.get("ti")
+        if ti is None:
+            return None
+        try:
+            job = ti.xcom_pull(
+                task_ids=ti.task_id, key=REMOTE_JOB_XCOM_KEY, map_indexes=getattr(ti, "map_index", -1)
+            )
+        except Exception:
+            self.log.warning("Could not read the submitted remote job from XCom", exc_info=True)
+            return None
+        return job if isinstance(job, dict) else None
+
+    def _abandon_quietly(self, context: dict, job: dict | None) -> None:
+        try:
+            self.backend.abandon(context, job)
+        except Exception:
+            self.log.warning(
+                "Could not stop and remove the remote job; the next try of this "
+                "task does.", exc_info=True,
+            )

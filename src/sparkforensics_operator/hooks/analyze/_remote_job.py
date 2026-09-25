@@ -21,6 +21,7 @@ import shlex
 from pathlib import PurePosixPath
 from typing import Any
 
+from sparkforensics_operator._compat import AIRFLOW_V3_PLUS, conf
 from sparkforensics_operator.log_ref import EventLogRef
 
 from ._cli import build_cli_args
@@ -47,13 +48,26 @@ def validate_remote_base_dir(path: str, what: str = "remote_base_dir") -> None:
         raise ValueError(f"{what} cannot contain '..', got {path!r}")
 
 
+def airflow_deployment() -> str:
+    """This Airflow deployment's own URL ([api] base_url on Airflow 3,
+    [webserver] base_url on Airflow 2). Two deployments running the same
+    DAGs produce the same dag, task and run ids, e.g. for scheduled runs,
+    and nothing else a worker can see tells them apart; their URLs differ."""
+    section = "api" if AIRFLOW_V3_PLUS else "webserver"
+    return (conf.get(section, "base_url", fallback="") or "").rstrip("/")
+
+
 def task_instance_scope(context: Any) -> str:
     """The name of this task instance's directory under the base directory:
-    the same for every try of one (dag_id, task_id, run_id, map_index), and
-    different for any other. The digest keeps names unique however long the
-    ids are; the readable prefix is for whoever lists the directory."""
+    the same for every try of one (dag_id, task_id, run_id, map_index) of
+    this Airflow deployment, and different for any other, including the
+    same task instance of another deployment sharing the SSH user. The
+    digest keeps names unique however long the ids are; the readable prefix
+    is for whoever lists the directory."""
     ti = context["ti"]
-    key = json.dumps([ti.dag_id, ti.task_id, ti.run_id, getattr(ti, "map_index", -1)])
+    key = json.dumps(
+        [airflow_deployment(), ti.dag_id, ti.task_id, ti.run_id, getattr(ti, "map_index", -1)]
+    )
     digest = hashlib.sha256(key.encode()).hexdigest()[:16]
     dag = _UNSAFE_NAME_CHARS.sub("_", ti.dag_id)[:40]
     task = _UNSAFE_NAME_CHARS.sub("_", ti.task_id)[:40]
@@ -68,6 +82,28 @@ def _base_dir_expr(remote_base_dir: str | None) -> str:
     return shlex.quote(remote_base_dir)
 
 
+# Defines stop_session, which sends SIGTERM to every process of session
+# $1. pkill (procps) is missing on some hosts, e.g. slim container images,
+# so without it the session's processes are looked up in /proc: the fourth
+# field after the parenthesised command name in /proc/<pid>/stat is the
+# session id. Only on a host with neither does it fall back to the process
+# group and then the single process, as the provider's own kill does.
+_STOP_SESSION = """\
+stop_session() {
+  pkill -TERM -s "$1" 2>/dev/null && return 0
+  sid=$1 signalled=
+  for stat_file in /proc/[0-9]*/stat; do
+    IFS= read -r stat 2>/dev/null < "$stat_file" || continue
+    set -- ${stat##*) }
+    [ "${4:-}" = "$sid" ] || continue
+    q=${stat_file#/proc/}
+    kill -TERM "${q%/stat}" 2>/dev/null && signalled=1
+  done
+  [ -n "$signalled" ] ||
+    kill -TERM -"$sid" 2>/dev/null || kill -TERM "$sid" 2>/dev/null || true
+}
+"""
+
 # Stops every job under "$scope" that has not written its exit code yet,
 # then removes "$scope". A pid is signalled only while its command line
 # still names its own job directory (by its unique name): after a host
@@ -75,10 +111,8 @@ def _base_dir_expr(remote_base_dir: str | None) -> str:
 # provider's wrapper makes the job a session leader under setsid, so its
 # pid is also its session id: signalling the session reaches coreutils
 # `timeout` and the CLI too, which a process group kill would miss, since
-# `timeout` moves itself into a group of its own. Without pkill, or on a
-# host without setsid, it falls back to the group and then the single
-# process, as the provider's own kill does.
-_SWEEP_SCOPE = """\
+# `timeout` moves itself into a group of its own.
+_SWEEP_SCOPE = _STOP_SESSION + """\
 if [ -d "$scope" ]; then
   for pid_file in "$scope"/*/pid; do
     [ -f "$pid_file" ] || continue
@@ -88,9 +122,7 @@ if [ -d "$scope" ]; then
     [ "$p" -gt 1 ] 2>/dev/null || continue
     args=$(tr '\\000' ' ' < "/proc/$p/cmdline" 2>/dev/null || ps -ww -o args= -p "$p" 2>/dev/null || true)
     case "$args" in
-      *"${job_dir##*/}"*)
-        pkill -TERM -s "$p" 2>/dev/null ||
-          kill -TERM -"$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true ;;
+      *"${job_dir##*/}"*) stop_session "$p" ;;
     esac
   done
   rm -rf -- "$scope"
@@ -172,12 +204,10 @@ exec "$@"
 
 # Signals the session (or group, or process) of the synchronous run's pid,
 # but only while that pid still runs the command line it was started with.
-_STOP_SYNC_RUN = """\
+_STOP_SYNC_RUN = _STOP_SESSION + """\
 args=$(tr '\\000' ' ' 2>/dev/null < "/proc/$p/cmdline" || ps -ww -o args= -p "$p" 2>/dev/null || true)
 case "$args" in
-  "$expected"|"$expected ")
-    pkill -TERM -s "$p" 2>/dev/null ||
-      kill -TERM -"$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true ;;
+  "$expected"|"$expected ") stop_session "$p" ;;
 esac
 """
 

@@ -1,6 +1,7 @@
 from datetime import datetime
 from unittest.mock import MagicMock
 
+import pytest
 from airflow import DAG
 
 from sparkforensics_operator._compat import AIRFLOW_V3_PLUS
@@ -40,6 +41,10 @@ def test_report_link_survives_a_dag_serialization_round_trip():
         assert isinstance(link, ReportLink)
 
 
+@pytest.mark.skipif(
+    SSHAnalyzeHook(ssh_conn_id="onprem_ssh").cannot_defer_reason() is not None,
+    reason="needs an SSH provider the deferrable mode supports",
+)
 def test_a_deferrable_ssh_operator_survives_a_dag_serialization_round_trip():
     # The scheduler and API server only ever see the serialized DAG; the
     # hooks are rebuilt from the DAG file when the task runs or resumes.

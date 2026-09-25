@@ -39,7 +39,7 @@ provider_info = "sparkforensics_operator.get_provider_info:get_provider_info"
 
 [project.optional-dependencies]
 s3 = ["apache-airflow-providers-amazon>=8.0"]
-ssh = ["apache-airflow-providers-ssh>=6.0.1", "apache-airflow-providers-sftp>=4.0"]
+ssh = ["apache-airflow-providers-ssh>=3.7.1", "apache-airflow-providers-sftp>=4.0"]
 test = ["pytest>=7.0", "pytest-cov>=4.0"]
 
 [tool.hatch.build.targets.wheel]
