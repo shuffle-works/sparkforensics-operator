@@ -273,7 +273,10 @@ synchronous SSH command starts a small POSIX `sh` launcher in the
 background, which prints `sparkforensics-pid:<its pid>` on stdout and
 then execs `setsid timeout ... sparkforensics-analyze`: the pid stays the
 same and becomes the session id. The hook takes that line out of stdout
-as it arrives and keeps the pid. `SSHAnalyzeHook.on_kill()` closes the
+as it arrives and keeps the pid. It still keeps it after an
+`AirflowTaskTimeout` or kill has unwound the run, since the task runner
+calls `on_kill()` only afterwards; a normal return or an ordinary
+exception clears it. `SSHAnalyzeHook.on_kill()` closes the
 channel and, over a fresh connection, signals that session, only while
 the pid still runs the command line it was started with. Nothing is
 written on the host, and the CLI's stdout and stderr stay on the
