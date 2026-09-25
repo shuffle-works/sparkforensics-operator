@@ -122,10 +122,10 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         self._sync_argv = argv
         try:
             returncode, stdout, stderr = self._run_remote(_remote_job.sync_analysis_command(argv), log_ref)
-        finally:
-            self._sync_argv = None
-            self._sync_pid = None
-            self._sync_channel = None
+        except Exception:
+            self._clear_sync_run()
+            raise
+        self._clear_sync_run()
         return _report_from_run(
             returncode, stdout, stderr, log_ref, thresholds,
             ssh_conn_id=self.ssh_conn_id, analyze_bin=self.analyze_bin, timeout=self.timeout,
@@ -144,11 +144,19 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
                 on_pid=lambda pid: setattr(self, "_sync_pid", pid),
             )
 
+    def _clear_sync_run(self) -> None:
+        self._sync_argv = None
+        self._sync_pid = None
+        self._sync_channel = None
+
     def on_kill(self) -> None:
         """Stops a running synchronous analysis when the task is killed:
         closes the channel, then signals the remote CLI's session, by the
-        pid it reported, over a fresh connection."""
+        pid it reported, over a fresh connection. That includes a run an
+        AirflowTaskTimeout already unwound, which the task runner kills
+        afterwards."""
         argv, pid, channel = self._sync_argv, self._sync_pid, self._sync_channel
+        self._clear_sync_run()
         if argv is None:
             return
         if channel is not None:

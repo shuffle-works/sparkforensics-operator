@@ -180,6 +180,42 @@ def test_on_kill_stops_a_running_synchronous_analysis_on_the_host(host):
     assert _jobs_left(host) == []
 
 
+@needs_posix_host
+def test_on_kill_after_an_execution_timeout_stops_the_remote_analysis(host):
+    # The task runner catches AirflowTaskTimeout after it has unwound out of
+    # execute(), then calls on_kill().
+    import time
+
+    from airflow.exceptions import AirflowTaskTimeout
+
+    host.fake_cli(f"""\
+        echo $$ > {host.home}/cli_pid
+        sleep 30 &
+        echo $! > {host.home}/child_pid
+        wait
+    """)
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=60)
+
+    def _alarm(seconds):
+        if hook._sync_pid is not None and (host.home / "child_pid").exists():
+            raise AirflowTaskTimeout("Timeout, PID: 1")
+        time.sleep(seconds)
+
+    fake_time = MagicMock(monotonic=time.monotonic, sleep=_alarm)
+    with patch("sparkforensics_operator.hooks.analyze.ssh.time", fake_time):
+        with pytest.raises(AirflowTaskTimeout):
+            hook.analyze(RemoteEventLog("onprem_ssh", "/logs/app-1"), {})
+    cli_pid = int((host.home / "cli_pid").read_text())
+    child_pid = int((host.home / "child_pid").read_text())
+    assert pid_alive(cli_pid)
+
+    hook.on_kill()
+
+    for name, pid in (("cli_pid", cli_pid), ("child_pid", child_pid)):
+        assert wait_until(lambda: not pid_alive(pid)), f"{name} {pid} still running"
+    assert _jobs_left(host) == []
+
+
 def test_on_kill_does_nothing_when_no_analysis_is_running():
     hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
 
