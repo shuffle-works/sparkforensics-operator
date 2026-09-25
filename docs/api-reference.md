@@ -238,8 +238,8 @@ aren't) auto-cleaned.
   `$HOME/.sparkforensics/jobs` of the SSH user; set it to an absolute path
   without `$`, `` ` ``, `"`, `\`, `..` or control characters (a
   `ValueError` otherwise). The deferred mode also needs bash on the SSH
-  host, and uses `setsid` and `pkill` there when present to stop a job.
-  A synchronous run writes nothing under `remote_base_dir`.
+  host. Both modes use `setsid` and `pkill` there when present to stop a
+  run. A synchronous run writes nothing under `remote_base_dir`.
 
 `SparkForensicsOperator.on_kill()` stops the analysis when the task is
 killed while a worker runs it: a deferrable task's backend abandons the
