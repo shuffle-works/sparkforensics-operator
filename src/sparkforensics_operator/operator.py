@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 from airflow.configuration import conf
@@ -247,8 +248,19 @@ class SparkForensicsOperator(BaseOperator):
                 "report_dest": self.report_dest,
                 "thresholds": dict(self.thresholds),
             },
-            timeout=self.backend.defer_timeout(job),
+            timeout=self._defer_timeout(job, context),
         )
+
+    def _defer_timeout(self, job: dict, context: dict) -> timedelta:
+        # Airflow 2 caps a deferral at execution_timeout itself; Airflow 3's
+        # task runner takes the deferral's timeout as-is, so cap it here.
+        timeout = self.backend.defer_timeout(job)
+        if self.execution_timeout is None:
+            return timeout
+        now = datetime.now(timezone.utc)
+        started = getattr(context.get("ti"), "start_date", None) or now
+        remaining = started + self.execution_timeout - now
+        return max(min(timeout, remaining), timedelta(seconds=1))
 
     def execute_complete(
         self,

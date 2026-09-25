@@ -3,7 +3,7 @@ DeferrableAnalyzeHook: runs without the ssh extra, so the deferral logic is
 covered at the Airflow 2.6 floor too. The SSH backend end to end is in
 tests/hooks/analyze/test_deferrable_parity.py."""
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -120,6 +120,24 @@ def test_deferrable_execute_submits_and_defers_with_everything_resume_needs(tmp_
         "report_dest": str(tmp_path / "report.json"),
         "thresholds": op.thresholds,
     }
+
+
+def test_deferral_ends_at_the_tasks_execution_timeout_when_that_comes_first(tmp_path):
+    # Airflow 3 does not cap a deferral's timeout at execution_timeout the
+    # way Airflow 2 does, so the operator has to.
+    op = _operator(FakeDeferrableHook(), tmp_path, execution_timeout=timedelta(seconds=15))
+    ti = MagicMock(start_date=datetime.now(timezone.utc) - timedelta(seconds=5))
+
+    deferred = _defer(op, {"ti": ti})
+
+    assert timedelta(seconds=9) < deferred.timeout <= timedelta(seconds=10)
+
+
+def test_backend_defer_timeout_applies_when_execution_timeout_is_later(tmp_path):
+    op = _operator(FakeDeferrableHook(), tmp_path, execution_timeout=timedelta(hours=1))
+    ti = MagicMock(start_date=datetime.now(timezone.utc))
+
+    assert _defer(op, {"ti": ti}).timeout == timedelta(seconds=1020)
 
 
 @needs_resume_execution
