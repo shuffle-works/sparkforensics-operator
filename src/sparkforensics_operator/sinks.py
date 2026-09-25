@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from airflow.exceptions import AirflowException, AirflowNotFoundException
+from sparkforensics_operator._compat import AirflowException, AirflowNotFoundException
 
 
 def persist(report_json: dict, report_dest: str, aws_conn_id: str | None = None) -> str:

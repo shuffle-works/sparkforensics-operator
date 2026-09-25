@@ -13,10 +13,11 @@
 - `pip install sparkforensics-operator[ssh]` if using `SFTPLogSourceHook`,
   `SSHTunneledLogSourceHook` or `SSHAnalyzeHook`. All reuse the `ssh_conn_id` Airflow
   Connection already configured for `SSHOperator`: no new connection
-  type to set up. Note: this extra's floor
-  (`apache-airflow-providers-ssh>=5.0`) transitively requires
-  `apache-airflow>=2.11`, higher than this package's own overall
-  `apache-airflow>=2.6` floor.
+  type to set up. The extra's floor, `apache-airflow-providers-ssh>=3.7.1`,
+  works from Airflow 2.6 on. `deferrable=True` needs
+  `apache-airflow-providers-ssh>=6.0.1`, which requires Airflow 2.11 or
+  newer: on an older provider the operator rejects `deferrable=True` when
+  the DAG is parsed, and ignores `[operators] default_deferrable`.
 - Any dependency your own `Notifier` implementation needs (e.g. a
   provider package for Slack/Teams/PagerDuty, an SMTP library) is on you
   to install; this package declares none for notification.
@@ -49,6 +50,74 @@ On the SSH host:
   it. Check it with `ssh <user>@<host> 'curl -s http://localhost:18080/api/v1/applications?limit=1'`.
 - For `RemotePathLogSourceHook`, the login user needs read access to the
   rendered path.
+
+## Deferred runs (`deferrable=True`)
+
+With `SparkForensicsOperator(deferrable=True)` and `SSHAnalyzeHook`, the
+worker submits the CLI as a detached job on the SSH host and releases its
+slot; the triggerer polls the job over SSH; a worker picks the task up
+again to read the report back. On top of the two sections above:
+
+- A triggerer must be running (`airflow triggerer`). Without one the task
+  sits in the `deferred` state until its deferral times out.
+- Install `sparkforensics-operator[ssh]` on the triggerer as well as on the
+  workers. The trigger is the SSH provider's `SSHRemoteJobTrigger`, which
+  needs `apache-airflow-providers-ssh>=6.0.1` and `asyncssh` there;
+  installing this package's extra keeps the triggerer on the same provider
+  version the workers submit with.
+- Managed Airflow needs a version that runs a triggerer and meets the
+  deferrable mode's `apache-airflow>=2.11` floor. On Amazon MWAA, pick an
+  environment version that has both (MWAA only runs a triggerer from
+  Airflow 2.7 on) and add `sparkforensics-operator[ssh]` to its
+  `requirements.txt`, which MWAA installs for the triggerer as well as the
+  workers.
+- The triggerer connects with `SSHHookAsync` (asyncssh), not the paramiko
+  `SSHHook` the worker uses, from the same `ssh_conn_id`. It reads the
+  connection's host, port, login, password and the `key_file`,
+  `private_key`, `passphrase`, `known_hosts`, `host_key` and
+  `no_host_key_check` extras; a `key_file` path must exist on the
+  triggerer host. A connection that depends on other extras (a proxy
+  command, for instance) works for the worker steps but not for the
+  triggerer's polls.
+- The SSH host needs bash (the provider's job wrapper uses it), and
+  `setsid` (util-linux) to stop a job cleanly: the job is its own
+  session, and stopping it signals the whole session, coreutils `timeout`
+  and the CLI included. It uses `pkill` (procps) for that when present,
+  and otherwise finds the session's processes in `/proc`, so slim images
+  without procps work too. Only on a host with neither is just the job's
+  process group signalled, which misses the CLI; it then stops at its own
+  `timeout` instead.
+- Job files live under `remote_base_dir` (default
+  `$HOME/.sparkforensics/jobs` of the SSH user), one owner-only directory
+  per task instance, holding the report, stderr, the log the triggerer
+  streams, and the exit code. The directory is removed once the report is
+  read, on success and on failure. The directory's name is a digest of the
+  task instance and this Airflow deployment's `base_url` (`[api]` on
+  Airflow 3, `[webserver]` on Airflow 2), so two deployments that run the
+  same DAGs as the same SSH user keep their jobs apart. Set `base_url` on
+  the workers of both (it defaults to `http://localhost:8080`), or give
+  each deployment its own `remote_base_dir`.
+- The submitted job is also kept in the task instance's XCom, under
+  `sparkforensics_remote_job`, until its next try clears it: a deferral
+  that fails, times out or is killed stops that job even if the hook's
+  `ssh_conn_id` or `remote_base_dir` renders differently by then.
+
+How a deferred run behaves when something goes wrong:
+
+| Situation | What happens |
+|---|---|
+| The analysis runs past `timeout` | Coreutils `timeout` stops the CLI on the host (exit 124), the trigger fires, and the task fails with the same "timed out after {timeout}s on the SSH host" error as a synchronous run. The job directory is removed. |
+| The job never reports back (host rebooted, job killed from outside) | The deferral gives up 120 seconds past `timeout`, or at the task's `execution_timeout` if that comes first. The task resumes only to stop the job and remove its directory, if the host is reachable, then fails with Airflow's "Trigger/execution timeout" (Airflow 3) or `AirflowTaskTimeout` (Airflow 2, whose task runner calls `on_kill()` for it, which does the same cleanup). |
+| The triggerer can't reach the host | It retries with backoff and fires an error event after five consecutive failures. The task stops and removes the job (best effort) and fails with "lost track of remote job ... while waiting for it". |
+| A retry, or a clear while deferred | Every try first stops any job an earlier try of the same task instance left running and removes its directory, then submits its own. There is never more than one analysis per task instance on the host, and a new try never reuses an old try's output. |
+| A worker restarts while the task is deferred | Nothing: no worker holds the task. A worker that dies while submitting or reading back fails the try as usual, and the next try cleans up. |
+| The triggerer restarts | The trigger resumes elsewhere from its serialized state. The job keeps running on the host, detached from any SSH session. The streamed log may repeat from the start. |
+| The task is killed, cleared or marked failed while a worker runs it (submitting the job or reading it back) | `on_kill()` stops the task instance's remote job and removes its directory before the worker exits. |
+| The task is marked failed or success while deferred, and never runs again | No worker process holds a deferred task, so there is no `on_kill()` to run: the job runs to completion or to `timeout`, and its directory stays until that task instance's next try. A clear starts that next try, which stops the job first. |
+
+For hosts where that last case is common, add an age-based reaper for
+`remote_base_dir`, such as a daily
+`find ~/.sparkforensics/jobs -mindepth 1 -maxdepth 1 -mtime +7 -exec rm -r {} +`.
 
 ## Releasing to PyPI
 
@@ -89,11 +158,44 @@ publishes them.
   doesn't have it on `PATH`; the stderr in the message names which one.
   See "Prerequisites on the SSH host" above; for the CLI, passing
   `analyze_bin=<full path>` is the usual fix.
-- **Task fails with "SSH remote analysis failed (ssh_conn_id=...,
-  command=...)"**, an SSH transport failure while `SSHAnalyzeHook` connected
-  or read the command's output (auth failure, host unreachable, dropped
-  connection). The wrapped error is in the message; check `ssh_conn_id`
-  against the host.
+- **Task fails with "SSH remote analysis failed (ssh_conn_id=...) while
+  ..."**, an SSH transport failure while `SSHAnalyzeHook` connected or read
+  a command's output (auth failure, host unreachable, dropped connection).
+  The wrapped error is in the message; check `ssh_conn_id` against the
+  host. The step that failed is named: "while running
+  sparkforensics-analyze on ..." for a synchronous run, "while submitting
+  the remote analysis job", "while preparing the remote job directory" or
+  "while reading the remote analysis result" for a deferred one.
+  A non-zero exit on submit usually means bash is missing on the host or
+  `remote_base_dir` isn't writable by the login user; the host's stderr
+  is in the message.
+- **A deferred task stays `deferred` and never resumes**, no triggerer is
+  running, or it can't load the trigger: check the triggerer log for an
+  import error naming `airflow.providers.ssh.triggers.ssh_remote_job` or
+  `asyncssh`, and install `sparkforensics-operator[ssh]` there (see "Deferred
+  runs" above). The task fails on its own once the deferral times out.
+- **A deferred task fails with "lost track of remote job ... while waiting
+  for it"**, the triggerer gave up reaching the SSH host. Its log shows
+  the connection errors ("Failed to connect to remote host", "Lost SSH
+  connection while polling"). A connection that works from the workers
+  but not from the triggerer usually needs a `key_file` that exists on the
+  triggerer host, a `known_hosts`/`host_key` entry there, or an extra the
+  async hook doesn't read.
+- **A deferred task fails with "Trigger/execution timeout"** (Airflow's
+  `TaskDeferralTimeout` or `TaskDeferralError`), the job didn't report back
+  within `timeout` plus 120 seconds, or within the task's
+  `execution_timeout`. The task log's "SparkForensics deferred analysis did
+  not finish" line precedes the stop and cleanup of the job. Check the SSH
+  host for a reboot or an externally killed job.
+- **`ValueError: remote_base_dir cannot contain ...`, or "the remote job
+  directory cannot contain ..."**, the provider's job wrapper can't quote
+  a path containing `$`, `` ` ``, `"`, `\` or control characters. The
+  second form means the SSH user's `$HOME` contains one; pass
+  `remote_base_dir=<a plain absolute path>`.
+- **Old job directories pile up under `remote_base_dir`**, from task
+  instances marked failed or success while deferred, or whose clean-up
+  couldn't reach the host (logged as "Could not remove remote job
+  directory"). See the reaper suggestion under "Deferred runs".
 - **Task fails with "... cannot analyze ...; it reads: ..."**, the log
   source and backend don't fit together, e.g. `SSHAnalyzeHook` with a log
   the worker downloaded, or `SubprocessAnalyzeHook` with
@@ -136,7 +238,7 @@ publishes them.
   are flat, nested deeper, or split across folders (e.g. several attempts:
   set `attempt_id`); "has no events_<n>_ rolling-log entries" means the one
   folder holds no rolling segments. Raised directly during
-  `resolve()`, before `sparkforensics-analyze` ever runs; check the exception
+  `locate()`, before `sparkforensics-analyze` ever runs; check the exception
   message's entry-name list against what the History Server actually
   returned.
 - **Task fails with "Configured log path does not exist"**,
@@ -150,7 +252,7 @@ publishes them.
   message's rendered path and `ssh_conn_id` against the on-prem host.
 - **Task fails with "SFTP log fetch failed (ssh_conn_id=...)"**, an
   SSH/SFTP transport-level failure (auth failure, host unreachable,
-  network timeout) during `SFTPLogSourceHook.resolve()`. Check the
+  network timeout) during `SFTPLogSourceHook.locate()`. Check the
   exception message's `ssh_conn_id` and remote path against the
   Airflow Connection and on-prem host; the wrapped underlying error is in
   the message.
@@ -160,7 +262,7 @@ publishes them.
   wrapped hook. Check `ssh_conn_id` and `remote_host:remote_port` against
   the on-prem host.
 - **Task fails with "SSH tunnel teardown failed after a successful
-  fetch (ssh_conn_id=...)"**, the wrapped hook's `resolve()` already
+  fetch (ssh_conn_id=...)"**, the wrapped hook's `locate()` already
   succeeded, but closing the SSH tunnel afterward raised. The fetched
   result is lost even though the log was retrieved; check `ssh_conn_id`
   against the on-prem host for a mid-task disconnect, then rerun the
@@ -170,7 +272,30 @@ publishes them.
   rendered to a path ending at the filesystem root (e.g. a template bug
   reduces to `"/"`), leaving nothing to name the staged local file or
   directory. Check the rendered path in the exception message against
-  `path_template` and the substituted context variables.
+  `path_template` and the values Jinja filled in.
+- **Task fails with "path_template ... was not rendered"**, the hook's
+  `locate()` ran on a raw Jinja template. `SparkForensicsOperator` and
+  `spark_forensics_callback` render hook arguments first, so this shows up
+  when a hook is called on its own, or when a custom wrapper hook builds
+  another hook without rendering it (`SSHTunneledLogSourceHook` renders
+  the hook its factory returns). Render it with the task's
+  `render_template()`, or pass the rendered value.
+- **Task fails with "path_template ... uses the {run_id} placeholder,
+  which is no longer supported"**, `path_template` is a Jinja template
+  now. Replace `{run_id}` with `{{ run_id }}`, `{ds}` with `{{ ds }}`, and
+  so on; a date format becomes
+  `{{ logical_date.strftime('%Y-%m-%d') }}`.
+- **Task fails with "path_template rendered to ..., which contains a '..'
+  segment"** or **"rendered to an empty path"**, a value Jinja filled in
+  (a `run_id` passed to `airflow dags trigger --run-id`, an XCom, a param)
+  would move the path outside its directory, or was empty. Check where
+  the value came from; the hook refuses to use it.
+- **Task fails with "app_id rendered to '' ..." or "app_id rendered to
+  'None' ..."**, a History Server hook's `app_id` template rendered to
+  nothing, typically an `xcom_pull` of a key the upstream task never
+  pushed (Jinja renders a missing XCom as `None`). Check the upstream
+  task's XCom and the `task_ids`/`key` in the template. An `attempt_id`
+  that renders to nothing is treated as unset instead.
 - **A task using `SSHTunneledLogSourceHook` hangs instead of failing**,
   `SSHHook.get_tunnel()`'s SSH-level connection setup has no documented
   connect timeout of its own; if the on-prem host is unreachable at the
@@ -189,11 +314,12 @@ publishes them.
   trustworthy task-level metrics). Logged as a warning regardless of
   `on_threshold_breach`; this is not itself a failure condition.
 - **The "SparkForensics report" link in the UI is blank**, on Airflow 2.x
-  the webserver reads the link from XCom and shows an empty link if that
-  read fails, rather than breaking the task page. Check the webserver log
-  for a "ReportLink could not read the report destination from XCom"
-  error and its traceback. The report itself was still persisted and is
-  still in XCom under `return_value`. On Airflow 3.x the worker computes
+  the webserver reads the link from XCom (the `sparkforensics_summary`
+  key, else `return_value`) and shows an empty link if that read fails,
+  rather than breaking the task page. Check the webserver log for a
+  "ReportLink could not read the report destination from XCom" error and
+  its traceback. The report itself was still persisted and is still in
+  XCom under `return_value`. On Airflow 3.x the worker computes
   the link after the task runs, from the destination the run actually
   persisted. The link is blank by design when the task failed before
   persisting a report (for example the event log fetch or the analysis
@@ -202,20 +328,26 @@ publishes them.
   operator extra link".
 - **The "SparkForensics report" link is missing from the task page
   entirely (Airflow 2.x)**, the webserver renders from the serialized DAG,
-  and Airflow drops `ReportLink` during deserialization unless the
-  package's `airflow.plugins` entry point is registered. The DAG
-  processor/scheduler log then shows "Operator Link class
+  and Airflow drops `ReportLink` during deserialization unless a provider
+  registered it. This package registers it as provider metadata, through
+  its `apache_airflow_provider` entry point. The DAG processor/scheduler
+  log then shows "Operator Link class
   'sparkforensics_operator.links.ReportLink' not registered". Make sure
   `sparkforensics-operator` is installed (as a package, not only copied
   onto the DAGs folder) on every process that serializes or renders the
-  DAG, not only on workers, and check `airflow plugins` lists
-  `sparkforensics_operator`.
+  DAG, not only on workers, and check `airflow providers list` lists
+  `sparkforensics-operator`.
+- **The report link opens the raw destination instead of a browser
+  page**, `report_url_template` is not set, or the run was persisted
+  before it was. Set it to a URL your viewers can open, such as an S3
+  console URL built from `{bucket}` and `{key}`. The link needs the
+  viewer's own access to that location; nothing is presigned.
 - **Disk fills up on a worker that runs this operator repeatedly**, a
   single event log can be hundreds of MB to several GB, so this matters on
   a busy worker. Each `LogSourceHook` now cleans up after itself, but only
   a path it created:
   - `HistoryServerLogSourceHook` with no `dest_dir` downloads to a private
-    temp dir and removes it automatically after analysis, including if `resolve()` itself fails partway through.
+    temp dir and removes it automatically after analysis, including if `locate()` itself fails partway through.
   - `FilesystemLogSourceHook` with `dest_dir` set copies the log there and
     removes that copy automatically after analysis.
   - `HistoryServerLogSourceHook` with `dest_dir` set writes into a
@@ -225,7 +357,7 @@ publishes them.
   - `FilesystemLogSourceHook` with no `dest_dir` returns the caller's own
     event log path unmodified; this package never deletes it.
   - `SFTPLogSourceHook` with no `dest_dir` downloads to a private temp dir
-    and removes it automatically after analysis, including if `resolve()`
+    and removes it automatically after analysis, including if `locate()`
     itself fails partway through.
   - `SFTPLogSourceHook` with `dest_dir` set writes into a caller-managed
     shared directory the hook doesn't own, so it is **not** auto-cleaned.
@@ -236,5 +368,7 @@ publishes them.
     the wrapped hook's own entry above (e.g.
     `HistoryServerLogSourceHook`'s) applies.
   - `RemotePathLogSourceHook` and `HistoryServerAppLogSourceHook` write
-    nothing to the worker. `SSHAnalyzeHook` reads the report from stdout,
-    so it leaves no file on the SSH host either.
+    nothing to the worker. `SSHAnalyzeHook` reads the report from stdout
+    and, run synchronously, writes nothing on the SSH host. Deferred, it
+    writes a job directory under `remote_base_dir` that holds the report,
+    and removes it once the report is read (see "Deferred runs").

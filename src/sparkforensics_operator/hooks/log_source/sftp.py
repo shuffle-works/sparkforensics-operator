@@ -3,12 +3,11 @@ from __future__ import annotations
 import concurrent.futures
 from pathlib import Path
 
-from airflow.exceptions import AirflowException
-
+from sparkforensics_operator._compat import AirflowException
 from sparkforensics_operator.log_ref import LocalEventLog
 
 from ._dest_root import dest_for, make_dest_root, remove_if_owned
-from ._path_template import _template_vars
+from ._path_template import checked_path
 from ._rolling_log import _ROLLING_ENTRY_RE
 from .base import LogSourceHook
 
@@ -24,6 +23,8 @@ class SFTPLogSourceHook(LogSourceHook):
     owns), but is a no-op when dest_dir is set (a caller-managed shared
     directory)."""
 
+    template_fields = ("ssh_conn_id", "path_template", "dest_dir")
+
     def __init__(self, ssh_conn_id: str, path_template: str, dest_dir: str | None = None):
         super().__init__()
         self.ssh_conn_id = ssh_conn_id
@@ -31,10 +32,10 @@ class SFTPLogSourceHook(LogSourceHook):
         self.dest_dir = dest_dir
         self._owned_temp_root: Path | None = None
 
-    def resolve(self, context: dict) -> LocalEventLog:
+    def locate(self, context: dict) -> LocalEventLog:
         from airflow.providers.sftp.hooks.sftp import SFTPHook
 
-        remote_path = self.path_template.format(**_template_vars(context))
+        remote_path = checked_path(self.path_template)
         dest_root, self._owned_temp_root = make_dest_root(self.dest_dir)
 
         try:

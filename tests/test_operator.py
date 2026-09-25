@@ -22,7 +22,7 @@ def _report(*threshold_results, exit_code=0):
 
 def _fixtures(tmp_path, report):
     log_source = MagicMock()
-    log_source.resolve.return_value = LocalEventLog(tmp_path / "app.log")
+    log_source.locate.return_value = LocalEventLog(tmp_path / "app.log")
     backend = MagicMock()
     backend.analyze.return_value = report
     return log_source, backend
@@ -176,12 +176,12 @@ def test_run_spark_forensics_calls_cleanup_on_the_log_source_after_success(tmp_p
         thresholds={}, on_threshold_breach="fail", notifier=None, log=logging.getLogger("test"),
     )
 
-    log_source.cleanup.assert_called_once_with(log_source.resolve.return_value)
+    log_source.cleanup.assert_called_once_with(log_source.locate.return_value)
 
 
 def test_run_spark_forensics_calls_cleanup_even_when_analyze_raises(tmp_path):
     log_source = MagicMock()
-    log_source.resolve.return_value = LocalEventLog(tmp_path / "app.log")
+    log_source.locate.return_value = LocalEventLog(tmp_path / "app.log")
     backend = MagicMock()
     backend.analyze.side_effect = RuntimeError("boom")
 
@@ -206,7 +206,7 @@ def test_run_spark_forensics_calls_cleanup_even_when_a_breach_raises(tmp_path):
             log=logging.getLogger("test"),
         )
 
-    log_source.cleanup.assert_called_once_with(log_source.resolve.return_value)
+    log_source.cleanup.assert_called_once_with(log_source.locate.return_value)
 
 
 def test_run_spark_forensics_treats_exit_code_1_with_no_parsed_violation_as_a_breach(tmp_path):
@@ -305,10 +305,10 @@ def test_operator_templates_report_dest():
 
 def test_run_spark_forensics_hands_a_non_local_log_ref_to_the_backend_unchanged(tmp_path):
     # A reference the worker never fetched (e.g. a History Server app the
-    # backend reads itself) flows from resolve() to analyze() and cleanup().
+    # backend reads itself) flows from locate() to analyze() and cleanup().
     log_ref = HistoryServerApp(base_url="http://localhost:18080", app_id="app-1")
     log_source = MagicMock()
-    log_source.resolve.return_value = log_ref
+    log_source.locate.return_value = log_ref
     backend = MagicMock()
     backend.analyze.return_value = _report()
 

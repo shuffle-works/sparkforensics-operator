@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -5,6 +6,8 @@ from airflow.exceptions import AirflowException
 
 from sparkforensics_operator.hooks.log_source.filesystem import FilesystemLogSourceHook
 from sparkforensics_operator.log_ref import LocalEventLog
+
+from ..._render import render
 
 
 def _context(tmp_path, **overrides):
@@ -23,19 +26,23 @@ def _context(tmp_path, **overrides):
     return base
 
 
-def test_resolve_returns_the_rendered_path_when_dest_dir_is_not_set(tmp_path):
+def test_locate_returns_the_rendered_path_when_dest_dir_is_not_set(tmp_path):
     log_dir = tmp_path / "logs" / "etl_ar_ventas" / "2026-09-05"
     log_dir.mkdir(parents=True)
     log_file = log_dir / "app.log"
     log_file.write_text("{}")
-    hook = FilesystemLogSourceHook(path_template=str(tmp_path / "logs" / "{dag_id}" / "{ds}" / "app.log"))
+    context = _context(tmp_path)
+    hook = render(
+        FilesystemLogSourceHook(path_template=str(tmp_path / "logs" / "{{ dag.dag_id }}" / "{{ ds }}" / "app.log")),
+        **context,
+    )
 
-    result = hook.resolve(_context(tmp_path)).path
+    result = hook.locate(context).path
 
     assert result == log_file
 
 
-def test_resolve_copies_into_dest_dir_when_configured(tmp_path):
+def test_locate_copies_into_dest_dir_when_configured(tmp_path):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     log_file = log_dir / "app.log"
@@ -46,17 +53,17 @@ def test_resolve_copies_into_dest_dir_when_configured(tmp_path):
         dest_dir=str(dest_dir),
     )
 
-    result = hook.resolve(_context(tmp_path)).path
+    result = hook.locate(_context(tmp_path)).path
 
     assert result == dest_dir / "app.log"
     assert result.read_text() == "{}"
 
 
-def test_resolve_raises_when_the_rendered_path_does_not_exist(tmp_path):
+def test_locate_raises_when_the_rendered_path_does_not_exist(tmp_path):
     hook = FilesystemLogSourceHook(path_template=str(tmp_path / "missing" / "app.log"))
 
     with pytest.raises(AirflowException, match="does not exist"):
-        hook.resolve(_context(tmp_path)).path
+        hook.locate(_context(tmp_path)).path
 
 
 def test_cleanup_does_not_touch_the_source_path_when_dest_dir_is_not_set(tmp_path):
@@ -66,7 +73,7 @@ def test_cleanup_does_not_touch_the_source_path_when_dest_dir_is_not_set(tmp_pat
     log_file.write_text("{}")
     hook = FilesystemLogSourceHook(path_template=str(log_dir / "app.log"))
 
-    result = hook.resolve(_context(tmp_path)).path
+    result = hook.locate(_context(tmp_path)).path
     hook.cleanup(LocalEventLog(result))
 
     assert log_file.exists()
@@ -80,66 +87,49 @@ def test_cleanup_removes_the_copy_made_into_dest_dir(tmp_path):
     dest_dir = tmp_path / "staged"
     hook = FilesystemLogSourceHook(path_template=str(log_dir / "app.log"), dest_dir=str(dest_dir))
 
-    result = hook.resolve(_context(tmp_path)).path
+    result = hook.locate(_context(tmp_path)).path
     hook.cleanup(LocalEventLog(result))
 
     assert not result.exists()
     assert log_file.exists()
 
 
-def test_resolve_sanitizes_a_path_traversal_run_id(tmp_path):
-    base_dir = tmp_path / "logs"
-    log_dir = base_dir / "passwd"
-    log_dir.mkdir(parents=True)
-    log_file = log_dir / "app.log"
-    log_file.write_text("{}")
-    hook = FilesystemLogSourceHook(path_template=str(base_dir / "{run_id}" / "app.log"))
+@pytest.mark.parametrize(
+    "template, context",
+    [
+        ("{{ run_id }}", {"run_id": "../../../etc/passwd"}),
+        ("{{ ti.xcom_pull() }}", {"ti": SimpleNamespace(xcom_pull=lambda: "../../etc")}),
+    ],
+    ids=["run_id", "xcom-value"],
+)
+def test_locate_rejects_a_rendered_path_that_climbs_out_of_its_directory(tmp_path, template, context):
+    hook = render(FilesystemLogSourceHook(path_template=str(tmp_path / "logs" / template / "app.log")), **context)
 
-    result = hook.resolve(_context(tmp_path, run_id="../../../etc/passwd")).path
-
-    assert result == base_dir / "passwd" / "app.log"
-    assert base_dir in result.parents
-
-
-def test_resolve_sanitizes_a_path_traversal_dag_id(tmp_path):
-    dag = MagicMock()
-    dag.dag_id = "../../../etc/passwd"
-    base_dir = tmp_path / "logs"
-    log_dir = base_dir / "passwd"
-    log_dir.mkdir(parents=True)
-    log_file = log_dir / "app.log"
-    log_file.write_text("{}")
-    hook = FilesystemLogSourceHook(path_template=str(base_dir / "{dag_id}" / "app.log"))
-
-    result = hook.resolve(_context(tmp_path, dag=dag)).path
-
-    assert result == base_dir / "passwd" / "app.log"
-    assert base_dir in result.parents
+    with pytest.raises(AirflowException, match=r"contains a '\.\.' segment"):
+        hook.locate(context)
 
 
-def test_resolve_sanitizes_a_path_traversal_task_id(tmp_path):
-    task = MagicMock()
-    task.task_id = "../../../etc/passwd"
-    base_dir = tmp_path / "logs"
-    log_dir = base_dir / "passwd"
-    log_dir.mkdir(parents=True)
-    log_file = log_dir / "app.log"
-    log_file.write_text("{}")
-    hook = FilesystemLogSourceHook(path_template=str(base_dir / "{task_id}" / "app.log"))
+def test_locate_rejects_the_old_str_format_placeholders_with_the_jinja_equivalent(tmp_path):
+    hook = FilesystemLogSourceHook(path_template=str(tmp_path / "logs" / "{run_id}" / "app.log"))
 
-    result = hook.resolve(_context(tmp_path, task=task)).path
-
-    assert result == base_dir / "passwd" / "app.log"
-    assert base_dir in result.parents
+    with pytest.raises(AirflowException, match=r"uses the \{run_id\} placeholder.*\{\{ run_id \}\}"):
+        hook.locate({"run_id": "manual__1"})
 
 
-def test_resolve_works_when_context_has_no_dag(tmp_path):
+def test_locate_rejects_a_path_that_was_never_rendered(tmp_path):
+    hook = FilesystemLogSourceHook(path_template=str(tmp_path / "{{ run_id }}" / "app.log"))
+
+    with pytest.raises(AirflowException, match="was not rendered"):
+        hook.locate({"run_id": "manual__1"})
+
+
+def test_locate_works_when_context_has_no_dag(tmp_path):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     log_file = log_dir / "app.log"
     log_file.write_text("{}")
     hook = FilesystemLogSourceHook(path_template=str(log_dir / "app.log"))
 
-    result = hook.resolve(_context(tmp_path, dag=None)).path
+    result = hook.locate(_context(tmp_path, dag=None)).path
 
     assert result == log_file

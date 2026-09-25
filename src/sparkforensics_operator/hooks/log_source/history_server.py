@@ -6,11 +6,11 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
 import requests
-from airflow.exceptions import AirflowException
-
+from sparkforensics_operator._compat import AirflowException
 from sparkforensics_operator.log_ref import LocalEventLog
 
 from ._dest_root import make_dest_root, remove_if_owned
+from ._history_server_args import checked_app_id, optional_attempt_id
 from ._rolling_log import _ROLLING_ENTRY_RE
 from .base import LogSourceHook
 
@@ -22,6 +22,8 @@ class HistoryServerLogSourceHook(LogSourceHook):
     for a rolling log, the events_<n>_... segments under one
     eventlog_v2_<appId>/ folder)."""
 
+    template_fields = ("base_url", "app_id", "attempt_id", "dest_dir")
+
     def __init__(
         self,
         base_url: str,
@@ -31,7 +33,7 @@ class HistoryServerLogSourceHook(LogSourceHook):
         timeout: int = 300,
     ):
         super().__init__()
-        self.base_url = base_url.rstrip("/")
+        self.base_url = base_url
         self.app_id = app_id
         self.attempt_id = attempt_id
         self.dest_dir = dest_dir
@@ -39,13 +41,14 @@ class HistoryServerLogSourceHook(LogSourceHook):
         self._owned_temp_root: Path | None = None
 
     def _build_url(self) -> str:
-        segments = ["api", "v1", "applications", quote(self.app_id, safe="")]
-        if self.attempt_id:
-            segments.append(quote(self.attempt_id, safe=""))
+        segments = ["api", "v1", "applications", quote(checked_app_id(self.app_id), safe="")]
+        attempt_id = optional_attempt_id(self.attempt_id)
+        if attempt_id:
+            segments.append(quote(attempt_id, safe=""))
         segments.append("logs")
-        return f"{self.base_url}/{'/'.join(segments)}"
+        return f"{self.base_url.rstrip('/')}/{'/'.join(segments)}"
 
-    def resolve(self, context: dict) -> LocalEventLog:
+    def locate(self, context: dict) -> LocalEventLog:
         url = self._build_url()
         response = requests.get(url, timeout=self.timeout, stream=True)
         if response.status_code != 200:

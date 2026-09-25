@@ -9,7 +9,9 @@ Python 3.9+, apache-airflow 2.6+ or 3.0+, pytest. Runtime dependency: Node.js
 18+ + the `sparkforensics-cli` npm package (`npm install -g sparkforensics-cli`)
 wherever the analysis runs: the worker for `SubprocessAnalyzeHook`, the SSH
 host for `SSHAnalyzeHook`. Log sources resolve an `EventLogRef` (`log_ref.py`)
-that backends consume; see `docs/architecture.md`.
+that backends consume; see `docs/architecture.md`. `deferrable=True` runs the
+SSH analysis as the SSH provider's detached remote job (architecture.md's
+"Deferrable execution").
 
 ## Commands
 - `pip install -e ".[test,s3,ssh]"`, install for local dev.
@@ -17,6 +19,16 @@ that backends consume; see `docs/architecture.md`.
   needed for any single test).
 - `tox -e py311-airflow2` / `tox -e py311-airflow3`, run the suite against a
   specific Airflow major version.
+
+Deferred-mode tests run the provider's real shell wrapper against a local
+`sh` standing in for the SSH host (`tests/hooks/analyze/_local_ssh.py`), so
+they need `bash`, `setsid` and coreutils `timeout` locally.
+`py39-airflow2min` has no ssh extra and omits SSH-only modules from its
+coverage (`coverage-no-ssh.ini`); `py39-airflow2sshmin` runs the ssh
+extra's floor on Airflow 2.6 (deferrable tests skip there);
+`py311-airflow2deferrablemin` pins the deferrable mode's floors
+(`constraints-deferrable-floor.txt`). Kill/sweep tests also run with
+procps hidden (`LocalHost.hide_procps()`), as on slim images.
 
 Each tox env writes coverage to `coverage-<envname>.lcov` (see `tox.ini`); CI
 uploads these per-matrix-env to Coveralls and merges them in a `finish` job.

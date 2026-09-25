@@ -28,14 +28,33 @@ def fake_xcom(monkeypatch):
     return fake
 
 
-def test_get_link_returns_the_xcom_return_value_on_airflow_2(airflow_2, fake_xcom):
-    ti_key = MagicMock()
-    fake_xcom.get_value.return_value = "s3://reports/app-1.json"
+def _xcoms(values):
+    return lambda ti_key, key: values.get(key)
 
-    result = ReportLink().get_link(MagicMock(), ti_key=ti_key)
 
-    assert result == "s3://reports/app-1.json"
-    fake_xcom.get_value.assert_called_once_with(ti_key=ti_key, key="return_value")
+def test_get_link_falls_back_to_the_xcom_return_value_on_airflow_2(airflow_2, fake_xcom):
+    fake_xcom.get_value.side_effect = _xcoms({"return_value": "s3://reports/app-1.json"})
+
+    assert ReportLink().get_link(MagicMock(), ti_key=MagicMock()) == "s3://reports/app-1.json"
+
+
+@pytest.mark.parametrize(
+    "summary, expected",
+    [
+        ({"destination": "s3://reports/app-1.json", "report_url": None}, "s3://reports/app-1.json"),
+        (
+            {"destination": "s3://reports/app-1.json", "report_url": "https://viewer/app-1.json"},
+            "https://viewer/app-1.json",
+        ),
+    ],
+    ids=["destination", "report-url"],
+)
+def test_get_link_reads_the_summary_xcom_on_airflow_2(airflow_2, fake_xcom, summary, expected):
+    # The summary is pushed before a breach raises, so it is there even when
+    # return_value is not.
+    fake_xcom.get_value.side_effect = _xcoms({"sparkforensics_summary": summary})
+
+    assert ReportLink().get_link(MagicMock(), ti_key=MagicMock()) == expected
 
 
 def test_get_link_returns_empty_string_when_no_xcom_value_exists_on_airflow_2(airflow_2, fake_xcom):
@@ -60,7 +79,7 @@ def test_get_link_logs_the_error_and_returns_empty_string_when_xcom_read_fails_o
 
 def _operator(tmp_path, report, **kwargs):
     log_source = MagicMock()
-    log_source.resolve.return_value = LocalEventLog(tmp_path / "app.log")
+    log_source.locate.return_value = LocalEventLog(tmp_path / "app.log")
     backend = MagicMock()
     backend.analyze.return_value = report
     return SparkForensicsOperator(
@@ -87,6 +106,15 @@ def test_get_link_returns_the_persisted_destination_after_a_successful_run_on_ai
 
     assert result == destination == str(tmp_path / "report.json")
     fake_xcom.get_value.assert_not_called()
+
+
+def test_get_link_returns_the_report_url_when_a_template_is_set_on_airflow_3(airflow_3, tmp_path):
+    op = _operator(tmp_path, _report(), report_url_template="https://viewer.example/r?path={path}")
+    op.execute({})
+
+    assert ReportLink().get_link(op, ti_key=MagicMock()) == (
+        f"https://viewer.example/r?path={tmp_path}/report.json"
+    )
 
 
 def test_get_link_returns_the_persisted_destination_after_a_threshold_breach_on_airflow_3(

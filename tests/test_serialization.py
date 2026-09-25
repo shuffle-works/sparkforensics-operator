@@ -1,9 +1,12 @@
 from datetime import datetime
 from unittest.mock import MagicMock
 
+import pytest
 from airflow import DAG
 
 from sparkforensics_operator._compat import AIRFLOW_V3_PLUS
+from sparkforensics_operator.hooks.analyze.ssh import SSHAnalyzeHook
+from sparkforensics_operator.hooks.log_source.remote_path import RemotePathLogSourceHook
 from sparkforensics_operator.links import ReportLink
 from sparkforensics_operator.operator import SparkForensicsOperator
 
@@ -16,8 +19,8 @@ except ImportError:
 def test_report_link_survives_a_dag_serialization_round_trip():
     # The webserver/API server renders the task page from the serialized
     # DAG, so a link dropped here never shows in the UI. On Airflow 2 this
-    # requires ReportLink to be registered via the airflow.plugins entry
-    # point (see plugin.py).
+    # requires ReportLink to be registered, which the package's provider
+    # metadata does (see get_provider_info.py).
     with DAG(dag_id="sparkforensics_serialization", start_date=datetime(2026, 1, 1), schedule=None) as dag:
         SparkForensicsOperator(
             task_id="run_forensics",
@@ -36,3 +39,24 @@ def test_report_link_survives_a_dag_serialization_round_trip():
         assert link.xcom_key == ReportLink().xcom_key
     else:
         assert isinstance(link, ReportLink)
+
+
+@pytest.mark.skipif(
+    SSHAnalyzeHook(ssh_conn_id="onprem_ssh").cannot_defer_reason() is not None,
+    reason="needs an SSH provider the deferrable mode supports",
+)
+def test_a_deferrable_ssh_operator_survives_a_dag_serialization_round_trip():
+    # The scheduler and API server only ever see the serialized DAG; the
+    # hooks are rebuilt from the DAG file when the task runs or resumes.
+    with DAG(dag_id="sparkforensics_deferrable", start_date=datetime(2026, 1, 1), schedule=None) as dag:
+        SparkForensicsOperator(
+            task_id="run_forensics",
+            log_source=RemotePathLogSourceHook(ssh_conn_id="onprem_ssh", path_template="/logs/{run_id}"),
+            backend=SSHAnalyzeHook(ssh_conn_id="onprem_ssh"),
+            report_dest="/tmp/sparkforensics/{{ run_id }}/report.json",
+            deferrable=True,
+        )
+
+    round_tripped = _DagSerializer.from_dict(_DagSerializer.to_dict(dag))
+
+    assert "run_forensics" in round_tripped.task_dict

@@ -12,6 +12,7 @@ def test_top_level_package_re_exports_the_public_surface():
     assert pkg.SFTPLogSourceHook is not None
     assert pkg.SSHTunneledLogSourceHook is not None
     assert pkg.AnalyzeHook is not None
+    assert pkg.DeferrableAnalyzeHook is not None
     assert pkg.SubprocessAnalyzeHook is not None
     assert pkg.SSHAnalyzeHook is not None
     assert pkg.RemotePathLogSourceHook is not None
@@ -37,6 +38,7 @@ def test_top_level_package_re_exports_the_public_surface():
         "RemoteEventLog",
         "HistoryServerApp",
         "AnalyzeHook",
+        "DeferrableAnalyzeHook",
         "SubprocessAnalyzeHook",
         "SSHAnalyzeHook",
         "Notifier",

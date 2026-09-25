@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Callable
 
-from airflow.exceptions import AirflowException
-
+from sparkforensics_operator._compat import AirflowException
 from sparkforensics_operator.log_ref import EventLogRef, LocalEventLog
 
+from .._templating import render_with_task_env
 from .base import LogSourceHook
 
 
@@ -19,8 +19,10 @@ class SSHTunneledLogSourceHook(LogSourceHook):
     tunnel's local port is known, so the same wrapper works for any future
     HTTP-based hook with no new wrapper code. The wrapped hook must fetch
     the log to the worker (return a LocalEventLog): the tunnel closes when
-    resolve() returns, so a reference that still points through it, such
+    locate() returns, so a reference that still points through it, such
     as a HistoryServerApp, would be dead by the time it is analyzed."""
+
+    template_fields = ("ssh_conn_id", "remote_host")
 
     def __init__(
         self,
@@ -36,7 +38,7 @@ class SSHTunneledLogSourceHook(LogSourceHook):
         self.hook_factory = hook_factory
         self._inner: LogSourceHook | None = None
 
-    def resolve(self, context: dict) -> LocalEventLog:
+    def locate(self, context: dict) -> LocalEventLog:
         from airflow.providers.ssh.hooks.ssh import SSHHook
 
         tunnel_up = False
@@ -49,13 +51,18 @@ class SSHTunneledLogSourceHook(LogSourceHook):
                 tunnel_up = True
                 base_url = f"http://127.0.0.1:{tunnel.local_bind_port}"
                 self._inner = self.hook_factory(base_url)
-                result = self._inner.resolve(context)
+                # The wrapped hook only exists now, after Airflow rendered
+                # this one, so render its template fields the same way.
+                task = context.get("task")
+                if task is not None:
+                    render_with_task_env(task, self._inner, context)
+                result = self._inner.locate(context)
                 fetch_succeeded = True
             if not isinstance(result, LocalEventLog):
                 raise AirflowException(
                     f"SSHTunneledLogSourceHook's hook_factory built a hook that returned a "
                     f"{type(result).__name__}, not a LocalEventLog: the SSH tunnel is closed "
-                    "once resolve() returns, so the log must be fetched to the worker while "
+                    "once locate() returns, so the log must be fetched to the worker while "
                     "it is open. To analyze a History Server run without downloading it, "
                     "use HistoryServerAppLogSourceHook with SSHAnalyzeHook instead."
                 )
@@ -68,14 +75,14 @@ class SSHTunneledLogSourceHook(LogSourceHook):
                 # while the `with` block tore the tunnel back down. Label it
                 # as a teardown failure instead of silently discarding the
                 # fetched result and re-raising as if the failure came from
-                # hook_factory or the wrapped hook's own resolve().
+                # hook_factory or the wrapped hook's own locate().
                 raise AirflowException(
                     f"SSH tunnel teardown failed after a successful fetch "
                     f"(ssh_conn_id={self.ssh_conn_id!r}): {e}"
                 ) from e
             if tunnel_up:
                 # The tunnel itself came up fine; this failure happened in
-                # hook_factory or the wrapped hook's own resolve(), not in
+                # hook_factory or the wrapped hook's own locate(), not in
                 # tunnel setup. Let it propagate as its own type/message
                 # instead of mislabeling it as a tunnel-setup failure.
                 raise

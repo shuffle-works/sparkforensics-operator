@@ -1,4 +1,4 @@
-from airflow.exceptions import AirflowFailException
+from sparkforensics_operator._compat import AirflowFailException
 
 
 class ThresholdBreached(AirflowFailException):
