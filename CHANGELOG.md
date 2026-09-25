@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deferrable mode's job directory and trigger poll interval.
 - `DeferrableAnalyzeHook`, the interface a backend implements to support
   `deferrable=True`, exported from the top-level package.
+- `SparkForensicsOperator.on_kill()`: killing, clearing or marking the
+  task failed while a worker runs it stops the remote analysis. A
+  deferrable task's remote job is stopped and removed; a synchronous
+  `SSHAnalyzeHook` run closes its channel and stops the remote CLI, which
+  closing the channel alone never did. Backends get an `on_kill()` hook,
+  a no-op by default.
 
 ### Changed
 
@@ -49,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference would be used.
 - Breaking: the `ssh` extra requires `apache-airflow-providers-ssh>=6.0.1`
   (was `>=5.0`), the first release whose remote-job helpers quote paths.
+- A synchronous `SSHAnalyzeHook` run now needs a writable `remote_base_dir`
+  (default `$HOME/.sparkforensics/jobs`) on the SSH host, where it records
+  the CLI's pid while it runs. Its SSH transport error names the step and
+  the log instead of quoting the whole remote command.
 - `spark_forensics_callback(deferrable=True)` raises `ValueError`, since a
   callback has no task to defer.
 - The exit-2 error now also names a failed History Server fetch as a

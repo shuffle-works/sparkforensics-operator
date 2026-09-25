@@ -105,8 +105,10 @@ breach that raises still gets a notification out first.
   the worker with `--out <tmpfile>`.
 - `hooks/analyze/ssh.py`, `SSHAnalyzeHook`, runs the CLI on the SSH host
   over `SSHHook` (imported lazily, `ssh` extra) and reads the report from
-  stdout, so no temp file is left on that host. The command is built with
-  `shlex.join`, so rendered paths and app ids can't inject shell syntax.
+  stdout, so no report file is left on that host; only a pid file, removed
+  when the CLI exits (see "Killing a task" below). Every argument is
+  quoted with `shlex`, so rendered paths and app ids can't inject shell
+  syntax.
   It reads the paramiko channel itself rather than through
   `SSHHook.exec_ssh_client_command`, which bounds only each idle read and
   logs every stdout line (the whole report) to the task log; `timeout`
@@ -210,6 +212,21 @@ the job before raising. A deferral that times out (the backend's
 reaches `execute_complete()`; `resume_execution()` is overridden to call
 `backend.abandon(context)` first. The runbook's "Deferred runs" section
 lists the behaviour for each case.
+
+Killing a task. `SparkForensicsOperator.on_kill()` uses the context of the
+`execute()` or `execute_complete()` running in the same process, never
+state from before a deferral. A deferrable task abandons its task
+instance's job; a synchronous one calls the backend's `on_kill()`.
+Closing the SSH channel alone would leave the remote CLI running, so the
+synchronous SSH command is a small job as well: a POSIX `sh` script that
+records its own pid under `remote_base_dir/sync_<token>/job_<token>/`,
+runs `timeout ... sparkforensics-analyze` in the background, and on TERM
+signals `timeout`'s process group and removes its directory.
+`SSHAnalyzeHook.on_kill()` closes the channel and runs the same sweep on
+that directory as a detached job gets. The script keeps the CLI's stdout
+and stderr on the channel, so reports and errors are unchanged. A task
+that is killed while deferred has no worker process and no `on_kill()`;
+its job is stopped by the next try's sweep, or by its own `timeout`.
 
 Why `apache-airflow-providers-ssh>=6.0.1`. Releases before it put the
 job paths into the wrapper unquoted and validate cleanup only against the
