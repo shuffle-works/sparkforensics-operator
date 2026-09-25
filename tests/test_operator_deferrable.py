@@ -86,7 +86,10 @@ def _serialize_round_trip(value):
     """What Airflow does to a deferral's resume kwargs between the task
     deferring and it resuming on a worker."""
     if AIRFLOW_V3_PLUS:
-        from airflow.sdk.serde import deserialize, serialize
+        try:
+            from airflow.sdk.serde import deserialize, serialize
+        except ImportError:  # Airflow 3.0/3.1 keep serde in core.
+            from airflow.serialization.serde import deserialize, serialize
 
         return deserialize(json.loads(json.dumps(serialize(value))))
     from airflow.serialization.serialized_objects import BaseSerialization
