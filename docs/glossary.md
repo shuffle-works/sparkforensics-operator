@@ -3,7 +3,7 @@
 - **Event log**, the file (or, for a long-running app, directory of
   rolling segments named `events_<n>_...`) Spark writes describing a
   job's execution, the raw input to sparkforensics analysis.
-- **Event log reference (`EventLogRef`)**, what a log source resolves and
+- **Event log reference (`EventLogRef`)**, what a log source locates and
   a backend analyzes: `LocalEventLog` (on the worker), `RemoteEventLog` (on
   an SSH host) or `HistoryServerApp` (an application the CLI fetches from a
   History Server itself).
@@ -45,3 +45,13 @@
   `ReportLink`. On Airflow 3.x `ReportLink` reads it from the operator's
   `persisted_report_dest` instead of XCom; it stays empty when the run
   failed before a report was persisted.
+- **Report URL**, the browser address `ReportLink` opens instead of the
+  raw destination, built from `report_url_template` and the destination's
+  bucket, key or path. It carries no credentials of its own.
+- **Summary XCom**, the dict pushed under the `sparkforensics_summary` key:
+  impact-band counts, whether a threshold was violated, which thresholds
+  were breached or inconclusive, the schema version, the destination and
+  the report URL. Downstream tasks branch on it without reading the report.
+- **Templated hook argument**, a hook attribute listed in its
+  `template_fields`, rendered by Airflow with the task's context before
+  the log is located or analyzed.

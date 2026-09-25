@@ -226,7 +226,7 @@ publishes them.
   are flat, nested deeper, or split across folders (e.g. several attempts:
   set `attempt_id`); "has no events_<n>_ rolling-log entries" means the one
   folder holds no rolling segments. Raised directly during
-  `resolve()`, before `sparkforensics-analyze` ever runs; check the exception
+  `locate()`, before `sparkforensics-analyze` ever runs; check the exception
   message's entry-name list against what the History Server actually
   returned.
 - **Task fails with "Configured log path does not exist"**,
@@ -240,7 +240,7 @@ publishes them.
   message's rendered path and `ssh_conn_id` against the on-prem host.
 - **Task fails with "SFTP log fetch failed (ssh_conn_id=...)"**, an
   SSH/SFTP transport-level failure (auth failure, host unreachable,
-  network timeout) during `SFTPLogSourceHook.resolve()`. Check the
+  network timeout) during `SFTPLogSourceHook.locate()`. Check the
   exception message's `ssh_conn_id` and remote path against the
   Airflow Connection and on-prem host; the wrapped underlying error is in
   the message.
@@ -250,7 +250,7 @@ publishes them.
   wrapped hook. Check `ssh_conn_id` and `remote_host:remote_port` against
   the on-prem host.
 - **Task fails with "SSH tunnel teardown failed after a successful
-  fetch (ssh_conn_id=...)"**, the wrapped hook's `resolve()` already
+  fetch (ssh_conn_id=...)"**, the wrapped hook's `locate()` already
   succeeded, but closing the SSH tunnel afterward raised. The fetched
   result is lost even though the log was retrieved; check `ssh_conn_id`
   against the on-prem host for a mid-task disconnect, then rerun the
@@ -260,7 +260,30 @@ publishes them.
   rendered to a path ending at the filesystem root (e.g. a template bug
   reduces to `"/"`), leaving nothing to name the staged local file or
   directory. Check the rendered path in the exception message against
-  `path_template` and the substituted context variables.
+  `path_template` and the values Jinja filled in.
+- **Task fails with "path_template ... was not rendered"**, the hook's
+  `locate()` ran on a raw Jinja template. `SparkForensicsOperator` and
+  `spark_forensics_callback` render hook arguments first, so this shows up
+  when a hook is called on its own, or when a custom wrapper hook builds
+  another hook without rendering it (`SSHTunneledLogSourceHook` renders
+  the hook its factory returns). Render it with the task's
+  `render_template()`, or pass the rendered value.
+- **Task fails with "path_template ... uses the {run_id} placeholder,
+  which is no longer supported"**, `path_template` is a Jinja template
+  now. Replace `{run_id}` with `{{ run_id }}`, `{ds}` with `{{ ds }}`, and
+  so on; a date format becomes
+  `{{ logical_date.strftime('%Y-%m-%d') }}`.
+- **Task fails with "path_template rendered to ..., which contains a '..'
+  segment"** or **"rendered to an empty path"**, a value Jinja filled in
+  (a `run_id` passed to `airflow dags trigger --run-id`, an XCom, a param)
+  would move the path outside its directory, or was empty. Check where
+  the value came from; the hook refuses to use it.
+- **Task fails with "app_id rendered to '' ..." or "app_id rendered to
+  'None' ..."**, a History Server hook's `app_id` template rendered to
+  nothing, typically an `xcom_pull` of a key the upstream task never
+  pushed (Jinja renders a missing XCom as `None`). Check the upstream
+  task's XCom and the `task_ids`/`key` in the template. An `attempt_id`
+  that renders to nothing is treated as unset instead.
 - **A task using `SSHTunneledLogSourceHook` hangs instead of failing**,
   `SSHHook.get_tunnel()`'s SSH-level connection setup has no documented
   connect timeout of its own; if the on-prem host is unreachable at the
@@ -279,11 +302,12 @@ publishes them.
   trustworthy task-level metrics). Logged as a warning regardless of
   `on_threshold_breach`; this is not itself a failure condition.
 - **The "SparkForensics report" link in the UI is blank**, on Airflow 2.x
-  the webserver reads the link from XCom and shows an empty link if that
-  read fails, rather than breaking the task page. Check the webserver log
-  for a "ReportLink could not read the report destination from XCom"
-  error and its traceback. The report itself was still persisted and is
-  still in XCom under `return_value`. On Airflow 3.x the worker computes
+  the webserver reads the link from XCom (the `sparkforensics_summary`
+  key, else `return_value`) and shows an empty link if that read fails,
+  rather than breaking the task page. Check the webserver log for a
+  "ReportLink could not read the report destination from XCom" error and
+  its traceback. The report itself was still persisted and is still in
+  XCom under `return_value`. On Airflow 3.x the worker computes
   the link after the task runs, from the destination the run actually
   persisted. The link is blank by design when the task failed before
   persisting a report (for example the event log fetch or the analysis
@@ -292,20 +316,26 @@ publishes them.
   operator extra link".
 - **The "SparkForensics report" link is missing from the task page
   entirely (Airflow 2.x)**, the webserver renders from the serialized DAG,
-  and Airflow drops `ReportLink` during deserialization unless the
-  package's `airflow.plugins` entry point is registered. The DAG
-  processor/scheduler log then shows "Operator Link class
+  and Airflow drops `ReportLink` during deserialization unless a provider
+  registered it. This package registers it as provider metadata, through
+  its `apache_airflow_provider` entry point. The DAG processor/scheduler
+  log then shows "Operator Link class
   'sparkforensics_operator.links.ReportLink' not registered". Make sure
   `sparkforensics-operator` is installed (as a package, not only copied
   onto the DAGs folder) on every process that serializes or renders the
-  DAG, not only on workers, and check `airflow plugins` lists
-  `sparkforensics_operator`.
+  DAG, not only on workers, and check `airflow providers list` lists
+  `sparkforensics-operator`.
+- **The report link opens the raw destination instead of a browser
+  page**, `report_url_template` is not set, or the run was persisted
+  before it was. Set it to a URL your viewers can open, such as an S3
+  console URL built from `{bucket}` and `{key}`. The link needs the
+  viewer's own access to that location; nothing is presigned.
 - **Disk fills up on a worker that runs this operator repeatedly**, a
   single event log can be hundreds of MB to several GB, so this matters on
   a busy worker. Each `LogSourceHook` now cleans up after itself, but only
   a path it created:
   - `HistoryServerLogSourceHook` with no `dest_dir` downloads to a private
-    temp dir and removes it automatically after analysis, including if `resolve()` itself fails partway through.
+    temp dir and removes it automatically after analysis, including if `locate()` itself fails partway through.
   - `FilesystemLogSourceHook` with `dest_dir` set copies the log there and
     removes that copy automatically after analysis.
   - `HistoryServerLogSourceHook` with `dest_dir` set writes into a
@@ -315,7 +345,7 @@ publishes them.
   - `FilesystemLogSourceHook` with no `dest_dir` returns the caller's own
     event log path unmodified; this package never deletes it.
   - `SFTPLogSourceHook` with no `dest_dir` downloads to a private temp dir
-    and removes it automatically after analysis, including if `resolve()`
+    and removes it automatically after analysis, including if `locate()`
     itself fails partway through.
   - `SFTPLogSourceHook` with `dest_dir` set writes into a caller-managed
     shared directory the hook doesn't own, so it is **not** auto-cleaned.

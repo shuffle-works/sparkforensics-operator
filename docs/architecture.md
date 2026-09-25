@@ -20,7 +20,7 @@ two independent axes:
   needs no Node.js.
 
 ```
-LogSourceHook.resolve(context) -> EventLogRef -> AnalyzeHook.analyze(ref, thresholds) -> Report
+LogSourceHook.locate(context) -> EventLogRef -> AnalyzeHook.analyze(ref, thresholds) -> Report
                                    LocalEventLog     SubprocessAnalyzeHook (worker)
                                    RemoteEventLog    SSHAnalyzeHook (SSH host)
                                    HistoryServerApp  either
@@ -39,10 +39,19 @@ breach that raises still gets a notification out first.
 
 ## Components
 
-- `_compat.py`, the one real Airflow-2-vs-3 difference this package
-  depends on: `BaseOperator`/`BaseOperatorLink` live in `airflow.sdk` on
-  3.x, `airflow.models.*` on 2.x. Same `get_link` signature both versions;
-  only the import path differs.
+- `_compat.py`, the single place this package imports Airflow's public
+  API from. `BaseOperator`/`BaseOperatorLink` live in `airflow.sdk` on
+  3.x and `airflow.models.*` on 2.x. The Task SDK also re-homed `BaseHook`
+  (3.1), and the exceptions, `TaskDeferred` and `conf` (3.2); their old
+  paths still work there, as the same objects, behind deprecation shims.
+  `_compat.py` tries the SDK path first and falls back to the old one, and
+  `tests/test_compat.py` imports every module of the package in a fresh
+  interpreter and fails on any deprecation warning they emit. The repo has
+  no ruff configuration, so there are no ruff `AIR3` rules to enable; that
+  test covers the same ground.
+- `hooks/_templating.py`, `TemplatedHookMixin`, the base of every hook:
+  an empty `template_fields` and a `__repr__` that shows them. See
+  "Templated hook arguments" below.
 - `log_ref.py`, the `EventLogRef` kinds (`LocalEventLog`,
   `RemoteEventLog`, `HistoryServerApp`): frozen dataclasses saying where a
   log is, the only thing a log source and a backend share.
@@ -53,8 +62,8 @@ breach that raises still gets a notification out first.
   `LogSourceHook.cleanup(log_ref)` (no-op by
   default) lets a hook remove a path it created for itself once analysis
   is done; `run_spark_forensics` calls it in a `finally`, so it runs on
-  both success and failure *after* `resolve()` has returned. That `finally`
-  does not cover a `resolve()` that raises before returning (there is no
+  both success and failure *after* `locate()` has returned. That `finally`
+  does not cover a `locate()` that raises before returning (there is no
   path yet to clean up via `cleanup()`), so each hook is responsible for
   cleaning up after itself in that case; currently `HistoryServerLogSourceHook`
   and `SFTPLogSourceHook` do this, via their own internal try/except
@@ -71,21 +80,19 @@ breach that raises still gets a notification out first.
   not local filesystem calls). `SSHTunneledLogSourceHook` wraps any
   HTTP-based `LogSourceHook`, built by a caller-supplied factory, behind
   an SSH port forward: composition, not a History-Server-specific hook.
-  The tunnel closes when `resolve()` returns, so the wrapped hook must
+  The tunnel closes when `locate()` returns, so the wrapped hook must
   fetch the log (return a `LocalEventLog`); a `HistoryServerApp` pointing
   through the tunnel is rejected.
 - `hooks/log_source/{remote_path,history_server_app}.py`,
   `RemotePathLogSourceHook` and `HistoryServerAppLogSourceHook`, reference
   only: they render or copy their configuration into a `RemoteEventLog` /
-  `HistoryServerApp` and do no I/O. Per-run values resolve the same way as
-  in the fetching hooks: `RemotePathLogSourceHook.path_template` uses the
-  shared, sanitized `_path_template` substitutions, and
-  `HistoryServerAppLogSourceHook`'s `app_id`/`attempt_id` are plain
-  constructor values, like `HistoryServerLogSourceHook`'s.
-  `hooks/log_source/_path_template.py` and `_rolling_log.py` hold the
-  path-templating and rolling-log-entry-matching logic shared between
-  `filesystem.py`/`sftp.py` and `history_server.py`/`sftp.py`
-  respectively. `_dest_root.py` holds the `dest_root/<basename>` staging
+  `HistoryServerApp` and do no I/O. Per-run values come from Jinja, the
+  same way as in the fetching hooks (see "Templated hook arguments").
+  `hooks/log_source/_path_template.py` checks a rendered path (rendered,
+  non-empty, no `..` segment) and `_history_server_args.py` checks a
+  rendered app id and attempt id; `_rolling_log.py` holds the
+  rolling-log-entry-matching logic shared between `history_server.py`
+  and `sftp.py`. `_dest_root.py` holds the `dest_root/<basename>` staging
   convention shared by `filesystem.py`/`sftp.py`, and the owned-temp-dir
   bookkeeping (create if `dest_dir` is unset, `rmtree` on cleanup/error if
   owned) shared by `sftp.py`/`history_server.py`.
@@ -137,20 +144,32 @@ breach that raises still gets a notification out first.
   for whatever messaging/paging system they target, and `notify()` makes
   that best-effort, never raising. No concrete notifier ships in this
   package.
+- `summary.py`, the summary XCom (`SUMMARY_XCOM_KEY`,
+  `build_summary()`) and the report URL (`render_report_url()`,
+  `validate_report_url_template()`). See "Summary XCom and report URL"
+  below.
 - `links.py`, `ReportLink`, a clickable "SparkForensics report" link on
-  the task in the Airflow UI. On 2.x the webserver calls `get_link`, which
-  reads the `return_value` XCom the operator already pushed. On 3.x the
-  task runner calls `get_link` on the worker after `execute()` and stores
-  the result in XCom for the API server, so `get_link` returns the
-  destination `execute()` recorded on the operator's
-  `persisted_report_dest` instead of reading the metadata database. That
+  the task in the Airflow UI. It links to the report URL when
+  `report_url_template` is set, and to the raw destination otherwise. On
+  2.x the webserver calls `get_link`, which reads the summary XCom (and
+  falls back to the `return_value` XCom for runs that pushed no summary).
+  On 3.x the task runner calls `get_link` on the worker after `execute()`
+  and stores the result in XCom for the API server, so `get_link` returns
+  what `execute()` recorded on the operator (`persisted_report_url`, else
+  `persisted_report_dest`) instead of reading the metadata database. That
   is empty when the run failed before `sinks.persist()`, and set on a
   threshold breach because the report is persisted before the raise.
-- `plugin.py`, `SparkForensicsPlugin`, registered through the
-  `airflow.plugins` entry point in `pyproject.toml`. Airflow 2.x drops any
-  operator link whose class is not registered when it deserializes a DAG,
-  and the webserver renders from the serialized DAG, so without it the
-  link never shows. Airflow 3.x needs no registration.
+- `get_provider_info.py`, the Airflow provider metadata, returned through
+  the `apache_airflow_provider` entry point in `pyproject.toml`: package
+  name, version, the operator and hook modules, and `ReportLink` under
+  `extra-links`. Airflow lists the package under `airflow providers list`.
+  Airflow 2.x drops any operator link whose class no provider or plugin
+  registered when it deserializes a DAG, and the webserver renders from
+  the serialized DAG, so this registration is what makes the link show
+  there. Airflow 3.x needs no link
+  registration. The module imports nothing from the rest of the package,
+  because the ProvidersManager can load it while Airflow itself is still
+  importing.
 - `operator.py`, `SparkForensicsOperator` + the shared
   `run_spark_forensics` core, whose second half, `handle_report()`
   (persist, warn, notify, apply `on_threshold_breach`), is also what a
@@ -164,7 +183,7 @@ breach that raises still gets a notification out first.
 worker slot while the CLI runs on the SSH host:
 
 ```
-worker:     execute()  resolve log_ref -> backend.submit() -> defer(trigger_for(job), kwargs)
+worker:     execute()  locate log_ref -> backend.submit() -> defer(trigger_for(job), kwargs)
 triggerer:  SSHRemoteJobTrigger polls exit_code, streams stdout.log
 worker:     execute_complete(event, job, log_ref, report_dest, thresholds)
               -> backend.collect()  read stderr + report.json, remove the job dir
@@ -190,7 +209,10 @@ kwargs, as JSON-native values that Airflow 2's `BaseSerialization` and
 Airflow 3's serde both round-trip: the job dict (connection id, CLI
 binary, `timeout`, every remote path), the log reference as a dict, the
 rendered `report_dest` and the thresholds the job was submitted with. The
-notifier and `on_threshold_breach` come from the fresh instance.
+job dict and the log reference are built from the rendered hooks, so
+templated hook arguments cross the deferral as the values the job ran
+with. The notifier, `on_threshold_breach` and `report_url_template` come
+from the fresh instance.
 
 The job on the host. The CLI runs under the same coreutils `timeout` as
 the synchronous path, writes its report to `--out` inside the job
@@ -240,6 +262,61 @@ default base directory; before 5.0.4 they also record the launcher's pid,
 so a kill misses the command itself. 6.0.1 still splices paths into a double-quoted string inside
 the job script, so `remote_base_dir` and the resolved `$HOME` are
 rejected if they contain `$`, `` ` ``, `"`, `\` or control characters.
+
+## Templated hook arguments
+
+Hook arguments are Jinja templates, rendered by Airflow's own nested
+template-field mechanism, the same one used for any object assigned to a
+templated operator field. `SparkForensicsOperator.template_fields` is
+`("report_dest", "log_source", "backend")`, and each hook class declares
+the attributes it templates in its own `template_fields`; Airflow renders
+those in place, on Airflow 2 and 3 alike. There is one mechanism, and no
+hook formats a string itself. The earlier `{run_id}`-style `str.format`
+placeholders in `path_template` are gone, and a value that still holds
+one is rejected with an error naming the Jinja replacement.
+
+Three details keep this safe.
+
+- `render_template_fields()` gives the task its own shallow copy of
+  `log_source` and `backend` before rendering, because Airflow renders in
+  place and the same hook instance is often shared by several tasks or by
+  every mapped instance.
+- The log-source method is `locate()`, not `resolve()`. Airflow 3's
+  templater calls `resolve(context)` on any template-field value that has
+  a `resolve` attribute, so a hook with that method would run during
+  rendering.
+- Rendered values are checked where they are used, not in `__init__`
+  (which sees the raw template): a path must be rendered, non-empty and
+  free of `..` segments, and a History Server app id that rendered to
+  `""` or `"None"` (a missing XCom) is an error. `SSHAnalyzeHook` checks
+  `remote_base_dir` in `__init__` only when it holds no Jinja, and again
+  before each use.
+
+`SSHTunneledLogSourceHook` renders the inner hook its factory builds at
+`locate()` time, with the task's context, since that hook does not exist
+when Airflow renders the task. `spark_forensics_callback` runs outside
+any template rendering, so it renders `report_dest`, `log_source` and
+`backend` itself, on copies, through the upstream task's
+`render_template()`.
+
+## Summary XCom and report URL
+
+Before notifying and before any threshold breach raises,
+`handle_report()` pushes a summary under the `sparkforensics_summary`
+XCom key: the schema version, the destination, the report URL, the
+impact-band counts, whether the run violated a threshold, the breached
+and inconclusive threshold names, and the CLI exit code. Downstream tasks
+can branch on it without reading the report. It is built from the same
+`Report` on both the synchronous and the deferred path, and
+`return_value` stays the destination.
+
+`report_url_template` is an optional `str.format` template, such as an S3
+console or an internal viewer URL, filled from the destination's
+`{destination}`, `{bucket}`, `{key}` and `{path}`, each percent-encoded.
+It must build an http(s) URL, checked in `__init__`. The package never
+presigns anything: the URL points at a place the viewer's own
+credentials open. `ReportLink` shows that URL when it is set and the raw
+destination when it is not.
 
 ## Deferred
 

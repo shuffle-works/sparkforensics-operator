@@ -37,7 +37,16 @@ runs as part of the DAG, right where the Spark task just ran.
   without consuming the task's retries, since re-running would just reach
   the same verdict.
 - Reports persist to a local path, `file://`, or `s3://`, and a clickable
-  "SparkForensics report" link shows up on the task in the Airflow UI.
+  "SparkForensics report" link shows up on the task in the Airflow UI. Set
+  `report_url_template` (an S3 console URL, say) to make it open in a
+  browser.
+- A small summary (finding counts per impact band, breached thresholds,
+  the destination) goes to XCom under `sparkforensics_summary`, so
+  downstream tasks can branch without reading the report.
+- Hook arguments are Jinja templates (`path_template="/logs/{{ run_id }}"`,
+  `app_id="{{ ti.xcom_pull(...) }}"`), rendered per task like any
+  templated operator field.
+- Installs as an Airflow provider, listed by `airflow providers list`.
 - An optional `Notifier` you implement (Slack, MS Teams, email, PagerDuty,
   ZenDuty, whatever you use) gets a best-effort pass/fail summary; a
   delivery failure never fails the task itself.
@@ -60,7 +69,7 @@ run_spark_job = SparkSubmitOperator(task_id="run_spark_job", ...)
 
 check_spark_job = SparkForensicsOperator(
     task_id="check_spark_job",
-    log_source=FilesystemLogSourceHook(path_template="/mnt/spark-logs/{run_id}/eventlog"),
+    log_source=FilesystemLogSourceHook(path_template="/mnt/spark-logs/{{ run_id }}/eventlog"),
     backend=SubprocessAnalyzeHook(),
     report_dest="s3://reports/{{ run_id }}/report.json",
     max_runtime_ms=3_600_000,
@@ -100,14 +109,17 @@ from sparkforensics_operator import HistoryServerAppLogSourceHook, SparkForensic
 
 check_spark_job = SparkForensicsOperator(
     task_id="check_spark_job",
-    log_source=HistoryServerAppLogSourceHook(base_url="http://localhost:18080", app_id="app-20260101000000-0001"),
+    log_source=HistoryServerAppLogSourceHook(
+        base_url="http://localhost:18080",
+        app_id="{{ ti.xcom_pull(task_ids='run_spark_job', key='app_id') }}",
+    ),
     backend=SSHAnalyzeHook(ssh_conn_id="shs_node"),
     report_dest="s3://reports/{{ run_id }}/report.json",
     max_runtime_ms=3_600_000,
 )
 ```
 
-`RemotePathLogSourceHook(ssh_conn_id="shs_node", path_template="/spark-logs/{run_id}")`
+`RemotePathLogSourceHook(ssh_conn_id="shs_node", path_template="/spark-logs/{{ run_id }}")`
 points `SSHAnalyzeHook` at an event log path on that host instead.
 
 Add `deferrable=True` to that operator to release the worker slot while
