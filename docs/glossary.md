@@ -19,9 +19,10 @@
   to read the report back.
 - **Remote job / job directory**, the detached CLI process of a deferred
   run and the directory on the SSH host holding its report, stderr, log
-  and exit code, under `remote_base_dir/<task instance>/`. Removed once
-  the report is read; a new try of the same task instance stops and
-  removes any job an earlier try left there.
+  and exit code, under `remote_base_dir/<task instance>/`, where the task
+  instance directory is also keyed on the Airflow deployment's
+  `base_url`. Removed once the report is read; a new try of the same task
+  instance stops and removes any job an earlier try left there.
 - **Spark History Server (SHS)**, the Spark UI's REST API for completed
   applications; `HistoryServerLogSourceHook` downloads event logs from its
   `/api/v1/applications/{app_id}/logs` endpoint, and

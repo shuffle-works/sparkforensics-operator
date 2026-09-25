@@ -227,10 +227,8 @@ An unsupported pairing raises `AirflowException` ("... cannot analyze
   `LogSourceHook`, e.g.
   `lambda base_url: HistoryServerLogSourceHook(base_url=base_url, app_id=...)`.
   Requires the `ssh` extra
-  (`apache-airflow-providers-ssh>=6.0.1`, `apache-airflow-providers-sftp>=4.0`);
-  note the `ssh` extra's own effective floor is `apache-airflow>=2.11`
-  (transitively, via the ssh provider), higher than this package's overall
-  `apache-airflow>=2.6` floor.
+  (`apache-airflow-providers-ssh>=3.7.1`, `apache-airflow-providers-sftp>=4.0`),
+  which works from Airflow 2.6 on.
   The wrapped hook must fetch the log (return a `LocalEventLog`) while the
   tunnel is open; a hook that returns another reference kind is rejected.
   For a History Server reachable only from the SSH host, pairing
@@ -309,14 +307,25 @@ aren't) auto-cleaned.
   every `poll_interval` seconds. `remote_base_dir` defaults to
   `$HOME/.sparkforensics/jobs` of the SSH user; set it to an absolute path
   without `$`, `` ` ``, `"`, `\`, `..` or control characters (a
-  `ValueError` otherwise). The deferred mode also needs bash on the SSH
-  host. Both modes use `setsid` and `pkill` there when present to stop a
-  run. A synchronous run writes nothing under `remote_base_dir`.
+  `ValueError` otherwise). The task instance's directory is keyed on this
+  Airflow deployment's `base_url` too, so deployments sharing an SSH user
+  don't stop each other's jobs. The deferred mode needs
+  `apache-airflow-providers-ssh>=6.0.1` (Airflow 2.11+) on the workers and
+  the triggerer, and bash on the SSH host; `deferrable=True` with an older
+  provider raises `ValueError` at DAG parse. Both modes stop a run with
+  `setsid`, and `pkill` or else `/proc`, on the SSH host. A synchronous
+  run writes nothing under `remote_base_dir`.
+- `SSHAnalyzeHook.cannot_defer_reason() -> str | None`, why the installed
+  SSH provider cannot run the deferrable mode, or `None`.
 
 `SparkForensicsOperator.on_kill()` stops the analysis when the task is
 killed while a worker runs it: a deferrable task's backend abandons the
-task instance's remote job (`DeferrableAnalyzeHook.abandon`), a
-synchronous one calls `AnalyzeHook.on_kill()`, a no-op by default.
+remote job it submitted (`DeferrableAnalyzeHook.abandon`), a
+synchronous one calls `AnalyzeHook.on_kill()`, a no-op by default. It
+works on an operator whose `execute()` never ran, as Airflow 2 calls it
+when `execution_timeout` expired during a deferral. A deferrable run
+keeps its submitted job in XCom under `sparkforensics_remote_job`
+(`operator.REMOTE_JOB_XCOM_KEY`) for that, until the next try clears it.
 `SSHAnalyzeHook.on_kill()` closes the SSH channel and stops the remote CLI
 by the pid it reported, if it had reported one yet.
 Airflow runs no worker process for a deferred task, so killing one then
@@ -337,8 +346,14 @@ top of `_analyze()`:
 - `defer_timeout(job) -> timedelta`, how long to wait before giving up.
 - `collect(job, event, log_ref, thresholds) -> Report`, read the result
   back and clean up, raising the errors `analyze()` would.
-- `abandon(context)`, stop and remove the task instance's job after a
-  failed or timed-out deferral.
+- `abandon(context, job=None)`, stop and remove the task instance's job
+  after a failed or timed-out deferral or a kill. `job` is the dict
+  `submit()` returned when the operator still has it (from XCom or the
+  resume kwargs); act on it rather than on the hook's current
+  configuration, which may render differently by then.
+- `cannot_defer_reason() -> str | None`, optional: why the backend can't
+  run detached in this environment. `deferrable=True` then raises
+  `ValueError`, and `[operators] default_deferrable` leaves it synchronous.
 
 The job dict is everything that crosses the deferral: `collect()` runs on
 a different hook instance, rebuilt from the DAG file.

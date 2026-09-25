@@ -13,10 +13,11 @@
 - `pip install sparkforensics-operator[ssh]` if using `SFTPLogSourceHook`,
   `SSHTunneledLogSourceHook` or `SSHAnalyzeHook`. All reuse the `ssh_conn_id` Airflow
   Connection already configured for `SSHOperator`: no new connection
-  type to set up. Note: this extra's floor
-  (`apache-airflow-providers-ssh>=6.0.1`) transitively requires
-  `apache-airflow>=2.11`, higher than this package's own overall
-  `apache-airflow>=2.6` floor.
+  type to set up. The extra's floor, `apache-airflow-providers-ssh>=3.7.1`,
+  works from Airflow 2.6 on. `deferrable=True` needs
+  `apache-airflow-providers-ssh>=6.0.1`, which requires Airflow 2.11 or
+  newer: on an older provider the operator rejects `deferrable=True` when
+  the DAG is parsed, and ignores `[operators] default_deferrable`.
 - Any dependency your own `Notifier` implementation needs (e.g. a
   provider package for Slack/Teams/PagerDuty, an SMTP library) is on you
   to install; this package declares none for notification.
@@ -64,8 +65,8 @@ again to read the report back. On top of the two sections above:
   needs `apache-airflow-providers-ssh>=6.0.1` and `asyncssh` there;
   installing this package's extra keeps the triggerer on the same provider
   version the workers submit with.
-- Managed Airflow needs a version that runs a triggerer and meets the ssh
-  extra's `apache-airflow>=2.11` floor. On Amazon MWAA, pick an
+- Managed Airflow needs a version that runs a triggerer and meets the
+  deferrable mode's `apache-airflow>=2.11` floor. On Amazon MWAA, pick an
   environment version that has both (MWAA only runs a triggerer from
   Airflow 2.7 on) and add `sparkforensics-operator[ssh]` to its
   `requirements.txt`, which MWAA installs for the triggerer as well as the
@@ -79,23 +80,34 @@ again to read the report back. On top of the two sections above:
   command, for instance) works for the worker steps but not for the
   triggerer's polls.
 - The SSH host needs bash (the provider's job wrapper uses it), and
-  `setsid` (util-linux) and `pkill` (procps) to stop a job cleanly: the
-  job is its own session, and stopping it signals the whole session,
-  coreutils `timeout` and the CLI included. Without `pkill`, only the
-  job's process group is signalled, which misses the CLI; it then stops
-  at its own `timeout` instead.
+  `setsid` (util-linux) to stop a job cleanly: the job is its own
+  session, and stopping it signals the whole session, coreutils `timeout`
+  and the CLI included. It uses `pkill` (procps) for that when present,
+  and otherwise finds the session's processes in `/proc`, so slim images
+  without procps work too. Only on a host with neither is just the job's
+  process group signalled, which misses the CLI; it then stops at its own
+  `timeout` instead.
 - Job files live under `remote_base_dir` (default
   `$HOME/.sparkforensics/jobs` of the SSH user), one owner-only directory
   per task instance, holding the report, stderr, the log the triggerer
   streams, and the exit code. The directory is removed once the report is
-  read, on success and on failure.
+  read, on success and on failure. The directory's name is a digest of the
+  task instance and this Airflow deployment's `base_url` (`[api]` on
+  Airflow 3, `[webserver]` on Airflow 2), so two deployments that run the
+  same DAGs as the same SSH user keep their jobs apart. Set `base_url` on
+  the workers of both (it defaults to `http://localhost:8080`), or give
+  each deployment its own `remote_base_dir`.
+- The submitted job is also kept in the task instance's XCom, under
+  `sparkforensics_remote_job`, until its next try clears it: a deferral
+  that fails, times out or is killed stops that job even if the hook's
+  `ssh_conn_id` or `remote_base_dir` renders differently by then.
 
 How a deferred run behaves when something goes wrong:
 
 | Situation | What happens |
 |---|---|
 | The analysis runs past `timeout` | Coreutils `timeout` stops the CLI on the host (exit 124), the trigger fires, and the task fails with the same "timed out after {timeout}s on the SSH host" error as a synchronous run. The job directory is removed. |
-| The job never reports back (host rebooted, job killed from outside) | The deferral gives up 120 seconds past `timeout`, or at the task's `execution_timeout` if that comes first. The task resumes only to stop the job and remove its directory, if the host is reachable, then fails with Airflow's "Trigger/execution timeout". |
+| The job never reports back (host rebooted, job killed from outside) | The deferral gives up 120 seconds past `timeout`, or at the task's `execution_timeout` if that comes first. The task resumes only to stop the job and remove its directory, if the host is reachable, then fails with Airflow's "Trigger/execution timeout" (Airflow 3) or `AirflowTaskTimeout` (Airflow 2, whose task runner calls `on_kill()` for it, which does the same cleanup). |
 | The triggerer can't reach the host | It retries with backoff and fires an error event after five consecutive failures. The task stops and removes the job (best effort) and fails with "lost track of remote job ... while waiting for it". |
 | A retry, or a clear while deferred | Every try first stops any job an earlier try of the same task instance left running and removes its directory, then submits its own. There is never more than one analysis per task instance on the host, and a new try never reuses an old try's output. |
 | A worker restarts while the task is deferred | Nothing: no worker holds the task. A worker that dies while submitting or reading back fails the try as usual, and the next try cleans up. |

@@ -28,7 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worker slot is held while the analysis runs. Deferred and synchronous
   runs persist the same report and raise the same errors. `deferrable`
   left unset follows `[operators] default_deferrable` for backends that
-  can defer. Needs a triggerer with the `ssh` extra installed.
+  can defer. Needs a triggerer with the `ssh` extra installed, and
+  `apache-airflow-providers-ssh>=6.0.1` (Airflow 2.11+): with an older
+  provider `deferrable=True` raises `ValueError` at DAG parse. Each task
+  instance's job directory is keyed on the deployment's `base_url` too,
+  so deployments sharing an SSH user never stop each other's jobs, and
+  the submitted job is kept in XCom (`sparkforensics_remote_job`) so a
+  failed, timed-out or killed deferral stops the job it submitted.
 - `SSHAnalyzeHook(remote_base_dir=..., poll_interval=...)` for the
   deferrable mode's job directory and trigger poll interval.
 - `DeferrableAnalyzeHook`, the interface a backend implements to support
@@ -38,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deferrable task's remote job is stopped and removed; a synchronous
   `SSHAnalyzeHook` run closes its channel and stops the remote CLI, which
   closing the channel alone never did. Backends get an `on_kill()` hook,
-  a no-op by default.
+  a no-op by default. Hosts without procps (`pkill`) are handled: the
+  job's session is found in `/proc`.
 - Templated hook arguments: `log_source` and `backend` are template
   fields of `SparkForensicsOperator`, and every hook lists what it renders
   in its own `template_fields` (paths, connection ids, History Server app
@@ -83,8 +90,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SSHTunneledLogSourceHook` rejects a wrapped hook that returns anything
   but a `LocalEventLog`, since the tunnel is closed by the time the
   reference would be used.
-- Breaking: the `ssh` extra requires `apache-airflow-providers-ssh>=6.0.1`
-  (was `>=5.0`), the first release whose remote-job helpers quote paths.
+- The `ssh` extra requires `apache-airflow-providers-ssh>=3.7.1` (was
+  `>=5.0`, which needs Airflow 2.11), so `SSHAnalyzeHook`'s synchronous
+  mode, `SFTPLogSourceHook` and `SSHTunneledLogSourceHook` work from
+  Airflow 2.6 on, the package's own floor. Only the deferrable mode needs
+  `apache-airflow-providers-ssh>=6.0.1`, the first release whose
+  remote-job helpers quote paths.
 - A synchronous `SSHAnalyzeHook` run starts the CLI in its own session
   (under `setsid` when the host has it) and reports its pid on the
   channel, so `on_kill()` can stop it; it still writes nothing on the SSH

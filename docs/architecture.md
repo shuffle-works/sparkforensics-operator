@@ -212,34 +212,62 @@ rendered `report_dest` and the thresholds the job was submitted with. The
 job dict and the log reference are built from the rendered hooks, so
 templated hook arguments cross the deferral as the values the job ran
 with. The notifier, `on_threshold_breach` and `report_url_template` come
-from the fresh instance.
+from the fresh instance. The job dict is also pushed to XCom
+(`sparkforensics_remote_job`) right after submitting, because Airflow
+drops the resume kwargs on the failure paths below: a deferral that
+fails or times out resumes with only an error, and `on_kill()` gets no
+arguments at all. Airflow keeps a task instance's XComs across a
+deferral and clears them at its next try.
 
 The job on the host. The CLI runs under the same coreutils `timeout` as
 the synchronous path, writes its report to `--out` inside the job
 directory and its stderr (the threshold lines) to a file next to it. The
 provider's wrapper merges stdout and stderr into the log the trigger
 streams, so the report is never parsed from that log. Each task instance
-(dag, task, run, map index) gets its own directory under
-`remote_base_dir`, and every `submit()` first stops whatever an earlier
-try left running there and removes it. That is what keeps a retry or a
-clear from running two analyses at once. Stopping a job signals its whole
-session (`pkill -s`): the provider's own group kill misses the CLI,
-because coreutils `timeout` moves itself into a process group of its own.
-A pid is only signalled while its command line still names its job
-directory, so a pid reused after a reboot is left alone.
+(dag, task, run, map index) of each Airflow deployment gets its own
+directory under `remote_base_dir`, and every `submit()` first stops
+whatever an earlier try left running there and removes it. That is what
+keeps a retry or a clear from running two analyses at once. The
+deployment is part of the directory's name because two deployments
+running the same DAGs share dag, task and run ids (scheduled runs are
+named after their date), and with one SSH user each deployment's sweep
+would stop the other's jobs. Nothing a worker sees identifies a
+deployment and survives both a retry and a clear, bar configuration, so
+the key is `base_url` (`[api]` on Airflow 3, `[webserver]` on Airflow 2),
+which differs between real deployments; `remote_base_dir` separates two
+that share it. Stopping a job signals its whole session: the provider's
+own group kill misses the CLI, because coreutils `timeout` moves itself
+into a process group of its own. The session is signalled with
+`pkill -s`, or, on a host without procps, process by process from the
+session ids in `/proc/<pid>/stat`. A pid is only signalled while its
+command line still names its job directory, so a pid reused after a
+reboot is left alone.
 
 Failure paths. A trigger error event makes `collect()` stop and remove
 the job before raising. A deferral that times out (the backend's
 `defer_timeout`, `timeout` plus 120 seconds, or the task's
 `execution_timeout`) resumes with `next_method="__fail__"`, which never
 reaches `execute_complete()`; `resume_execution()` is overridden to call
-`backend.abandon(context)` first. The runbook's "Deferred runs" section
-lists the behaviour for each case.
+`backend.abandon(context, job)` first, with the job from XCom. Airflow 2
+takes a different path when `execution_timeout` ran out during the
+deferral: its task runner raises `AirflowTaskTimeout` before calling
+anything on the resumed operator, then calls `on_kill()`, which is why
+`on_kill()` does not depend on `execute()` having run. Anything that fails
+between `submit()` and `defer()` (building the trigger, the timeout, the
+deferral itself) abandons the job before the error propagates, and a
+task timeout or kill there reaches `on_kill()`, which does the same. The
+runbook's "Deferred runs" section lists the behaviour for each case.
 
 Killing a task. `SparkForensicsOperator.on_kill()` uses the context of the
-`execute()` or `execute_complete()` running in the same process, never
-state from before a deferral. A deferrable task abandons its task
-instance's job; a synchronous one calls the backend's `on_kill()`.
+`execute()` or `execute_complete()` running in the same process, or,
+when neither ran, the context of the task running in the process
+(`get_current_context()`); never state from before a deferral. A
+deferrable task abandons its job: the one this process submitted or
+resumed with, else the one in XCom, else whatever the task instance's
+directory holds. A synchronous one calls the backend's `on_kill()`. SSH
+failures are rewrapped as `AirflowException` only when they are
+`Exception`s: `AirflowTaskTimeout` and the kill signal's exception reach
+the task runner unchanged, since it calls `on_kill()` only for those.
 Closing the SSH channel alone would leave the remote CLI running, so the
 synchronous SSH command starts a small POSIX `sh` launcher in the
 background, which prints `sparkforensics-pid:<its pid>` on stdout and
@@ -256,12 +284,19 @@ has its channel closed; the CLI's own `timeout` bounds it. A task
 that is killed while deferred has no worker process and no `on_kill()`;
 its job is stopped by the next try's sweep, or by its own `timeout`.
 
-Why `apache-airflow-providers-ssh>=6.0.1`. Releases before it put the
-job paths into the wrapper unquoted and validate cleanup only against the
-default base directory; before 5.0.4 they also record the launcher's pid,
-so a kill misses the command itself. 6.0.1 still splices paths into a double-quoted string inside
-the job script, so `remote_base_dir` and the resolved `$HOME` are
-rejected if they contain `$`, `` ` ``, `"`, `\` or control characters.
+Why the deferrable mode needs `apache-airflow-providers-ssh>=6.0.1`.
+Releases before it put the job paths into the wrapper unquoted and
+validate cleanup only against the default base directory; before 5.0.4
+they also record the launcher's pid, so a kill misses the command itself.
+6.0.1 still splices paths into a double-quoted string inside the job
+script, so `remote_base_dir` and the resolved `$HOME` are rejected if they
+contain `$`, `` ` ``, `"`, `\` or control characters. The ssh extra
+itself only asks for 3.7.1, the release Airflow 2.6's constraints pin:
+the synchronous backend and the SFTP and tunnel log sources use nothing
+newer, and 6.0.1 needs Airflow 2.11. `SSHAnalyzeHook.cannot_defer_reason()`
+checks the installed provider, so `deferrable=True` on an older one fails
+when the DAG is parsed, and `[operators] default_deferrable` leaves it
+synchronous.
 
 ## Templated hook arguments
 

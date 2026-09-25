@@ -24,8 +24,11 @@ Deferred-mode tests run the provider's real shell wrapper against a local
 `sh` standing in for the SSH host (`tests/hooks/analyze/_local_ssh.py`), so
 they need `bash`, `setsid` and coreutils `timeout` locally.
 `py39-airflow2min` has no ssh extra and omits SSH-only modules from its
-coverage (`coverage-no-ssh.ini`); `py311-airflow2sshmin` pins the ssh
-extra's floors (`constraints-ssh-floor.txt`).
+coverage (`coverage-no-ssh.ini`); `py39-airflow2sshmin` runs the ssh
+extra's floor on Airflow 2.6 (deferrable tests skip there);
+`py311-airflow2deferrablemin` pins the deferrable mode's floors
+(`constraints-deferrable-floor.txt`). Kill/sweep tests also run with
+procps hidden (`LocalHost.hide_procps()`), as on slim images.
 
 Each tox env writes coverage to `coverage-<envname>.lcov` (see `tox.ini`); CI
 uploads these per-matrix-env to Coveralls and merges them in a `finish` job.
