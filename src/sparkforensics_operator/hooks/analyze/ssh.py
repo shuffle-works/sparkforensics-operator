@@ -7,7 +7,7 @@ from typing import Any
 
 from packaging.version import Version
 
-from sparkforensics_operator._compat import AirflowException
+from sparkforensics_operator._compat import AirflowException, AirflowTaskTimeout
 from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, RemoteEventLog
 from sparkforensics_operator.report import Report
 
@@ -122,6 +122,10 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         self._sync_argv = argv
         try:
             returncode, stdout, stderr = self._run_remote(_remote_job.sync_analysis_command(argv), log_ref)
+        except AirflowTaskTimeout:
+            # The task runner calls on_kill() after it, which needs the run.
+            # Older Airflow 2 releases make it an Exception, not a BaseException.
+            raise
         except Exception:
             self._clear_sync_run()
             raise

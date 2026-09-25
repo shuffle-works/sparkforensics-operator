@@ -40,6 +40,7 @@ try:
         AirflowException,
         AirflowFailException,
         AirflowNotFoundException,
+        AirflowTaskTimeout,
         TaskDeferred,
     )
 except ImportError:
@@ -47,6 +48,7 @@ except ImportError:
         AirflowException,
         AirflowFailException,
         AirflowNotFoundException,
+        AirflowTaskTimeout,
         TaskDeferred,
     )
 try:
