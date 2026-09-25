@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import copy
 from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
-from airflow.exceptions import AirflowException
-
 from sparkforensics_operator import sinks
-from sparkforensics_operator._compat import BaseOperator, conf
+from sparkforensics_operator._compat import AirflowException, BaseOperator, conf
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.base import DeferrableAnalyzeHook
 from sparkforensics_operator.links import ReportLink
 from sparkforensics_operator.log_ref import log_ref_from_dict, log_ref_to_dict
+from sparkforensics_operator.summary import (
+    SUMMARY_XCOM_KEY,
+    build_summary,
+    render_report_url,
+    validate_report_url_template,
+)
 
 _THRESHOLD_BREACH_ACTIONS = ("fail", "warn", "ignore")
 
@@ -33,14 +38,15 @@ def run_spark_forensics(
     notifier,
     log,
     aws_conn_id: str | None = None,
+    report_url_template: str | None = None,
 ) -> str:
     """The one code path shared by SparkForensicsOperator.execute() and the
-    spark_forensics_callback() factory (Task 15)."""
+    spark_forensics_callback() factory."""
     _validate_on_threshold_breach(on_threshold_breach)
     # Where the log is (log_source) and where it is analyzed (backend) are
     # independent: the reference may point at a file the worker fetched, a
     # path on an SSH host, or a History Server app the backend reads itself.
-    log_ref = log_source.resolve(context)
+    log_ref = log_source.locate(context)
     try:
         report = backend.analyze(log_ref, thresholds)
         return handle_report(
@@ -50,6 +56,8 @@ def run_spark_forensics(
             notifier=notifier,
             log=log,
             aws_conn_id=aws_conn_id,
+            ti=context.get("ti"),
+            report_url_template=report_url_template,
         )
     finally:
         log_source.cleanup(log_ref)
@@ -63,11 +71,14 @@ def handle_report(
     notifier,
     log,
     aws_conn_id: str | None = None,
+    ti=None,
+    report_url_template: str | None = None,
 ) -> str:
-    """Persists the report, logs inconclusive thresholds, notifies, and
-    applies on_threshold_breach. Shared by run_spark_forensics and the
-    deferrable operator's resume step, so a deferred run acts on its report
-    exactly as a synchronous one does."""
+    """Persists the report, logs inconclusive thresholds, pushes the summary
+    XCom (to ti, when there is one), notifies, and applies
+    on_threshold_breach. Shared by run_spark_forensics and the deferrable
+    operator's resume step, so a deferred run acts on its report exactly as
+    a synchronous one does."""
     report_json = {
         "schemaVersion": report.schema_version,
         "summary": report.summary,
@@ -100,9 +111,6 @@ def handle_report(
             "detail could not be parsed from stderr"
         )
 
-    if notifier is not None:
-        notifier.notify(report, destination)
-
     violated = report.violated
     message = ""
     if violated:
@@ -118,6 +126,22 @@ def handle_report(
             "thresholds were violated per exit code 1, but the violation "
             "could not be parsed from stderr"
         )
+
+    # Before notifying and before any breach raises, so a downstream task
+    # (or the report link) sees the verdict whatever happens next.
+    if ti is not None:
+        ti.xcom_push(
+            key=SUMMARY_XCOM_KEY,
+            value=build_summary(
+                report,
+                destination=destination,
+                report_url=render_report_url(destination, report_url_template),
+                violated=violated,
+            ),
+        )
+
+    if notifier is not None:
+        notifier.notify(report, destination)
 
     if violated:
         if on_threshold_breach == "fail":
@@ -149,10 +173,15 @@ class SparkForensicsOperator(BaseOperator):
     finishes, freeing the worker slot meanwhile; the backend must be a
     DeferrableAnalyzeHook (SSHAnalyzeHook). Left unset, it follows
     Airflow's [operators] default_deferrable, applied only when the backend
-    can defer."""
+    can defer.
+
+    report_dest, and each hook's own template_fields, are Jinja templates
+    Airflow renders before execute(). report_url_template, if set, turns the
+    persisted destination into the browser URL ReportLink shows; each run
+    also pushes a summary XCom (summary.SUMMARY_XCOM_KEY)."""
 
     operator_extra_links = (ReportLink(),)
-    template_fields: Sequence[str] = ("report_dest",)
+    template_fields: Sequence[str] = ("report_dest", "log_source", "backend")
 
     def __init__(
         self,
@@ -169,10 +198,13 @@ class SparkForensicsOperator(BaseOperator):
         notifier=None,
         aws_conn_id: str | None = None,
         deferrable: bool | None = None,
+        report_url_template: str | None = None,
         **kwargs,
     ):
         # Validate before super().__init__() to avoid DAG registration side effects if construction will fail.
         _validate_on_threshold_breach(on_threshold_breach)
+        if report_url_template is not None:
+            validate_report_url_template(report_url_template)
         can_defer = isinstance(backend, DeferrableAnalyzeHook)
         if deferrable and not can_defer:
             raise ValueError(
@@ -200,11 +232,26 @@ class SparkForensicsOperator(BaseOperator):
         self.notifier = notifier
         self.aws_conn_id = aws_conn_id
         self.deferrable = deferrable
-        # Where this run's report was persisted; read by ReportLink on Airflow 3.
+        self.report_url_template = report_url_template
+        # Where this run's report was persisted, and its browser URL; read by
+        # ReportLink on Airflow 3.
         self.persisted_report_dest: str | None = None
+        self.persisted_report_url: str | None = None
         # The context of the execute()/execute_complete() running in this
         # process, for on_kill(); never read across a deferral.
         self._kill_context: dict | None = None
+
+    def render_template_fields(self, context, jinja_env=None) -> None:
+        # Airflow renders nested template fields in place. A DAG file may pass
+        # one hook instance to several tasks, and dag.test() or `airflow tasks
+        # test` runs them in one process, so each task renders its own copy.
+        self.log_source = copy.copy(self.log_source)
+        self.backend = copy.copy(self.backend)
+        super().render_template_fields(context, jinja_env)
+
+    def _record_persisted(self, destination: str | None) -> None:
+        self.persisted_report_dest = destination
+        self.persisted_report_url = render_report_url(destination, self.report_url_template)
 
     def execute(self, context: dict) -> str:
         self._kill_context = context
@@ -221,15 +268,16 @@ class SparkForensicsOperator(BaseOperator):
                 notifier=self.notifier,
                 log=self.log,
                 aws_conn_id=self.aws_conn_id,
+                report_url_template=self.report_url_template,
             )
         except ThresholdBreached as breach:
-            self.persisted_report_dest = breach.destination
+            self._record_persisted(breach.destination)
             raise
-        self.persisted_report_dest = destination
+        self._record_persisted(destination)
         return destination
 
     def _submit_and_defer(self, context: dict) -> None:
-        log_ref = self.log_source.resolve(context)
+        log_ref = self.log_source.locate(context)
         try:
             self.backend.check_log_ref(log_ref)
             job = self.backend.submit(log_ref, self.thresholds, context)
@@ -293,13 +341,15 @@ class SparkForensicsOperator(BaseOperator):
                 notifier=self.notifier,
                 log=self.log,
                 aws_conn_id=self.aws_conn_id,
+                ti=context.get("ti"),
+                report_url_template=self.report_url_template,
             )
         except ThresholdBreached as breach:
-            self.persisted_report_dest = breach.destination
+            self._record_persisted(breach.destination)
             raise
         finally:
             self.log_source.cleanup(resolved_ref)
-        self.persisted_report_dest = destination
+        self._record_persisted(destination)
         return destination
 
     def on_kill(self) -> None:

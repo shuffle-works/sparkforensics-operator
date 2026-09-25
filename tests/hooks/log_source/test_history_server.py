@@ -24,7 +24,7 @@ def _fake_response(body: bytes, status_code: int = 200):
     return response
 
 
-def test_resolve_builds_the_shs_logs_url_and_extracts_a_single_entry(tmp_path):
+def test_locate_builds_the_shs_logs_url_and_extracts_a_single_entry(tmp_path):
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080",
         app_id="application_123_0001",
@@ -33,7 +33,7 @@ def test_resolve_builds_the_shs_logs_url_and_extracts_a_single_entry(tmp_path):
     body = _zip_bytes({"application_123_0001": "{}"})
 
     with patch("requests.get", return_value=_fake_response(body)) as mock_get:
-        result = hook.resolve({}).path
+        result = hook.locate({}).path
 
     mock_get.assert_called_once_with(
         "http://shs.internal:18080/api/v1/applications/application_123_0001/logs",
@@ -43,7 +43,7 @@ def test_resolve_builds_the_shs_logs_url_and_extracts_a_single_entry(tmp_path):
     assert result.read_text() == "{}"
 
 
-def test_resolve_includes_attempt_id_in_the_url_when_configured(tmp_path):
+def test_locate_includes_attempt_id_in_the_url_when_configured(tmp_path):
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080",
         app_id="application_123_0001",
@@ -53,7 +53,7 @@ def test_resolve_includes_attempt_id_in_the_url_when_configured(tmp_path):
     body = _zip_bytes({"application_123_0001_1": "{}"})
 
     with patch("requests.get", return_value=_fake_response(body)) as mock_get:
-        hook.resolve({}).path
+        hook.locate({}).path
 
     mock_get.assert_called_once_with(
         "http://shs.internal:18080/api/v1/applications/application_123_0001/1/logs",
@@ -77,7 +77,7 @@ def _rolling_zip_bytes(app_id: str, with_dir_entry: bool = True) -> bytes:
 
 
 @pytest.mark.parametrize("with_dir_entry", [True, False])
-def test_resolve_returns_the_rolling_folder_for_a_rolling_log(tmp_path, with_dir_entry):
+def test_locate_returns_the_rolling_folder_for_a_rolling_log(tmp_path, with_dir_entry):
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080",
         app_id="application_123_0001",
@@ -86,7 +86,7 @@ def test_resolve_returns_the_rolling_folder_for_a_rolling_log(tmp_path, with_dir
     body = _rolling_zip_bytes("application_123_0001", with_dir_entry=with_dir_entry)
 
     with patch("requests.get", return_value=_fake_response(body)):
-        result = hook.resolve({}).path
+        result = hook.locate({}).path
 
     # sparkforensics-analyze only inspects the direct children of the path it
     # receives, so the returned directory must hold the events_* files itself.
@@ -118,17 +118,17 @@ def test_resolve_returns_the_rolling_folder_for_a_rolling_log(tmp_path, with_dir
         {"outer/eventlog_v2_application_123_0001/events_1_application_123_0001": "{}"},
     ],
 )
-def test_resolve_raises_when_entries_are_not_under_exactly_one_folder(tmp_path, entries):
+def test_locate_raises_when_entries_are_not_under_exactly_one_folder(tmp_path, entries):
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080", app_id="application_123_0001", dest_dir=str(tmp_path),
     )
 
     with patch("requests.get", return_value=_fake_response(_zip_bytes(entries))):
         with pytest.raises(AirflowException, match="not under exactly one folder"):
-            hook.resolve({}).path
+            hook.locate({}).path
 
 
-def test_resolve_raises_when_the_single_folder_has_no_rolling_segments(tmp_path):
+def test_locate_raises_when_the_single_folder_has_no_rolling_segments(tmp_path):
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080", app_id="application_123_0001", dest_dir=str(tmp_path),
     )
@@ -136,20 +136,20 @@ def test_resolve_raises_when_the_single_folder_has_no_rolling_segments(tmp_path)
 
     with patch("requests.get", return_value=_fake_response(body)):
         with pytest.raises(AirflowException, match="no events_<n>_"):
-            hook.resolve({}).path
+            hook.locate({}).path
 
 
-def test_resolve_raises_on_a_non_200_response(tmp_path):
+def test_locate_raises_on_a_non_200_response(tmp_path):
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080", app_id="application_123_0001", dest_dir=str(tmp_path),
     )
 
     with patch("requests.get", return_value=_fake_response(b"", status_code=404)):
         with pytest.raises(AirflowException, match="404"):
-            hook.resolve({}).path
+            hook.locate({}).path
 
 
-def test_resolve_sanitizes_a_path_traversal_app_id(tmp_path):
+def test_locate_sanitizes_a_path_traversal_app_id(tmp_path):
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080",
         app_id="../../etc/application_123_0001",
@@ -158,7 +158,7 @@ def test_resolve_sanitizes_a_path_traversal_app_id(tmp_path):
     body = _zip_bytes({"application_123_0001": "{}"})
 
     with patch("requests.get", return_value=_fake_response(body)):
-        result = hook.resolve({}).path
+        result = hook.locate({}).path
 
     assert tmp_path in result.parents
     assert result.name == "application_123_0001"
@@ -169,7 +169,7 @@ def test_cleanup_removes_the_hooks_own_temp_dir_when_dest_dir_is_not_set(tmp_pat
     body = _zip_bytes({"application_123_0001": "{}"})
 
     with patch("requests.get", return_value=_fake_response(body)):
-        result = hook.resolve({}).path
+        result = hook.locate({}).path
 
     owned_root = hook._owned_temp_root
     assert owned_root is not None and owned_root.exists()
@@ -186,28 +186,28 @@ def test_cleanup_does_not_touch_a_caller_provided_dest_dir(tmp_path):
     body = _zip_bytes({"application_123_0001": "{}"})
 
     with patch("requests.get", return_value=_fake_response(body)):
-        result = hook.resolve({}).path
+        result = hook.locate({}).path
 
     hook.cleanup(LocalEventLog(result))
 
     assert tmp_path.exists()
 
 
-def test_resolve_cleans_up_owned_temp_dir_on_invalid_zip_failure():
+def test_locate_cleans_up_owned_temp_dir_on_invalid_zip_failure():
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080", app_id="application_123_0001"
     )
     # A response that returns 200 but whose body is not a valid zip
     with patch("requests.get", return_value=_fake_response(b"not a zip")):
         with pytest.raises(Exception):  # zipfile.BadZipFile or similar
-            hook.resolve({}).path
+            hook.locate({}).path
 
     owned_root = hook._owned_temp_root
     assert owned_root is not None
     assert not owned_root.exists()
 
 
-def test_resolve_cleans_up_owned_temp_dir_on_unexpected_archive_layout():
+def test_locate_cleans_up_owned_temp_dir_on_unexpected_archive_layout():
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080", app_id="application_123_0001"
     )
@@ -216,14 +216,14 @@ def test_resolve_cleans_up_owned_temp_dir_on_unexpected_archive_layout():
 
     with patch("requests.get", return_value=_fake_response(body)):
         with pytest.raises(AirflowException, match="Unexpected Spark History Server log archive"):
-            hook.resolve({}).path
+            hook.locate({}).path
 
     owned_root = hook._owned_temp_root
     assert owned_root is not None
     assert not owned_root.exists()
 
 
-def test_resolve_raises_if_the_total_download_exceeds_the_timeout(tmp_path):
+def test_locate_raises_if_the_total_download_exceeds_the_timeout(tmp_path):
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080",
         app_id="application_123_0001",
@@ -250,12 +250,12 @@ def test_resolve_raises_if_the_total_download_exceeds_the_timeout(tmp_path):
             side_effect=monotonic_values,
         ):
             with pytest.raises(AirflowException, match="exceeded"):
-                hook.resolve({}).path
+                hook.locate({}).path
 
     response.close.assert_called_once()
 
 
-def test_resolve_with_dest_dir_does_not_delete_caller_provided_dir_on_failure(tmp_path):
+def test_locate_with_dest_dir_does_not_delete_caller_provided_dir_on_failure(tmp_path):
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080",
         app_id="application_123_0001",
@@ -264,13 +264,13 @@ def test_resolve_with_dest_dir_does_not_delete_caller_provided_dir_on_failure(tm
     # A response that returns 200 but whose body is not a valid zip
     with patch("requests.get", return_value=_fake_response(b"not a zip")):
         with pytest.raises(Exception):  # zipfile.BadZipFile or similar
-            hook.resolve({}).path
+            hook.locate({}).path
 
     assert tmp_path.exists()
     assert hook._owned_temp_root is None
 
 
-def test_resolve_rejects_an_absolute_rolling_entry_path_instead_of_returning_the_filesystem_root(tmp_path):
+def test_locate_rejects_an_absolute_rolling_entry_path_instead_of_returning_the_filesystem_root(tmp_path):
     hook = HistoryServerLogSourceHook(
         base_url="http://shs.internal:18080", app_id="application_123_0001", dest_dir=str(tmp_path),
     )
@@ -278,4 +278,4 @@ def test_resolve_rejects_an_absolute_rolling_entry_path_instead_of_returning_the
 
     with patch("requests.get", return_value=_fake_response(body)):
         with pytest.raises(AirflowException, match="Unexpected Spark History Server log archive"):
-            hook.resolve({}).path
+            hook.locate({}).path

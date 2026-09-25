@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import copy
 import logging
 from typing import Callable
 
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.operator import run_spark_forensics
+from sparkforensics_operator.summary import validate_report_url_template
 
 log = logging.getLogger("airflow.task")
 
@@ -23,6 +25,7 @@ def spark_forensics_callback(
     notifier=None,
     aws_conn_id: str | None = None,
     deferrable: bool = False,
+    report_url_template: str | None = None,
 ) -> Callable[[dict], None]:
     """Builds an on_success_callback for the upstream Spark task, sharing
     SparkForensicsOperator's exact execute() logic via run_spark_forensics.
@@ -35,6 +38,12 @@ def spark_forensics_callback(
 
     A callback runs outside any task, so it cannot defer: deferrable=True
     raises ValueError. Use SparkForensicsOperator(deferrable=True) instead.
+
+    Airflow renders no callback arguments, so the callback renders
+    report_dest and the hooks' template_fields itself, with the upstream
+    task's Jinja environment and the callback's context, the same values
+    the operator would see. It renders copies: the hooks passed here are
+    shared by every run of the upstream task.
     """
     if deferrable:
         raise ValueError(
@@ -42,6 +51,8 @@ def spark_forensics_callback(
             "any task, with no worker slot to free and no task to resume. Use "
             "SparkForensicsOperator(deferrable=True) as a downstream task instead."
         )
+    if report_url_template is not None:
+        validate_report_url_template(report_url_template)
     thresholds = {
         "max_runtime_ms": max_runtime_ms,
         "max_spill_gb": max_spill_gb,
@@ -52,17 +63,24 @@ def spark_forensics_callback(
 
     def _callback(context: dict) -> None:
         ti = context.get("ti")
+        run_log_source, run_backend, run_report_dest = copy.copy(log_source), copy.copy(backend), report_dest
+        task = context.get("task")
+        if task is not None:
+            run_log_source = task.render_template(run_log_source, context)
+            run_backend = task.render_template(run_backend, context)
+            run_report_dest = task.render_template(run_report_dest, context)
         try:
             destination = run_spark_forensics(
                 context,
-                log_source=log_source,
-                backend=backend,
-                report_dest=report_dest,
+                log_source=run_log_source,
+                backend=run_backend,
+                report_dest=run_report_dest,
                 thresholds=thresholds,
                 on_threshold_breach=on_threshold_breach,
                 notifier=notifier,
                 log=log,
                 aws_conn_id=aws_conn_id,
+                report_url_template=report_url_template,
             )
         except ThresholdBreached as e:
             # on_threshold_breach="fail" (the default) makes run_spark_forensics

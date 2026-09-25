@@ -2,8 +2,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from airflow.exceptions import AirflowException
-
+from sparkforensics_operator._compat import AirflowException
 from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, LocalEventLog
 from sparkforensics_operator.report import Report
 
@@ -21,6 +20,8 @@ class SubprocessAnalyzeHook(AnalyzeHook):
     analyze_bin=<full path>)."""
 
     supported_log_refs = (LocalEventLog, HistoryServerApp)
+
+    template_fields = ("analyze_bin",)
 
     def __init__(self, analyze_bin: str = "sparkforensics-analyze", timeout: int = 900):
         super().__init__()

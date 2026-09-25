@@ -5,8 +5,7 @@ import time
 from datetime import timedelta
 from typing import Any
 
-from airflow.exceptions import AirflowException
-
+from sparkforensics_operator._compat import AirflowException
 from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, RemoteEventLog
 from sparkforensics_operator.report import Report
 
@@ -54,6 +53,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
     $HOME/.sparkforensics/jobs of the SSH user."""
 
     supported_log_refs = (RemoteEventLog, HistoryServerApp)
+    template_fields = ("ssh_conn_id", "analyze_bin", "remote_base_dir")
 
     def __init__(
         self,
@@ -64,7 +64,8 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         poll_interval: int = 5,
     ):
         super().__init__()
-        if remote_base_dir is not None:
+        # A Jinja template is checked once rendered, when it is used.
+        if remote_base_dir is not None and "{{" not in remote_base_dir:
             _remote_job.validate_remote_base_dir(remote_base_dir)
         self.ssh_conn_id = ssh_conn_id
         self.analyze_bin = analyze_bin
@@ -79,6 +80,11 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
     @property
     def _where(self) -> str:
         return _where(self.ssh_conn_id)
+
+    def _base_dir(self) -> str | None:
+        if self.remote_base_dir is not None:
+            _remote_job.validate_remote_base_dir(self.remote_base_dir)
+        return self.remote_base_dir
 
     def check_log_ref(self, log_ref: EventLogRef) -> None:
         super().check_log_ref(log_ref)
@@ -169,7 +175,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
             # instance on the host.
             scope_dir = self._checked(
                 client,
-                _remote_job.prepare_scope_command(self.remote_base_dir, scope),
+                _remote_job.prepare_scope_command(self._base_dir(), scope),
                 "preparing the remote job directory",
             ).strip()
             try:
@@ -259,7 +265,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
 
     def abandon(self, context: Any) -> None:
         command = _remote_job.abandon_scope_command(
-            self.remote_base_dir, _remote_job.task_instance_scope(context)
+            self._base_dir(), _remote_job.task_instance_scope(context)
         )
         with self._job_connection("stopping the remote analysis job") as client:
             self._checked(client, command, "stopping the remote analysis job")

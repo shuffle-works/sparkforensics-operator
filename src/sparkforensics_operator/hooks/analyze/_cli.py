@@ -7,8 +7,7 @@ from __future__ import annotations
 
 from pathlib import PurePath
 
-from airflow.exceptions import AirflowException
-
+from sparkforensics_operator._compat import AirflowException
 from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, LocalEventLog, RemoteEventLog
 from sparkforensics_operator.report import (
     THRESHOLD_CLI_FLAGS,

@@ -43,8 +43,10 @@ def host(tmp_path):
 def _operator(report_dest, deferrable, notifier, on_threshold_breach):
     return SparkForensicsOperator(
         task_id="forensics",
-        log_source=RemotePathLogSourceHook(ssh_conn_id=CONN, path_template="/logs/{run_id}"),
-        backend=SSHAnalyzeHook(ssh_conn_id=CONN, poll_interval=0.1),
+        # Templated arguments: what crosses the deferral must be the
+        # rendered values.
+        log_source=RemotePathLogSourceHook(ssh_conn_id="{{ 'onprem' }}_ssh", path_template="/logs/{{ run_id }}"),
+        backend=SSHAnalyzeHook(ssh_conn_id="{{ 'onprem' }}_ssh", poll_interval=0.1),
         report_dest=report_dest,
         max_spill_gb=2,
         min_efficiency_pct=50,
@@ -69,6 +71,7 @@ def _round_trip(value):
 
 def _run_sync(report_dest, notifier, on_threshold_breach, context):
     op = _operator(report_dest, False, notifier, on_threshold_breach)
+    op.render_template_fields(context)
     try:
         return op, op.execute(context), None
     except ThresholdBreached as e:
@@ -77,6 +80,7 @@ def _run_sync(report_dest, notifier, on_threshold_breach, context):
 
 def _run_deferred(report_dest, notifier, on_threshold_breach, context):
     first = _operator(report_dest, True, MagicMock(), on_threshold_breach)
+    first.render_template_fields(context)
     with pytest.raises(TaskDeferred) as deferred:
         first.execute(context)
     classpath, trigger_kwargs = deferred.value.trigger.serialize()
@@ -86,6 +90,7 @@ def _run_deferred(report_dest, notifier, on_threshold_breach, context):
     next_kwargs = {"event": event, **_round_trip(deferred.value.kwargs)}
 
     fresh = _operator(report_dest, True, notifier, on_threshold_breach)
+    fresh.render_template_fields(context)
     try:
         return fresh, fresh.resume_execution(deferred.value.method_name, next_kwargs, context), None
     except ThresholdBreached as e:
@@ -104,9 +109,9 @@ def _without_out(argv):
 
 @pytest.mark.parametrize("on_threshold_breach", ["warn", "fail"])
 def test_deferred_and_synchronous_runs_give_identical_results(host, tmp_path, on_threshold_breach):
-    context = {**ti_context(), "run_id": "manual__2026-01-01"}
     outcomes = {}
     for mode, run in (("sync", _run_sync), ("deferred", _run_deferred)):
+        context = ti_context(run_id="manual__2026-01-01")
         report_dest = str(tmp_path / mode / "report.json")
         notifier = MagicMock()
         op, result, breach = run(report_dest, notifier, on_threshold_breach, context)
@@ -123,6 +128,7 @@ def test_deferred_and_synchronous_runs_give_identical_results(host, tmp_path, on
             "notified_destination": norm(destination),
             "link": norm(ReportLink().get_link(op, ti_key=None)) if AIRFLOW_V3_PLUS else None,
             "cli_argv": _without_out(host.argv()),
+            "summary": {k: norm(v) if isinstance(v, str) else v for k, v in context["ti"].pushed["sparkforensics_summary"].items()},
         }
 
     assert outcomes["deferred"] == outcomes["sync"]
@@ -133,6 +139,8 @@ def test_deferred_and_synchronous_runs_give_identical_results(host, tmp_path, on
         "min-efficiency": "inconclusive",
     }
     assert (outcomes["sync"]["breach"] is not None) == (on_threshold_breach == "fail")
+    assert outcomes["sync"]["cli_argv"][0] == "/logs/manual__2026-01-01"
+    assert outcomes["sync"]["summary"]["breached_thresholds"] == ["max-spill"]
     # Nothing left on the host.
     assert not any((host.home / ".sparkforensics" / "jobs").iterdir())
 
@@ -142,7 +150,8 @@ def test_killing_a_deferrable_task_while_it_runs_stops_the_remote_job(tmp_path):
     host.fake_cli(f"echo $$ > {host.home}/cli_pid; sleep 30\n")
     with host.patched():
         op = _operator(str(tmp_path / "report.json"), True, None, "fail")
-        context = {**ti_context(), "run_id": "manual__2026-01-01"}
+        context = ti_context(run_id="manual__2026-01-01")
+        op.render_template_fields(context)
         with pytest.raises(TaskDeferred):
             op.execute(context)
         assert wait_until(lambda: (host.home / "cli_pid").exists())

@@ -19,7 +19,7 @@ def test_log_source_hook_subclass_must_implement_resolve():
 
 def test_cleanup_is_a_no_op_by_default(tmp_path):
     class Minimal(LogSourceHook):
-        def resolve(self, context):
+        def locate(self, context):
             return LocalEventLog(tmp_path)
 
     Minimal().cleanup(LocalEventLog(tmp_path))  # must not raise

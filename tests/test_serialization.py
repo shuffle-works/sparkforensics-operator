@@ -18,8 +18,8 @@ except ImportError:
 def test_report_link_survives_a_dag_serialization_round_trip():
     # The webserver/API server renders the task page from the serialized
     # DAG, so a link dropped here never shows in the UI. On Airflow 2 this
-    # requires ReportLink to be registered via the airflow.plugins entry
-    # point (see plugin.py).
+    # requires ReportLink to be registered, which the package's provider
+    # metadata does (see get_provider_info.py).
     with DAG(dag_id="sparkforensics_serialization", start_date=datetime(2026, 1, 1), schedule=None) as dag:
         SparkForensicsOperator(
             task_id="run_forensics",

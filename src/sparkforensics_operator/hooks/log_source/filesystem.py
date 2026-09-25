@@ -3,12 +3,11 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from airflow.exceptions import AirflowException
-
+from sparkforensics_operator._compat import AirflowException
 from sparkforensics_operator.log_ref import LocalEventLog
 
 from ._dest_root import dest_for
-from ._path_template import _template_vars
+from ._path_template import checked_path
 from .base import LogSourceHook
 
 
@@ -20,14 +19,15 @@ class FilesystemLogSourceHook(LogSourceHook):
     output is handed straight to sparkforensics-analyze's own local-file
     reader."""
 
+    template_fields = ("path_template", "dest_dir")
+
     def __init__(self, path_template: str, dest_dir: str | None = None):
         super().__init__()
         self.path_template = path_template
         self.dest_dir = dest_dir
 
-    def resolve(self, context: dict) -> LocalEventLog:
-        rendered = self.path_template.format(**_template_vars(context))
-        source = Path(rendered)
+    def locate(self, context: dict) -> LocalEventLog:
+        source = Path(checked_path(self.path_template))
         if not source.exists():
             raise AirflowException(f"Configured log path does not exist: {source}")
         if self.dest_dir is None:
@@ -44,7 +44,7 @@ class FilesystemLogSourceHook(LogSourceHook):
 
     def cleanup(self, log_ref: LocalEventLog) -> None:
         if self.dest_dir is None:
-            return  # resolve() returned the caller's own path; never delete it.
+            return  # locate() returned the caller's own path; never delete it.
         path = log_ref.path
         if path.is_dir():
             shutil.rmtree(path, ignore_errors=True)

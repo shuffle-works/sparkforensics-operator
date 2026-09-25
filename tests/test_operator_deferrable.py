@@ -69,7 +69,7 @@ class FakeDeferrableHook(DeferrableAnalyzeHook):
 
 def _operator(backend, tmp_path, **kwargs):
     log_source = MagicMock()
-    log_source.resolve.return_value = LOG
+    log_source.locate.return_value = LOG
     kwargs.setdefault("deferrable", True)
     return SparkForensicsOperator(
         task_id="forensics", log_source=log_source, backend=backend,
@@ -256,7 +256,7 @@ def test_deferrable_rejects_a_log_the_backend_cannot_read_before_submitting(tmp_
 
     backend = FakeDeferrableHook()
     op = _operator(backend, tmp_path)
-    op.log_source.resolve.return_value = LocalEventLog(Path("/tmp/app.log"))
+    op.log_source.locate.return_value = LocalEventLog(Path("/tmp/app.log"))
 
     with pytest.raises(AirflowException, match="cannot analyze"):
         op.execute({})

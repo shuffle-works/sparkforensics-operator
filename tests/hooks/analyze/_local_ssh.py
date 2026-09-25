@@ -197,10 +197,12 @@ def run_trigger(trigger, timeout: float = 30) -> dict:
 
 
 def ti_context(try_number: int = 1, map_index: int = -1, run_id: str = "manual__2026-01-01") -> dict:
+    pushed = {}
     ti = SimpleNamespace(
-        dag_id="spark_dag", task_id="forensics", run_id=run_id, try_number=try_number, map_index=map_index
+        dag_id="spark_dag", task_id="forensics", run_id=run_id, try_number=try_number, map_index=map_index,
+        pushed=pushed, xcom_push=lambda key, value: pushed.__setitem__(key, value),
     )
-    return {"ti": ti}
+    return {"ti": ti, "run_id": run_id}
 
 
 def wait_until(predicate, timeout: float = 10.0) -> bool:

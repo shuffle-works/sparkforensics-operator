@@ -10,7 +10,7 @@ from sparkforensics_operator.report import Report, ThresholdResult
 
 def test_callback_factory_returns_a_callable_that_runs_the_shared_core(tmp_path):
     log_source = MagicMock()
-    log_source.resolve.return_value = LocalEventLog(tmp_path / "app.log")
+    log_source.locate.return_value = LocalEventLog(tmp_path / "app.log")
     backend = MagicMock()
     backend.analyze.return_value = Report(
         schema_version=3, summary={"impactBandCounts": {"critical": 0, "warning": 0, "info": 0}},
@@ -26,7 +26,7 @@ def test_callback_factory_returns_a_callable_that_runs_the_shared_core(tmp_path)
 
 def test_callback_factory_accepts_threshold_kwargs_matching_the_operator(tmp_path):
     log_source = MagicMock()
-    log_source.resolve.return_value = LocalEventLog(tmp_path / "app.log")
+    log_source.locate.return_value = LocalEventLog(tmp_path / "app.log")
     backend = MagicMock()
     backend.analyze.return_value = Report(
         schema_version=3, summary={"impactBandCounts": {"critical": 0, "warning": 0, "info": 0}},
@@ -47,7 +47,7 @@ def test_callback_factory_accepts_threshold_kwargs_matching_the_operator(tmp_pat
 
 def test_callback_pushes_the_report_destination_to_xcom(tmp_path):
     log_source = MagicMock()
-    log_source.resolve.return_value = LocalEventLog(tmp_path / "app.log")
+    log_source.locate.return_value = LocalEventLog(tmp_path / "app.log")
     backend = MagicMock()
     backend.analyze.return_value = Report(
         schema_version=3, summary={"impactBandCounts": {"critical": 0, "warning": 0, "info": 0}},
@@ -59,7 +59,7 @@ def test_callback_pushes_the_report_destination_to_xcom(tmp_path):
     context = {"ti": MagicMock()}
     callback(context)
 
-    context["ti"].xcom_push.assert_called_once_with(key="return_value", value=str(dest))
+    context["ti"].xcom_push.assert_any_call(key="return_value", value=str(dest))
 
 
 def test_callback_pushes_xcom_before_raising_on_a_breach(tmp_path):
@@ -69,7 +69,7 @@ def test_callback_pushes_xcom_before_raising_on_a_breach(tmp_path):
     # XCom (the one place a user most wants the report link), even though it
     # then lets the breach propagate as expected.
     log_source = MagicMock()
-    log_source.resolve.return_value = LocalEventLog(tmp_path / "app.log")
+    log_source.locate.return_value = LocalEventLog(tmp_path / "app.log")
     backend = MagicMock()
     backend.analyze.return_value = Report(
         schema_version=3, summary={"impactBandCounts": {"critical": 0, "warning": 0, "info": 0}},
@@ -87,12 +87,14 @@ def test_callback_pushes_xcom_before_raising_on_a_breach(tmp_path):
     with pytest.raises(ThresholdBreached, match="max-runtime"):
         callback(context)
 
-    context["ti"].xcom_push.assert_called_once_with(key="return_value", value=str(dest))
+    context["ti"].xcom_push.assert_any_call(key="return_value", value=str(dest))
+    pushed = {c.kwargs["key"]: c.kwargs["value"] for c in context["ti"].xcom_push.call_args_list}
+    assert pushed["sparkforensics_summary"]["breached_thresholds"] == ["max-runtime"]
 
 
 def test_callback_raises_on_an_invalid_on_threshold_breach_value(tmp_path):
     log_source = MagicMock()
-    log_source.resolve.return_value = LocalEventLog(tmp_path / "app.log")
+    log_source.locate.return_value = LocalEventLog(tmp_path / "app.log")
     backend = MagicMock()
     backend.analyze.return_value = Report(
         schema_version=3, summary={"impactBandCounts": {"critical": 0, "warning": 0, "info": 0}},
