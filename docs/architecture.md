@@ -105,8 +105,8 @@ breach that raises still gets a notification out first.
   the worker with `--out <tmpfile>`.
 - `hooks/analyze/ssh.py`, `SSHAnalyzeHook`, runs the CLI on the SSH host
   over `SSHHook` (imported lazily, `ssh` extra) and reads the report from
-  stdout, so no report file is left on that host; only a pid file, removed
-  when the CLI exits (see "Killing a task" below). Every argument is
+  stdout, so nothing is written on that host (see "Killing a task" below
+  for how it is stopped). Every argument is
   quoted with `shlex`, so rendered paths and app ids can't inject shell
   syntax.
   It reads the paramiko channel itself rather than through
@@ -124,7 +124,8 @@ breach that raises still gets a notification out first.
   removes an earlier try's job, the CLI command with `--out` and stderr
   redirected into the job directory, and thin wrappers over the SSH
   provider's `RemoteJobPaths`, `build_posix_wrapper_command` and
-  `build_posix_cleanup_command`.
+  `build_posix_cleanup_command`. Also the synchronous path's launcher,
+  which reports the CLI's pid, and the command that stops it.
 - `report.py`, `Report`/`ThresholdResult` dataclasses, plus parsing of the
   CLI's JSON report (`--out` file or stdout) and its stderr threshold
   lines. No
@@ -218,13 +219,18 @@ Killing a task. `SparkForensicsOperator.on_kill()` uses the context of the
 state from before a deferral. A deferrable task abandons its task
 instance's job; a synchronous one calls the backend's `on_kill()`.
 Closing the SSH channel alone would leave the remote CLI running, so the
-synchronous SSH command is a small job as well: a POSIX `sh` script that
-records its own pid under `remote_base_dir/sync_<token>/job_<token>/`,
-runs `timeout ... sparkforensics-analyze` in the background, and on TERM
-signals `timeout`'s process group and removes its directory.
-`SSHAnalyzeHook.on_kill()` closes the channel and runs the same sweep on
-that directory as a detached job gets. The script keeps the CLI's stdout
-and stderr on the channel, so reports and errors are unchanged. A task
+synchronous SSH command starts a small POSIX `sh` launcher in the
+background, which prints `sparkforensics-pid:<its pid>` on stdout and
+then execs `setsid timeout ... sparkforensics-analyze`: the pid stays the
+same and becomes the session id. The hook takes that line out of stdout
+as it arrives and keeps the pid. `SSHAnalyzeHook.on_kill()` closes the
+channel and, over a fresh connection, signals that session, only while
+the pid still runs the command line it was started with. Nothing is
+written on the host, and the CLI's stdout and stderr stay on the
+channel, so reports and errors are unchanged. Without `setsid` on the
+host the launcher execs `timeout` directly, and the stop falls back to
+`timeout`'s process group. A task killed before the pid arrives only
+has its channel closed; the CLI's own `timeout` bounds it. A task
 that is killed while deferred has no worker process and no `on_kill()`;
 its job is stopped by the next try's sweep, or by its own `timeout`.
 

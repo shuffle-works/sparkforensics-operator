@@ -239,15 +239,14 @@ aren't) auto-cleaned.
   without `$`, `` ` ``, `"`, `\`, `..` or control characters (a
   `ValueError` otherwise). The deferred mode also needs bash on the SSH
   host, and uses `setsid` and `pkill` there when present to stop a job.
-  A synchronous run records its pid in a job directory under
-  `remote_base_dir` too, removed when the CLI exits, so the base directory
-  must be writable by the SSH user in both modes.
+  A synchronous run writes nothing under `remote_base_dir`.
 
 `SparkForensicsOperator.on_kill()` stops the analysis when the task is
 killed while a worker runs it: a deferrable task's backend abandons the
 task instance's remote job (`DeferrableAnalyzeHook.abandon`), a
 synchronous one calls `AnalyzeHook.on_kill()`, a no-op by default.
-`SSHAnalyzeHook.on_kill()` closes the SSH channel and stops the remote CLI.
+`SSHAnalyzeHook.on_kill()` closes the SSH channel and stops the remote CLI
+by the pid it reported, if it had reported one yet.
 Airflow runs no worker process for a deferred task, so killing one then
 reaches its job only through the next try's sweep.
 

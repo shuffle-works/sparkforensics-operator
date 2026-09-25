@@ -55,10 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference would be used.
 - Breaking: the `ssh` extra requires `apache-airflow-providers-ssh>=6.0.1`
   (was `>=5.0`), the first release whose remote-job helpers quote paths.
-- A synchronous `SSHAnalyzeHook` run now needs a writable `remote_base_dir`
-  (default `$HOME/.sparkforensics/jobs`) on the SSH host, where it records
-  the CLI's pid while it runs. Its SSH transport error names the step and
-  the log instead of quoting the whole remote command.
+- A synchronous `SSHAnalyzeHook` run starts the CLI in its own session
+  (under `setsid` when the host has it) and reports its pid on the
+  channel, so `on_kill()` can stop it; it still writes nothing on the SSH
+  host. Its SSH transport error names the step and the log instead of
+  quoting the whole remote command.
 - `spark_forensics_callback(deferrable=True)` raises `ValueError`, since a
   callback has no task to defer.
 - The exit-2 error now also names a failed History Server fetch as a

@@ -44,9 +44,6 @@ On the SSH host:
   `SSHAnalyzeHook(analyze_bin=...)`.
 - Coreutils `timeout` must be on that `PATH` too (it is on any standard
   Linux host), since `SSHAnalyzeHook` wraps the CLI in it.
-- The login user needs a writable `remote_base_dir` (default
-  `$HOME/.sparkforensics/jobs`): each run records the CLI's pid in a job
-  directory there, so a killed task can stop it.
 - For `HistoryServerAppLogSourceHook`, `base_url` is resolved on this
   host, so `http://localhost:18080` reaches a History Server running on
   it. Check it with `ssh <user>@<host> 'curl -s http://localhost:18080/api/v1/applications?limit=1'`.
@@ -157,11 +154,6 @@ publishes them.
   sparkforensics-analyze on ..." for a synchronous run, "while submitting
   the remote analysis job", "while preparing the remote job directory" or
   "while reading the remote analysis result" for a deferred one.
-- **A synchronous SSH run fails with "exited with unexpected code 125:
-  mkdir: ..."**, it could not create its job directory under
-  `remote_base_dir` (default `$HOME/.sparkforensics/jobs`) on the SSH
-  host. Make that path writable for the login user, or point
-  `remote_base_dir` somewhere that is.
   A non-zero exit on submit usually means bash is missing on the host or
   `remote_base_dir` isn't writable by the login user; the host's stderr
   is in the message.
@@ -334,8 +326,7 @@ publishes them.
     the wrapped hook's own entry above (e.g.
     `HistoryServerLogSourceHook`'s) applies.
   - `RemotePathLogSourceHook` and `HistoryServerAppLogSourceHook` write
-    nothing to the worker. `SSHAnalyzeHook` reads the report from stdout;
-    the only file it leaves on the SSH host while running is its pid, in a
-    job directory under `remote_base_dir` that it removes when the CLI
-    exits or is stopped. Deferred, the job directory also holds the report,
-    and is removed once the report is read (see "Deferred runs").
+    nothing to the worker. `SSHAnalyzeHook` reads the report from stdout
+    and, run synchronously, writes nothing on the SSH host. Deferred, it
+    writes a job directory under `remote_base_dir` that holds the report,
+    and removes it once the report is read (see "Deferred runs").

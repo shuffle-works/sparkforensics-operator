@@ -167,7 +167,7 @@ def test_on_kill_stops_a_running_synchronous_analysis_on_the_host(host):
 
     worker = threading.Thread(target=_analyze)
     worker.start()
-    assert wait_until(lambda: (host.home / "child_pid").exists())
+    assert wait_until(lambda: (host.home / "child_pid").exists() and hook._sync_pid is not None)
 
     hook.on_kill()
     worker.join(timeout=20)
@@ -190,14 +190,30 @@ def test_on_kill_does_nothing_when_no_analysis_is_running():
 
 
 @needs_posix_host
-def test_analyze_fails_clearly_when_its_job_directory_cannot_be_created(host):
+def test_a_synchronous_analysis_writes_nothing_on_the_host(host):
     blocker = host.home / "not-a-dir"
     blocker.write_text("")
     host.fake_cli(f"printf '%s' '{json.dumps(SAMPLE_JSON)}' | emit\n")
     hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", remote_base_dir=str(blocker / "jobs"))
+    before = sorted(host.home.rglob("*"))
 
-    with pytest.raises(AirflowException, match="unexpected code 125: mkdir"):
-        hook.analyze(RemoteEventLog("onprem_ssh", "/logs/app-1"), {})
+    report = hook.analyze(RemoteEventLog("onprem_ssh", "/logs/app-1"), {})
+
+    assert report.schema_version == 3
+    assert report.summary == SAMPLE_JSON["summary"]
+    assert sorted(p for p in host.home.rglob("*") if p.name != "argv") == before
+
+
+def test_analyze_leaves_the_pid_line_out_of_the_report():
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
+    channel = _FakeChannel(
+        stdout=b"sparkforensics-pid:4242\n" + json.dumps(SAMPLE_JSON).encode(), exit_status=0, chunk=5
+    )
+
+    report, _, _ = _run(hook, RemoteEventLog("onprem_ssh", "/logs/app-1"), {}, channel)
+
+    assert report.schema_version == 3
+    assert report.summary == SAMPLE_JSON["summary"]
 
 
 def test_analyze_parses_threshold_violations_from_remote_stderr():
@@ -313,7 +329,7 @@ class _KillableChannel(_FakeChannel):
     as closing a dropped connection can."""
 
     def __init__(self):
-        super().__init__(exit_status=None)
+        super().__init__(stdout=b"sparkforensics-pid:4242\n", exit_status=None)
 
     def exit_status_ready(self):
         return self.closed
@@ -326,15 +342,42 @@ class _KillableChannel(_FakeChannel):
         raise EOFError("connection already gone")
 
 
-def test_on_kill_closes_the_live_channel_and_sweeps_the_remote_job():
+def test_on_kill_closes_the_live_channel_and_stops_the_reported_pid():
     hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
     running = _KillableChannel()
-    sweep = _FakeChannel(exit_status=0)
+    stop = _FakeChannel(exit_status=0)
     ssh_hook, client = _ssh_hook_for(running)
     client.exec_command.side_effect = [
         (MagicMock(), MagicMock(channel=running), MagicMock()),
-        (MagicMock(), MagicMock(channel=sweep), MagicMock()),
+        (MagicMock(), MagicMock(channel=stop), MagicMock()),
     ]
+    outcome = {}
+
+    def _analyze():
+        try:
+            hook.analyze(RemoteEventLog("onprem_ssh", "/logs/app-1"), {})
+        except AirflowException as e:
+            outcome["error"] = e
+
+    with patch("airflow.providers.ssh.hooks.ssh.SSHHook", return_value=ssh_hook):
+        worker = threading.Thread(target=_analyze)
+        worker.start()
+        assert wait_until(lambda: hook._sync_pid == 4242)
+        hook.on_kill()
+        worker.join(timeout=10)
+
+    assert running.closed
+    assert "unexpected code 143" in str(outcome["error"])
+    # The run's command, then the one that stops it on the host (what that
+    # does there is covered against a real shell above).
+    assert client.exec_command.call_count == 2
+
+
+def test_on_kill_before_the_pid_arrives_only_closes_the_channel():
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
+    running = _KillableChannel()
+    running._stdout = []
+    ssh_hook, client = _ssh_hook_for(running)
     outcome = {}
 
     def _analyze():
@@ -351,7 +394,4 @@ def test_on_kill_closes_the_live_channel_and_sweeps_the_remote_job():
         worker.join(timeout=10)
 
     assert running.closed
-    assert "unexpected code 143" in str(outcome["error"])
-    # The run's command, then the sweep that stops it on the host (what the
-    # sweep does there is covered against a real shell above).
-    assert client.exec_command.call_count == 2
+    assert client.exec_command.call_count == 1

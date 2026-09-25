@@ -11,9 +11,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import queue
 import shutil
 import subprocess
 import textwrap
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -73,15 +75,6 @@ class LocalHost:
 
     # paramiko-like client, for SSHHook.get_conn()
 
-    def _run(self, command: str, timeout=None) -> subprocess.CompletedProcess:
-        # paramiko's exec_command timeout only bounds each channel read; the
-        # remote command's own `timeout` must be what ends it here too, so
-        # the local run gets headroom past it.
-        return subprocess.run(
-            ["sh", "-c", command], cwd=self.home, env=self.env, capture_output=True,
-            timeout=None if timeout is None else timeout + 30,
-        )
-
     @contextmanager
     def patched(self):
         """Routes SSHHook and SSHRemoteJobTrigger to this host."""
@@ -97,9 +90,12 @@ class LocalHost:
             def exec_command(self, command, timeout=None):
                 if host.fail_exec_matching and host.fail_exec_matching in command:
                     raise EOFError("connection dropped")
-                proc = host._run(command, timeout=timeout)
+                proc = subprocess.Popen(
+                    ["sh", "-c", command], cwd=host.home, env=host.env,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
                 stdout = MagicMock()
-                stdout.channel = _Channel(proc.stdout, proc.stderr, proc.returncode)
+                stdout.channel = _Channel(proc)
                 return MagicMock(), stdout, MagicMock()
 
         def _get_conn():
@@ -121,34 +117,49 @@ class LocalHost:
 
 
 class _Channel:
-    def __init__(self, stdout: bytes, stderr: bytes, exit_status: int):
-        self._stdout = [stdout] if stdout else []
-        self._stderr = [stderr] if stderr else []
-        self._exit_status = exit_status
+    """A running command's channel: output arrives as the command writes
+    it, and closing it, as over SSH, does not stop the command."""
+
+    def __init__(self, proc: subprocess.Popen):
+        self._proc = proc
+        self._stdout: queue.Queue[bytes] = queue.Queue()
+        self._stderr: queue.Queue[bytes] = queue.Queue()
+        self._readers = [
+            threading.Thread(target=_pump, args=(proc.stdout, self._stdout), daemon=True),
+            threading.Thread(target=_pump, args=(proc.stderr, self._stderr), daemon=True),
+        ]
+        for reader in self._readers:
+            reader.start()
 
     def recv_ready(self):
-        return bool(self._stdout)
+        return not self._stdout.empty()
 
     def recv(self, _n):
-        return self._stdout.pop(0)
+        return self._stdout.get_nowait()
 
     def recv_stderr_ready(self):
-        return bool(self._stderr)
+        return not self._stderr.empty()
 
     def recv_stderr(self, _n):
-        return self._stderr.pop(0)
+        return self._stderr.get_nowait()
 
     def exit_status_ready(self):
-        return True
+        return self._proc.poll() is not None and not any(r.is_alive() for r in self._readers)
 
     def recv_exit_status(self):
-        return self._exit_status
+        return self._proc.wait()
 
     def shutdown_write(self):
         pass
 
     def close(self):
         pass
+
+
+def _pump(pipe, chunks: queue.Queue) -> None:
+    for chunk in iter(lambda: pipe.read1(65536), b""):
+        chunks.put(chunk)
+    pipe.close()
 
 
 class _AsyncConn:

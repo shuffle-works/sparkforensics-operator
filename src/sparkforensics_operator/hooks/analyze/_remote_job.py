@@ -70,16 +70,14 @@ def _base_dir_expr(remote_base_dir: str | None) -> str:
 
 # Stops every job under "$scope" that has not written its exit code yet,
 # then removes "$scope". A pid is signalled only while its command line
-# still names its own job directory (by its unique name: a synchronous
-# job's script holds the path unexpanded): after a host reboot the recorded
-# pid may belong to an unrelated process. The provider's wrapper makes the
-# detached job a session leader under setsid, so its pid is also its
-# session id: signalling the session reaches coreutils `timeout` and the CLI
-# too, which a process group kill would miss, since `timeout` moves itself
-# into a group of its own. Without pkill, or on a host without setsid, it
-# falls back to the group and then the single process, as the provider's
-# own kill does. A synchronous job's script forwards the signal itself
-# (sync_analysis_command).
+# still names its own job directory (by its unique name): after a host
+# reboot the recorded pid may belong to an unrelated process. The
+# provider's wrapper makes the job a session leader under setsid, so its
+# pid is also its session id: signalling the session reaches coreutils
+# `timeout` and the CLI too, which a process group kill would miss, since
+# `timeout` moves itself into a group of its own. Without pkill, or on a
+# host without setsid, it falls back to the group and then the single
+# process, as the provider's own kill does.
 _SWEEP_SCOPE = """\
 if [ -d "$scope" ]; then
   for pid_file in "$scope"/*/pid; do
@@ -155,52 +153,50 @@ def analysis_command(
     return f"{{ {cli} 2>{shlex.quote(stderr_file)}; }}"
 
 
-# The synchronous run as a trackable job: the CLI's stdout and stderr stay
-# on the SSH channel, as before, but its pid is recorded under a job
-# directory so on_kill can stop it with the same sweep as a detached job.
-# Closing the channel alone would not: a non-PTY channel sends the remote
-# process no signal. The script's own pid is the one recorded; on TERM it signals
-# coreutils `timeout`'s own process group (the CLI and its children) and
-# removes its directory. Exit 125, which `timeout` itself uses for its own
-# failures, means the job directory could not be set up.
-_SYNC_JOB_SCRIPT = """\
-set -u
-base={base}
-scope="$base"/{scope}
-job_dir="$scope"/{job_name}
-mkdir -p -- "$scope" || exit 125
-mkdir -m 700 -- "$job_dir" || exit 125
-echo "$$" > "$job_dir/pid" || exit 125
-child=
-finish() {{ rm -rf -- "$job_dir"; rmdir -- "$scope" 2>/dev/null; }}
-trap 'if [ -n "$child" ]; then kill -TERM -"$child" 2>/dev/null || kill -TERM "$child" 2>/dev/null; fi; finish; exit 143' TERM HUP INT
-{cli} &
-child=$!
-wait "$child"
-ec=$?
-finish
-exit "$ec"
+SYNC_PID_MARKER = "sparkforensics-pid:"
+
+# The synchronous run: the CLI's stdout and stderr stay on the SSH channel,
+# and nothing is written on the host. Closing a non-PTY channel sends the
+# remote process no signal, so the launcher first prints its own pid on
+# stdout, after SYNC_PID_MARKER, then execs the CLI under setsid, which
+# keeps that pid and makes it the session leader. The launcher runs in the
+# background of the outer shell so it is never a process group leader,
+# which would make setsid fork and return at once. Without setsid the pid
+# is coreutils `timeout`'s, which moves itself and the CLI into a group of
+# its own.
+_SYNC_LAUNCHER = f"""\
+printf '{SYNC_PID_MARKER}%s\\n' "$$" || exit 1
+if command -v setsid >/dev/null 2>&1; then exec setsid "$@"; fi
+exec "$@"
+"""
+
+# Signals the session (or group, or process) of the synchronous run's pid,
+# but only while that pid still runs the command line it was started with.
+_STOP_SYNC_RUN = """\
+args=$(tr '\\000' ' ' 2>/dev/null < "/proc/$p/cmdline" || ps -ww -o args= -p "$p" 2>/dev/null || true)
+case "$args" in
+  "$expected"|"$expected ")
+    pkill -TERM -s "$p" 2>/dev/null ||
+      kill -TERM -"$p" 2>/dev/null || kill -TERM "$p" 2>/dev/null || true ;;
+esac
 """
 
 
-def sync_analysis_command(
-    remote_base_dir: str | None,
-    scope: str,
-    job_name: str,
-    analyze_bin: str,
-    log_ref: EventLogRef,
-    thresholds: dict,
-    timeout: int,
-) -> str:
-    """The synchronous path's command: the same CLI invocation, writing the
-    report to stdout, run as a job abandon_scope_command(scope) can stop."""
-    cli = shlex.join(["timeout", str(timeout), *build_cli_args(analyze_bin, log_ref, thresholds)])
-    script = _SYNC_JOB_SCRIPT.format(
-        base=_base_dir_expr(remote_base_dir),
-        scope=shlex.quote(scope),
-        job_name=shlex.quote(job_name),
-        cli=cli,
-    )
+def sync_cli_argv(analyze_bin: str, log_ref: EventLogRef, thresholds: dict, timeout: int) -> list[str]:
+    """The synchronous path's CLI invocation, writing the report to stdout."""
+    return ["timeout", str(timeout), *build_cli_args(analyze_bin, log_ref, thresholds)]
+
+
+def sync_analysis_command(argv: list[str]) -> str:
+    """Runs argv on the host, first printing the pid stop_sync_command
+    needs to stop it."""
+    script = f"sh -c {shlex.quote(_SYNC_LAUNCHER)} sh {shlex.join(argv)} &\nwait \"$!\"\n"
+    return f"sh -c {shlex.quote(script)}"
+
+
+def stop_sync_command(pid: int, argv: list[str]) -> str:
+    """Stops the run sync_analysis_command(argv) reported as pid."""
+    script = f"p={int(pid)}\nexpected={shlex.quote(' '.join(argv))}\n{_STOP_SYNC_RUN}"
     return f"sh -c {shlex.quote(script)}"
 
 

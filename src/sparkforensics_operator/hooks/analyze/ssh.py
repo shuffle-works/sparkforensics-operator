@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import secrets
+import re
 import time
 from datetime import timedelta
 from typing import Any
@@ -27,6 +27,7 @@ _JOB_COMMAND_TIMEOUT_S = 120
 # How long past the job's own time limit the deferral waits before giving up
 # on a job that never reported back (host rebooted, wrapper killed).
 _DEFER_GRACE_S = 120
+_PID_LINE = re.compile(rb"^" + re.escape(_remote_job.SYNC_PID_MARKER.encode()) + rb"(\d+)\n", re.M)
 
 
 def _where(ssh_conn_id: str) -> str:
@@ -71,7 +72,8 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         self.remote_base_dir = remote_base_dir
         self.poll_interval = poll_interval
         # The synchronous run in progress in this process, for on_kill().
-        self._sync_scope: str | None = None
+        self._sync_argv: list[str] | None = None
+        self._sync_pid: int | None = None
         self._sync_channel = None
 
     @property
@@ -92,18 +94,14 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         # rendered path, app id or analyze_bin can't inject shell syntax.
         # Closing a non-PTY channel doesn't signal the remote process, so
         # coreutils `timeout` bounds it on the host itself, and the command
-        # records its pid under a job directory of its own so on_kill() can
-        # stop it.
-        token = secrets.token_hex(8)
-        self._sync_scope = f"sync_{token}"
-        command = _remote_job.sync_analysis_command(
-            self.remote_base_dir, self._sync_scope, f"job_{token}",
-            self.analyze_bin, log_ref, thresholds, self.timeout,
-        )
+        # reports its pid on the channel so on_kill() can stop it.
+        argv = _remote_job.sync_cli_argv(self.analyze_bin, log_ref, thresholds, self.timeout)
+        self._sync_argv = argv
         try:
-            returncode, stdout, stderr = self._run_remote(command, log_ref)
+            returncode, stdout, stderr = self._run_remote(_remote_job.sync_analysis_command(argv), log_ref)
         finally:
-            self._sync_scope = None
+            self._sync_argv = None
+            self._sync_pid = None
             self._sync_channel = None
         return _report_from_run(
             returncode, stdout, stderr, log_ref, thresholds,
@@ -124,6 +122,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
                     client, command, self.timeout,
                     on_timeout=lambda: _timeout_error(self.timeout, self.ssh_conn_id, log_ref),
                     on_channel=lambda channel: setattr(self, "_sync_channel", channel),
+                    on_pid=lambda pid: setattr(self, "_sync_pid", pid),
                 )
         except AirflowException:
             raise
@@ -135,17 +134,19 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
 
     def on_kill(self) -> None:
         """Stops a running synchronous analysis when the task is killed:
-        closes the channel, then stops the remote CLI with the same sweep a
-        detached job gets, over a fresh connection."""
-        scope, channel = self._sync_scope, self._sync_channel
-        if scope is None:
+        closes the channel, then signals the remote CLI's session, by the
+        pid it reported, over a fresh connection."""
+        argv, pid, channel = self._sync_argv, self._sync_pid, self._sync_channel
+        if argv is None:
             return
         if channel is not None:
             try:
                 channel.close()
             except Exception:
                 self.log.debug("Closing the SSH channel failed", exc_info=True)
-        command = _remote_job.abandon_scope_command(self.remote_base_dir, scope)
+        if pid is None:
+            return
+        command = _remote_job.stop_sync_command(pid, argv)
         with self._job_connection("stopping the remote analysis") as client:
             self._checked(client, command, "stopping the remote analysis")
 
@@ -333,10 +334,14 @@ class _JobConnection:
         )
 
 
-def _exec(client, command: str, timeout: float, on_timeout=None, on_channel=None) -> tuple[int, str, str]:
+def _exec(
+    client, command: str, timeout: float, on_timeout=None, on_channel=None, on_pid=None
+) -> tuple[int, str, str]:
     """Runs command on an open paramiko client and returns (exit status,
     stdout, stderr), bounding the whole run by timeout seconds. on_channel,
-    if given, receives the channel as soon as it is open."""
+    if given, receives the channel as soon as it is open; on_pid, the pid
+    sync_analysis_command's launcher reports, as soon as it arrives, and
+    that line is left out of stdout."""
     stdin, stdout, _ = client.exec_command(command, timeout=timeout)
     channel = stdout.channel
     if on_channel is not None:
@@ -346,12 +351,15 @@ def _exec(client, command: str, timeout: float, on_timeout=None, on_channel=None
 
     out_chunks: list[bytes] = []
     err_chunks: list[bytes] = []
+    pid_pending = on_pid is not None
     deadline = time.monotonic() + timeout
     while True:
         received = False
         while channel.recv_ready():
             out_chunks.append(channel.recv(_READ_CHUNK_BYTES))
             received = True
+        if pid_pending and received:
+            pid_pending = not _take_pid_line(out_chunks, on_pid)
         while channel.recv_stderr_ready():
             err_chunks.append(channel.recv_stderr(_READ_CHUNK_BYTES))
             received = True
@@ -369,6 +377,19 @@ def _exec(client, command: str, timeout: float, on_timeout=None, on_channel=None
         b"".join(out_chunks).decode("utf-8", "replace"),
         b"".join(err_chunks).decode("utf-8", "replace"),
     )
+
+
+def _take_pid_line(out_chunks: list[bytes], on_pid) -> bool:
+    """Finds the launcher's pid line in the stdout read so far (a login
+    shell may print something before it); if there, removes it and hands
+    the pid to on_pid."""
+    buffered = b"".join(out_chunks)
+    match = _PID_LINE.search(buffered)
+    if match is None:
+        return False
+    out_chunks[:] = [buffered[:match.start()] + buffered[match.end():]]
+    on_pid(int(match.group(1)))
+    return True
 
 
 def _timeout_error(timeout: int, ssh_conn_id: str, log_ref: EventLogRef) -> AirflowException:
