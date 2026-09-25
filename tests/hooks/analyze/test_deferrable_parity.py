@@ -61,7 +61,10 @@ def _operator(report_dest, deferrable, notifier, on_threshold_breach):
 
 def _round_trip(value):
     if AIRFLOW_V3_PLUS:
-        from airflow.sdk.serde import deserialize, serialize
+        try:
+            from airflow.sdk.serde import deserialize, serialize
+        except ImportError:  # Airflow 3.0/3.1 keep serde in core.
+            from airflow.serialization.serde import deserialize, serialize
 
         return deserialize(json.loads(json.dumps(serialize(value))))
     from airflow.serialization.serialized_objects import BaseSerialization
