@@ -561,6 +561,35 @@ def test_a_baseline_the_backend_cannot_read_fails_before_submitting_and_cleans_u
     op.log_source.cleanup.assert_called_once_with(LOG)
 
 
+@pytest.mark.parametrize("baseline", [
+    LOG,
+    RemoteEventLog("onprem_ssh", "/logs/app-1/events_1_app-1"),
+    RemoteEventLog("onprem_ssh", "/logs"),
+    HistoryServerApp(base_url="http://localhost:18080", app_id="app-1"),
+])
+def test_a_baseline_that_overlaps_the_log_fails_before_submitting_and_cleans_up(tmp_path, baseline):
+    backend = FakeComparingHook()
+    op = _comparing_operator(backend, tmp_path, baseline=baseline)
+    if isinstance(baseline, HistoryServerApp):
+        op.log_source.locate.return_value = baseline
+
+    with pytest.raises(AirflowException, match="compared against itself"):
+        op.execute({})
+
+    assert backend.submitted == []
+    op.baseline_log_source.cleanup.assert_called_once_with(baseline)
+    op.log_source.cleanup.assert_called_once()
+
+
+def test_the_same_path_on_another_ssh_host_is_a_valid_baseline(tmp_path):
+    backend = FakeComparingHook()
+    op = _comparing_operator(backend, tmp_path, baseline=RemoteEventLog("other_ssh", LOG.path))
+
+    _defer(op)
+
+    assert backend.submitted == [(LOG, op.thresholds, RemoteEventLog("other_ssh", LOG.path))]
+
+
 @needs_resume_execution
 def test_resume_reports_the_comparison_and_cleans_up_the_baseline(tmp_path):
     first = _comparing_operator(FakeComparingHook(), tmp_path, max_regression_pct=20, regression_metric="gcTime")

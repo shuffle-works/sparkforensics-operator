@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   readable where the analysis runs: a `LocalEventLog` for
   `SubprocessAnalyzeHook`, a `RemoteEventLog` on the same SSH connection
   for `SSHAnalyzeHook`. A History Server application is rejected, since
-  the CLI reads a baseline only from a path. Works with `deferrable=True`.
+  the CLI reads a baseline only from a path. A baseline that is, contains
+  or sits inside the log under analysis fails the task before analysis.
+  Works with `deferrable=True`.
 - Comparison thresholds `max_regression_pct`, `regression_metric` and
   `fail_on_introduced`, mirroring the CLI's flags and its rules: all need
   `baseline_log_source`, and `regression_metric` needs

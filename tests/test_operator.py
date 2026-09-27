@@ -431,6 +431,64 @@ def test_run_spark_forensics_cleans_up_the_log_when_the_baseline_cannot_be_locat
     log_source.cleanup.assert_called_once()
 
 
+def test_run_spark_forensics_refuses_a_baseline_staged_over_the_log_under_analysis(tmp_path):
+    from airflow.exceptions import AirflowException
+
+    from sparkforensics_operator.hooks.log_source.filesystem import FilesystemLogSourceHook
+
+    for ds in ("2026-01-02", "2026-01-01"):
+        (tmp_path / "logs" / ds).mkdir(parents=True)
+        (tmp_path / "logs" / ds / "eventlog").write_text(ds)
+    staging = str(tmp_path / "staging")
+    backend = MagicMock()
+
+    with pytest.raises(AirflowException, match="compared against itself"):
+        run_spark_forensics(
+            {}, log_source=FilesystemLogSourceHook(str(tmp_path / "logs/2026-01-02/eventlog"), dest_dir=staging),
+            backend=backend, report_dest=str(tmp_path / "report.json"),
+            thresholds={"max_regression_pct": 20}, on_threshold_breach="fail", notifier=None,
+            log=logging.getLogger("test"),
+            baseline_log_source=FilesystemLogSourceHook(str(tmp_path / "logs/2026-01-01/eventlog"), dest_dir=staging),
+        )
+
+    backend.analyze.assert_not_called()
+    assert not (tmp_path / "staging" / "eventlog").exists()
+
+
+@pytest.mark.parametrize("baseline_path", ["logs/app", "logs/app/events_1_app", "logs"])
+def test_run_spark_forensics_refuses_a_baseline_that_is_or_contains_the_log(tmp_path, baseline_path):
+    from airflow.exceptions import AirflowException
+
+    log_source, backend, baseline_log_source = _baseline_fixtures(tmp_path, _report())
+    log_source.locate.return_value = LocalEventLog(tmp_path / "logs/app")
+    baseline_log_source.locate.return_value = LocalEventLog(tmp_path / baseline_path)
+
+    with pytest.raises(AirflowException, match="compared against itself"):
+        run_spark_forensics(
+            {}, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+            thresholds={}, on_threshold_breach="fail", notifier=None,
+            log=logging.getLogger("test"), baseline_log_source=baseline_log_source,
+        )
+
+    backend.analyze.assert_not_called()
+    baseline_log_source.cleanup.assert_called_once()
+    log_source.cleanup.assert_called_once()
+
+
+def test_run_spark_forensics_accepts_a_sibling_baseline_with_a_shared_name_prefix(tmp_path):
+    log_source, backend, baseline_log_source = _baseline_fixtures(tmp_path, _report())
+    log_source.locate.return_value = LocalEventLog(tmp_path / "logs/app")
+    baseline_log_source.locate.return_value = LocalEventLog(tmp_path / "logs/app-previous")
+
+    run_spark_forensics(
+        {}, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+        thresholds={}, on_threshold_breach="fail", notifier=None,
+        log=logging.getLogger("test"), baseline_log_source=baseline_log_source,
+    )
+
+    backend.analyze.assert_called_once()
+
+
 def test_operator_fails_on_a_regression_breach_and_persists_the_comparison(tmp_path):
     report = _report(
         ThresholdResult("max-regression", "violation", 'Metric "wallClock" regressed 30.0%, exceeding budget 20%.'),

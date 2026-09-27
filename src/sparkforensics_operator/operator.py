@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timedelta, timezone
+from pathlib import PurePosixPath
 from typing import Sequence
 
 from sparkforensics_operator import sinks
@@ -15,7 +16,12 @@ from sparkforensics_operator._compat import (
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.base import AnalyzeHook, DeferrableAnalyzeHook
 from sparkforensics_operator.links import ReportLink
-from sparkforensics_operator.log_ref import log_ref_from_dict, log_ref_to_dict
+from sparkforensics_operator.log_ref import (
+    LocalEventLog,
+    RemoteEventLog,
+    log_ref_from_dict,
+    log_ref_to_dict,
+)
 from sparkforensics_operator.summary import (
     SUMMARY_XCOM_KEY,
     build_summary,
@@ -78,6 +84,30 @@ def _baseline_kwargs(baseline_ref) -> dict:
     return {} if baseline_ref is None else {"baseline_ref": baseline_ref}
 
 
+def _check_baseline_is_another_log(log_ref, baseline_ref) -> None:
+    """Raise AirflowException when the baseline is the log under analysis,
+    or one's path contains the other's: the run would be compared against
+    itself, or against a log that staging one overwrote with the other."""
+    overlaps = baseline_ref == log_ref
+    if isinstance(log_ref, (LocalEventLog, RemoteEventLog)) and type(baseline_ref) is type(log_ref):
+        same_host = not isinstance(log_ref, RemoteEventLog) or (
+            baseline_ref.ssh_conn_id == log_ref.ssh_conn_id
+        )
+        log_path, baseline_path = PurePosixPath(log_ref.path), PurePosixPath(baseline_ref.path)
+        overlaps = same_host and (
+            log_path == baseline_path
+            or log_path in baseline_path.parents
+            or baseline_path in log_path.parents
+        )
+    if overlaps:
+        raise AirflowException(
+            f"The baseline ({baseline_ref.describe()}) overlaps the log under analysis "
+            f"({log_ref.describe()}), so the run would be compared against itself. Point "
+            "baseline_log_source at another run's log, or give the two log sources "
+            "different dest_dirs."
+        )
+
+
 def run_spark_forensics(
     context: dict,
     *,
@@ -105,6 +135,7 @@ def run_spark_forensics(
     try:
         if baseline_log_source is not None:
             baseline_ref = baseline_log_source.locate(context)
+            _check_baseline_is_another_log(log_ref, baseline_ref)
         report = backend.analyze(log_ref, thresholds, **_baseline_kwargs(baseline_ref))
         return handle_report(
             report,
@@ -378,6 +409,7 @@ class SparkForensicsOperator(BaseOperator):
             self.backend.check_log_ref(log_ref)
             if self.baseline_log_source is not None:
                 baseline_ref = self.baseline_log_source.locate(context)
+                _check_baseline_is_another_log(log_ref, baseline_ref)
                 self.backend.check_baseline_ref(baseline_ref)
             job = self.backend.submit(
                 log_ref, self.thresholds, context, **_baseline_kwargs(baseline_ref)

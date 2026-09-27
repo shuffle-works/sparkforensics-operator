@@ -73,6 +73,16 @@ host" means the baseline's `ssh_conn_id` differs from the backend's. See
 [comparing against a baseline
 run](configuration.md#comparing-against-a-baseline-run).
 
+#### "The baseline (...) overlaps the log under analysis"
+
+Both log sources resolved to the same log, or one's path contains the
+other's, so the run would be compared against itself. The usual cause is
+two `FilesystemLogSourceHook`s or `SFTPLogSourceHook`s sharing one
+`dest_dir` for logs with the same file name (`{{ ds }}/eventlog` and
+`{{ prev_ds }}/eventlog`): staging the baseline overwrites the run's
+copy. Give each its own `dest_dir`, or check that the two path templates
+render to different runs.
+
 #### "Unknown --regression-metric" (exit 2)
 
 The CLI does not know that `regression_metric` key; its message lists
