@@ -60,6 +60,24 @@ backend](configuration.md#which-log-source-works-with-which-backend).
 `RemotePathLogSourceHook` and `SSHAnalyzeHook` were given different
 `ssh_conn_id`s.
 
+#### "... cannot use ... as the baseline"
+
+`baseline_log_source` resolved to something the backend cannot pass to
+`sparkforensics-analyze --baseline`, which reads only an event log path
+where the analysis runs. "A Spark History Server application cannot be a
+baseline" means it is a `HistoryServerAppLogSourceHook`: fetch the
+baseline with `HistoryServerLogSourceHook` (for `SubprocessAnalyzeHook`)
+or point `RemotePathLogSourceHook` at its log on the SSH host (for
+`SSHAnalyzeHook`). "cannot compare against a baseline on a different SSH
+host" means the baseline's `ssh_conn_id` differs from the backend's. See
+[comparing against a baseline
+run](configuration.md#comparing-against-a-baseline-run).
+
+#### "Unknown --regression-metric" (exit 2)
+
+The CLI does not know that `regression_metric` key; its message lists
+the valid ones.
+
 ### SSH analysis host
 
 #### "sparkforensics-analyze binary not found or not executable on the SSH host (ssh_conn_id=...)"
@@ -232,6 +250,24 @@ The event log lacks the evidence that threshold needs (no
 `ApplicationEnd` event, or no trustworthy task-level metrics, for
 example). It is logged as a warning whatever `on_threshold_breach` is,
 and is not a failure.
+
+For `max-regression`, the metric could not be measured in one of the
+runs, or it is a volume metric (`inputBytes`, `outputBytes`,
+`taskCount`, `executorsAdded`) with no regression direction. The
+summary's `comparison.verdict` says which (`unavailable` or `neutral`).
+
+#### `ValueError: ... need baseline_log_source` or "regression_metric needs max_regression_pct" at DAG parse
+
+The comparison thresholds follow the CLI's own rules: all three need a
+baseline, and `regression_metric` only picks the metric
+`max_regression_pct` checks.
+
+#### Comparison `confidence` is `low`
+
+The two runs have different application names or share under half their
+stages, so the baseline may be a different job. Check which run
+`baseline_log_source` resolves to; the regression budget is still
+enforced.
 
 ## Deferred runs
 

@@ -30,8 +30,21 @@ Each backend declares the reference kinds it can read from where it runs
 (`AnalyzeHook.supported_log_refs`); `AnalyzeHook.analyze()` rejects any
 other kind with an error naming what it reads, before running anything, so
 a mismatched pairing (say, `SSHAnalyzeHook` with a log the worker
-downloaded) fails fast instead of analyzing the wrong file. Both trigger
-shapes (the standalone `SparkForensicsOperator` and the
+downloaded) fails fast instead of analyzing the wrong file.
+
+A run can also be compared against an earlier one: `baseline_log_source`
+is a second `LogSourceHook`, located and cleaned up next to `log_source`,
+and the backend passes its reference to the CLI as `--baseline`. The CLI
+reads a baseline only from a path, never from a History Server, so each
+backend declares the kinds it can pass that way
+(`AnalyzeHook.supported_baseline_refs`: `LocalEventLog` on the worker,
+`RemoteEventLog` on the SSH host) and `analyze()` or the deferrable
+submit step rejects any other before running anything. The comparison
+itself, and the budgets on it, are the CLI's. Which run is the baseline
+is the DAG author's choice, made through that log source: the operator
+keeps no state across DAG runs.
+
+Both trigger shapes (the standalone `SparkForensicsOperator` and the
 `spark_forensics_callback` `on_success_callback` factory) converge on one function,
 `operator.run_spark_forensics(context, ...)`, so there is exactly one
 execute-analyze-persist-notify-threshold code path to maintain. Notify
@@ -359,7 +372,12 @@ Before notifying and before any threshold breach raises,
 `handle_report()` pushes a summary under the `sparkforensics_summary`
 XCom key: the schema version, the destination, the report URL, the
 impact-band counts, whether the run violated a threshold, the breached
-and inconclusive threshold names, and the CLI exit code. Downstream tasks
+and inconclusive threshold names, and the CLI exit code. A run compared
+against a baseline adds a `comparison` entry: the direction the CLI
+computed for one metric (`regression_metric`, wall-clock by default) as
+the verdict, the comparison's confidence and reason, and that metric's
+values and change in percent, taken from the CLI's comparison section.
+The full section is persisted with the report. Downstream tasks
 can branch on it without reading the report. It is built from the same
 `Report` on both the synchronous and the deferred path, and
 `return_value` stays the destination.
