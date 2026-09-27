@@ -16,7 +16,7 @@ class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
     worker for SubprocessAnalyzeHook, an SSH host for SSHAnalyzeHook);
     which EventLogRef kinds it can read from there is declared in
     supported_log_refs and enforced by analyze() before any work starts.
-    See docs/architecture.md's "Deferred" section for why an HTTP/MCP
+    See ARCHITECTURE.md's "Not implemented" section for why an HTTP/MCP
     backend is not shipped."""
 
     supported_log_refs: tuple[type, ...] = ()
@@ -38,7 +38,7 @@ class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
                 f"{type(self).__name__} cannot analyze {log_ref!r}; it reads: "
                 f"{supported}. Pair it with a log "
                 "source that resolves to one of those (see the log source/backend "
-                "table in docs/api-reference.md)."
+                "table in docs/configuration.md)."
             )
 
     @abstractmethod
@@ -59,7 +59,7 @@ class DeferrableAnalyzeHook(AnalyzeHook):
     and a fresh operator instance calls collect() on a worker once the
     trigger fires. Nothing but the job dict submit() returns crosses the
     deferral, so it must hold only JSON-native values and everything
-    collect() and abandon() need. See docs/architecture.md's "Deferrable
+    collect() and abandon() need. See ARCHITECTURE.md's "Deferrable
     execution" section."""
 
     def cannot_defer_reason(self) -> str | None:

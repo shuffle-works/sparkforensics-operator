@@ -50,8 +50,8 @@ runs as part of the DAG, right where the Spark task just ran.
 - An optional `Notifier` you implement (Slack, MS Teams, email, PagerDuty,
   ZenDuty, whatever you use) gets a best-effort pass/fail summary; a
   delivery failure never fails the task itself.
-- Tested against both Airflow 2.6+ and Airflow 3.0+ (CI matrix, Python
-  3.9-3.12). No live Spark, Airflow or Node is needed to run the tests:
+- Tested against both Airflow 2.6+ and Airflow 3 (CI runs Python 3.9,
+  3.11 and 3.12; the tox matrix also covers 3.10). No live Spark, Airflow or Node is needed to run the tests:
   everything but the shell on the stand-in SSH host is mocked.
 
 ## Quick start
@@ -127,7 +127,7 @@ the analysis runs: the CLI runs as a detached job on the SSH host and the
 triggerer polls it, which needs a running triggerer with
 `sparkforensics-operator[ssh]` installed and
 `apache-airflow-providers-ssh>=6.0.1`, so Airflow 2.11 or newer. See
-[Deferrable execution](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/api-reference.md#deferrable-execution).
+[Deferrable execution](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/configuration.md#deferrable-execution).
 
 Whichever host runs the analysis (the worker for `SubprocessAnalyzeHook`,
 the SSH host for `SSHAnalyzeHook`) needs Node.js 18+ and the
@@ -136,7 +136,7 @@ the SSH host for `SSHAnalyzeHook`) needs Node.js 18+ and the
 the SSH hooks (it works from Airflow 2.6, like the package; only
 `deferrable=True` needs Airflow 2.11+), and the `s3` extra if
 `report_dest` is `s3://...`.
-Full details in [`docs/runbook.md`](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/runbook.md).
+Full details in [Getting started](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/getting-started.md).
 
 ## Development
 
@@ -154,11 +154,11 @@ tox -e py311-airflow3
 
 ## Learn more
 
-- [Architecture](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/architecture.md), components and design decisions
-- [API reference](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/api-reference.md), the full operator/hook/threshold
-  surface
-- [Runbook](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/runbook.md), worker and SSH host prerequisites, troubleshooting
-- [Glossary](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/glossary.md), domain terms
+- [Getting started](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/getting-started.md), install and host prerequisites, and DAG wiring examples
+- [Configuration](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/configuration.md), the full operator/hook/threshold surface
+- [Troubleshooting](https://github.com/shuffle-works/sparkforensics-operator/blob/main/docs/troubleshooting.md), error messages and deferred-run failure modes
+- [Contributing](https://github.com/shuffle-works/sparkforensics-operator/blob/main/CONTRIBUTING.md), development setup and the release procedure
+- [Architecture](https://github.com/shuffle-works/sparkforensics-operator/blob/main/ARCHITECTURE.md), components and design decisions
 
 ## License
 

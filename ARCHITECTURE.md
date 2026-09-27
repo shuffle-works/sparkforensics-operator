@@ -30,8 +30,9 @@ Each backend declares the reference kinds it can read from where it runs
 (`AnalyzeHook.supported_log_refs`); `AnalyzeHook.analyze()` rejects any
 other kind with an error naming what it reads, before running anything, so
 a mismatched pairing (say, `SSHAnalyzeHook` with a log the worker
-downloaded) fails fast instead of analyzing the wrong file. Both trigger shapes (the standalone `SparkForensicsOperator` and the `spark_forensics_callback`
-`on_success_callback` factory) converge on one function,
+downloaded) fails fast instead of analyzing the wrong file. Both trigger
+shapes (the standalone `SparkForensicsOperator` and the
+`spark_forensics_callback` `on_success_callback` factory) converge on one function,
 `operator.run_spark_forensics(context, ...)`, so there is exactly one
 execute-analyze-persist-notify-threshold code path to maintain. Notify
 always runs before the threshold check's fail/warn/ignore branching, so a
@@ -39,19 +40,24 @@ breach that raises still gets a notification out first.
 
 ## Components
 
-- `_compat.py`, the single place this package imports Airflow's public
-  API from. `BaseOperator`/`BaseOperatorLink` live in `airflow.sdk` on
+- `_compat.py`, where this package imports Airflow's core API from (the
+  one exception is `links.py`'s lazy `XCom` import on the Airflow 2
+  branch; provider hooks are imported where they are used). `BaseOperator`/`BaseOperatorLink` live in `airflow.sdk` on
   3.x and `airflow.models.*` on 2.x. The Task SDK also re-homed `BaseHook`
   (3.1), and the exceptions, `TaskDeferred` and `conf` (3.2); their old
   paths still work there, as the same objects, behind deprecation shims.
   `_compat.py` tries the SDK path first and falls back to the old one, and
   `tests/test_compat.py` imports every module of the package in a fresh
-  interpreter and fails on any deprecation warning they emit. The repo has
+  interpreter and fails if any import fails or emits a
+  `DeprecationWarning`, `PendingDeprecationWarning` or `FutureWarning`
+  from inside the package. The repo has
   no ruff configuration, so there are no ruff `AIR3` rules to enable; that
   test covers the same ground.
 - `hooks/_templating.py`, `TemplatedHookMixin`, the base of every hook:
-  an empty `template_fields` and a `__repr__` that shows them. See
-  "Templated hook arguments" below.
+  an empty `template_fields` and a `__repr__` that shows them. Also
+  `task_renderer()` and `render_with_task_env()`, which render a value
+  with a task's Jinja environment for the callback and the tunnel hook.
+  See "Templated hook arguments" below.
 - `log_ref.py`, the `EventLogRef` kinds (`LocalEventLog`,
   `RemoteEventLog`, `HistoryServerApp`): frozen dataclasses saying where a
   log is, the only thing a log source and a backend share.
@@ -68,8 +74,9 @@ breach that raises still gets a notification out first.
   cleaning up after itself in that case; currently `HistoryServerLogSourceHook`
   and `SFTPLogSourceHook` do this, via their own internal try/except
   around the download/transfer that removes their owned temp dir on any
-  exception. See `docs/runbook.md`'s "Disk fills up" entry for which
-  hook/config combinations actually clean up.
+  exception. See the "Disk fills up on a worker" entry in
+  `docs/troubleshooting.md` for which hook/config combinations actually
+  clean up.
 - `hooks/log_source/{sftp,tunnel}.py`, `SFTPLogSourceHook` and
   `SSHTunneledLogSourceHook`, for on-prem log sources reachable only over
   the SSH connection an `SSHOperator` already has configured (no cloud
@@ -89,7 +96,7 @@ breach that raises still gets a notification out first.
   `HistoryServerApp` and do no I/O. Per-run values come from Jinja, the
   same way as in the fetching hooks (see "Templated hook arguments").
   `hooks/log_source/_path_template.py` checks a rendered path (rendered,
-  non-empty, no `..` segment) and `_history_server_args.py` checks a
+  non-empty, no `..` segment, no old `{run_id}`-style placeholder) and `_history_server_args.py` checks a
   rendered app id and attempt id; `_rolling_log.py` holds the
   rolling-log-entry-matching logic shared between `history_server.py`
   and `sftp.py`. `_dest_root.py` holds the `dest_root/<basename>` staging
@@ -139,6 +146,8 @@ breach that raises still gets a notification out first.
   threshold-evaluation *logic* lives here: sparkforensics's own CLI decides
   pass/violation/inconclusive, this module only parses what it printed, so
   it can never drift from what the CLI actually enforces.
+- `exceptions.py`, `ThresholdBreached`, an `AirflowFailException` so a
+  breach fails the task without consuming its retries.
 - `sinks.py`, persists the report JSON (local path, `file://`, `s3://`).
 - `notify.py`, the `Notifier` base class: subclasses implement `_send()`
   for whatever messaging/paging system they target, and `notify()` makes
@@ -176,6 +185,7 @@ breach that raises still gets a notification out first.
   deferred run's `execute_complete()` calls.
 - `callback.py`, `spark_forensics_callback(**kwargs)`, an
   `on_success_callback` factory sharing the same core.
+- `__init__.py`, the public exports and `__version__`.
 
 ## Deferrable execution
 
@@ -207,7 +217,8 @@ from the DAG file, so nothing set on the instance before `defer()`
 survives. Everything `execute_complete()` needs travels in the resume
 kwargs, as JSON-native values that Airflow 2's `BaseSerialization` and
 Airflow 3's serde both round-trip: the job dict (connection id, CLI
-binary, `timeout`, every remote path), the log reference as a dict, the
+binary, `timeout`, `poll_interval`, the job id, the submission time and
+every remote path), the log reference as a dict, the
 rendered `report_dest` and the thresholds the job was submitted with. The
 job dict and the log reference are built from the rendered hooks, so
 templated hook arguments cross the deferral as the values the job ran
@@ -243,9 +254,10 @@ session ids in `/proc/<pid>/stat`. A pid is only signalled while its
 command line still names its job directory, so a pid reused after a
 reboot is left alone.
 
-Failure paths. A trigger error event makes `collect()` stop and remove
-the job before raising. A deferral that times out (the backend's
-`defer_timeout`, `timeout` plus 120 seconds, or the task's
+Failure paths. A trigger error event without an exit code makes
+`collect()` stop and remove the job before raising. A deferral that times
+out (the backend's `defer_timeout`, `timeout` plus 120 seconds counted
+from submission, or the task's
 `execution_timeout`) resumes with `next_method="__fail__"`, which never
 reaches `execute_complete()`; `resume_execution()` is overridden to call
 `backend.abandon(context, job)` first, with the job from XCom. Airflow 2
@@ -256,7 +268,8 @@ anything on the resumed operator, then calls `on_kill()`, which is why
 between `submit()` and `defer()` (building the trigger, the timeout, the
 deferral itself) abandons the job before the error propagates, and a
 task timeout or kill there reaches `on_kill()`, which does the same. The
-runbook's "Deferred runs" section lists the behaviour for each case.
+"Deferred runs" section of `docs/troubleshooting.md` lists the behaviour
+for each case.
 
 Killing a task. `SparkForensicsOperator.on_kill()` uses the context of the
 `execute()` or `execute_complete()` running in the same process, or,
@@ -335,7 +348,8 @@ Three details keep this safe.
 when Airflow renders the task. `spark_forensics_callback` runs outside
 any template rendering, so it renders `report_dest`, `log_source` and
 `backend` itself, on copies, with the upstream task's Jinja environment.
-Both render through a copy of the task with an empty `template_ext`, so a
+Both render through the task, or a copy of it with an empty
+`template_ext` when it has one, so a
 value ending in `.json` is rendered as a string, not looked up as a
 template file on an EMR or Spark-on-Kubernetes upstream.
 
@@ -358,7 +372,7 @@ presigns anything: the URL points at a place the viewer's own
 credentials open. `ReportLink` shows that URL when it is set and the raw
 destination when it is not.
 
-## Deferred
+## Not implemented
 
 **http/MCP AnalyzeHook backend.** The spec originally described an "http"
 backend calling a deployed sparkforensics `server/` instance. `server/`
