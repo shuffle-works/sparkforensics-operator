@@ -202,6 +202,13 @@ A value Jinja filled in (a `run_id` passed to `airflow dags trigger
 or was empty. Check where the value came from; the hook refuses to use
 it.
 
+#### "path_template resolved to a remote path/directory with no name component ..."
+
+`SFTPLogSourceHook`'s `path_template` rendered to a path ending at the
+filesystem root (a template bug that reduces to `"/"`, say), leaving
+nothing to name the staged local file or directory. Compare the rendered
+path in the message with `path_template` and the values Jinja filled in.
+
 #### "app_id rendered to '' ..." or "app_id rendered to 'None' ..."
 
 A History Server hook's `app_id` template rendered to nothing, typically
