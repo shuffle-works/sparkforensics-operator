@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Run comparison: `baseline_log_source` on `SparkForensicsOperator` and
+  `spark_forensics_callback` resolves an earlier run's event log, the same
+  way `log_source` resolves the run under analysis, and passes it to
+  `sparkforensics-analyze --baseline`. It must resolve to a file path
+  readable where the analysis runs: a `LocalEventLog` for
+  `SubprocessAnalyzeHook`, a `RemoteEventLog` on the same SSH connection
+  for `SSHAnalyzeHook`. A History Server application is rejected, since
+  the CLI reads a baseline only from a path. Works with `deferrable=True`.
+- Comparison thresholds `max_regression_pct`, `regression_metric` and
+  `fail_on_introduced`, mirroring the CLI's flags and its rules: all need
+  `baseline_log_source`, and `regression_metric` needs
+  `max_regression_pct`. A breach raises `ThresholdBreached` like any other
+  threshold.
+- The `sparkforensics_summary` XCom gains a `comparison` key when a
+  baseline ran: the checked metric's verdict, the comparison's confidence
+  and reason, and the metric's baseline and candidate values and change in
+  percent. The persisted report carries the CLI's full comparison section.
+
 ## [0.2.0] - 2026-09-25
 
 ### Added

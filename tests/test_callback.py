@@ -42,6 +42,7 @@ def test_callback_factory_accepts_threshold_kwargs_matching_the_operator(tmp_pat
     backend.analyze.assert_called_once_with(LocalEventLog(tmp_path / "app.log"), {
         "max_runtime_ms": 10_000, "max_spill_gb": None, "max_skew_ratio": None,
         "max_failed_task_rate_pct": None, "min_efficiency_pct": None,
+        "max_regression_pct": None, "regression_metric": None, "fail_on_introduced": None,
     })
 
 
@@ -108,3 +109,18 @@ def test_callback_raises_on_an_invalid_on_threshold_breach_value(tmp_path):
 
     with pytest.raises(ValueError, match="on_threshold_breach"):
         callback({})
+
+
+def test_callback_factory_rejects_a_comparison_threshold_without_a_baseline_log_source(tmp_path):
+    with pytest.raises(ValueError, match="need baseline_log_source"):
+        spark_forensics_callback(
+            log_source=MagicMock(), backend=MagicMock(), report_dest=str(tmp_path / "r.json"), max_regression_pct=20,
+        )
+
+
+def test_callback_factory_rejects_a_regression_metric_without_max_regression_pct(tmp_path):
+    with pytest.raises(ValueError, match="regression_metric needs max_regression_pct"):
+        spark_forensics_callback(
+            log_source=MagicMock(), backend=MagicMock(), report_dest=str(tmp_path / "r.json"),
+            baseline_log_source=MagicMock(), regression_metric="gcTime",
+        )

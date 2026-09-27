@@ -319,3 +319,147 @@ def test_run_spark_forensics_hands_a_non_local_log_ref_to_the_backend_unchanged(
 
     backend.analyze.assert_called_once_with(log_ref, {})
     log_source.cleanup.assert_called_once_with(log_ref)
+
+
+# Comparing against a baseline run.
+
+COMPARISON = {
+    "confidence": "ok", "reason": None, "matchedCoverage": 1,
+    "metrics": [{"key": "wallClock", "baseline": 1000, "candidate": 1300, "delta": 300, "direction": "regression"}],
+    "findings": {"introduced": [], "resolved": []},
+}
+
+
+def _baseline_fixtures(tmp_path, report):
+    log_source, backend = _fixtures(tmp_path, report)
+    baseline_log_source = MagicMock()
+    baseline_log_source.locate.return_value = LocalEventLog(tmp_path / "baseline.log")
+    return log_source, backend, baseline_log_source
+
+
+@pytest.mark.parametrize("threshold", [
+    {"max_regression_pct": 20},
+    {"max_regression_pct": 20, "regression_metric": "gcTime"},
+    {"fail_on_introduced": "critical"},
+])
+def test_operator_rejects_a_comparison_threshold_without_a_baseline_log_source(threshold):
+    with pytest.raises(ValueError, match="need baseline_log_source"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json", **threshold,
+        )
+
+
+def test_operator_rejects_a_regression_metric_without_max_regression_pct():
+    with pytest.raises(ValueError, match="regression_metric needs max_regression_pct"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+            baseline_log_source=MagicMock(), regression_metric="gcTime",
+        )
+
+
+def test_operator_rejects_an_unknown_fail_on_introduced_band():
+    with pytest.raises(ValueError, match="fail_on_introduced must be one of"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+            baseline_log_source=MagicMock(), fail_on_introduced="severe",
+        )
+
+
+def test_operator_rejects_a_baseline_for_a_backend_that_cannot_compare_runs():
+    from sparkforensics_operator.hooks.analyze.base import AnalyzeHook
+
+    class _NoBaselines(AnalyzeHook):
+        supported_log_refs = (LocalEventLog,)
+
+        def _analyze(self, log_ref, thresholds):
+            return _report()
+
+    with pytest.raises(ValueError, match="_NoBaselines cannot compare a run against a baseline"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=_NoBaselines(), report_dest="/tmp/r.json",
+            baseline_log_source=MagicMock(),
+        )
+
+
+def test_run_spark_forensics_hands_the_located_baseline_to_the_backend_and_cleans_both_up(tmp_path):
+    log_source, backend, baseline_log_source = _baseline_fixtures(tmp_path, _report())
+    context = {"run_id": "r1"}
+
+    run_spark_forensics(
+        context, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+        thresholds={"max_regression_pct": 20}, on_threshold_breach="fail", notifier=None,
+        log=logging.getLogger("test"), baseline_log_source=baseline_log_source,
+    )
+
+    baseline_log_source.locate.assert_called_once_with(context)
+    backend.analyze.assert_called_once_with(
+        LocalEventLog(tmp_path / "app.log"), {"max_regression_pct": 20},
+        baseline_ref=LocalEventLog(tmp_path / "baseline.log"),
+    )
+    baseline_log_source.cleanup.assert_called_once_with(LocalEventLog(tmp_path / "baseline.log"))
+    log_source.cleanup.assert_called_once_with(LocalEventLog(tmp_path / "app.log"))
+
+
+def test_run_spark_forensics_cleans_up_both_logs_when_the_backend_rejects_the_baseline(tmp_path):
+    log_source, backend, baseline_log_source = _baseline_fixtures(tmp_path, _report())
+    backend.analyze.side_effect = RuntimeError("cannot use it as the baseline")
+
+    with pytest.raises(RuntimeError):
+        run_spark_forensics(
+            {}, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+            thresholds={}, on_threshold_breach="fail", notifier=None,
+            log=logging.getLogger("test"), baseline_log_source=baseline_log_source,
+        )
+
+    baseline_log_source.cleanup.assert_called_once()
+    log_source.cleanup.assert_called_once()
+
+
+def test_run_spark_forensics_cleans_up_the_log_when_the_baseline_cannot_be_located(tmp_path):
+    log_source, backend, baseline_log_source = _baseline_fixtures(tmp_path, _report())
+    baseline_log_source.locate.side_effect = RuntimeError("no such baseline")
+
+    with pytest.raises(RuntimeError, match="no such baseline"):
+        run_spark_forensics(
+            {}, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+            thresholds={}, on_threshold_breach="fail", notifier=None,
+            log=logging.getLogger("test"), baseline_log_source=baseline_log_source,
+        )
+
+    backend.analyze.assert_not_called()
+    baseline_log_source.cleanup.assert_not_called()
+    log_source.cleanup.assert_called_once()
+
+
+def test_operator_fails_on_a_regression_breach_and_persists_the_comparison(tmp_path):
+    report = _report(
+        ThresholdResult("max-regression", "violation", 'Metric "wallClock" regressed 30.0%, exceeding budget 20%.'),
+        exit_code=1,
+    )
+    report.comparison = COMPARISON
+    log_source, backend, baseline_log_source = _baseline_fixtures(tmp_path, report)
+    dest = tmp_path / "report.json"
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=log_source, backend=backend, report_dest=str(dest),
+        baseline_log_source=baseline_log_source, max_regression_pct=20,
+    )
+
+    with pytest.raises(ThresholdBreached, match="max-regression: Metric \"wallClock\" regressed 30.0%"):
+        op.execute({})
+
+    persisted = json.loads(dest.read_text())
+    assert persisted["comparison"] == COMPARISON
+    assert persisted["thresholdResults"][0]["name"] == "max-regression"
+    assert op.persisted_report_dest == str(dest)
+
+
+def test_the_persisted_report_has_no_comparison_without_a_baseline(tmp_path):
+    log_source, backend = _fixtures(tmp_path, _report())
+    dest = tmp_path / "report.json"
+
+    run_spark_forensics(
+        {}, log_source=log_source, backend=backend, report_dest=str(dest),
+        thresholds={}, on_threshold_breach="fail", notifier=None, log=logging.getLogger("test"),
+    )
+
+    assert "comparison" not in json.loads(dest.read_text())

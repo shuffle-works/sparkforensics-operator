@@ -6,7 +6,7 @@ from typing import Any, Sequence
 
 from sparkforensics_operator._compat import AirflowException, BaseHook
 from sparkforensics_operator.hooks._templating import TemplatedHookMixin
-from sparkforensics_operator.log_ref import EventLogRef
+from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp
 from sparkforensics_operator.report import Report
 
 
@@ -20,15 +20,27 @@ class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
     backend is not shipped."""
 
     supported_log_refs: tuple[type, ...] = ()
+    # The EventLogRef kinds this backend can pass the CLI as --baseline,
+    # which reads only a file path from where the CLI runs. Empty: this
+    # backend cannot compare runs.
+    supported_baseline_refs: tuple[type, ...] = ()
     # Constructor arguments Airflow renders as Jinja when the hook is
     # SparkForensicsOperator's backend (see hooks/_templating.py).
     template_fields: Sequence[str] = ()
 
-    def analyze(self, log_ref: EventLogRef, thresholds: dict) -> Report:
+    def analyze(
+        self, log_ref: EventLogRef, thresholds: dict, baseline_ref: EventLogRef | None = None
+    ) -> Report:
         """thresholds keys: max_runtime_ms, max_spill_gb, max_skew_ratio,
-        max_failed_task_rate_pct, min_efficiency_pct (all optional)."""
+        max_failed_task_rate_pct, min_efficiency_pct, and, with a
+        baseline_ref, max_regression_pct, regression_metric,
+        fail_on_introduced (all optional). baseline_ref is the run to
+        compare against."""
         self.check_log_ref(log_ref)
-        return self._analyze(log_ref, thresholds)
+        if baseline_ref is None:
+            return self._analyze(log_ref, thresholds)
+        self.check_baseline_ref(baseline_ref)
+        return self._analyze(log_ref, thresholds, baseline_ref=baseline_ref)
 
     def check_log_ref(self, log_ref: EventLogRef) -> None:
         """Raise unless this backend can read log_ref from where it runs."""
@@ -41,10 +53,37 @@ class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
                 "table in docs/configuration.md)."
             )
 
+    def check_baseline_ref(self, baseline_ref: EventLogRef) -> None:
+        """Raise unless this backend can pass baseline_ref to the CLI as
+        --baseline: a file path readable where the analysis runs."""
+        if isinstance(baseline_ref, self.supported_baseline_refs):
+            return
+        name = type(self).__name__
+        if not self.supported_baseline_refs:
+            raise AirflowException(f"{name} cannot compare a run against a baseline.")
+        if isinstance(baseline_ref, HistoryServerApp):
+            problem = (
+                "a Spark History Server application cannot be a baseline: "
+                "sparkforensics-analyze --baseline reads only an event log file or "
+                "rolling-log directory, never a History Server"
+            )
+        else:
+            problem = f"it reads a baseline only as {self._baseline_ref_names()}"
+        raise AirflowException(
+            f"{name} cannot use {baseline_ref!r} as the baseline; {problem}. Point "
+            "baseline_log_source at a log source that resolves to "
+            f"{self._baseline_ref_names()}."
+        )
+
+    def _baseline_ref_names(self) -> str:
+        return " or ".join(t.__name__ for t in self.supported_baseline_refs)
+
     @abstractmethod
     def _analyze(self, log_ref: EventLogRef, thresholds: dict) -> Report:
         """Run the analysis; log_ref is already known to be one of
-        supported_log_refs."""
+        supported_log_refs. A backend with supported_baseline_refs also
+        takes a baseline_ref keyword, already known to be one of those, and
+        receives it only when there is a baseline."""
 
     def on_kill(self) -> None:
         """Called from SparkForensicsOperator.on_kill() when the task is
@@ -70,7 +109,9 @@ class DeferrableAnalyzeHook(AnalyzeHook):
     @abstractmethod
     def submit(self, log_ref: EventLogRef, thresholds: dict, context: Any) -> dict:
         """Start the analysis detached and return the job. log_ref is
-        already known to be one of supported_log_refs. Must first stop and
+        already known to be one of supported_log_refs. As with _analyze(),
+        a baseline_ref keyword, already checked, is passed only when there
+        is a baseline. Must first stop and
         remove whatever an earlier try of the same task instance left
         behind, so a retry or clear never runs two analyses at once."""
 

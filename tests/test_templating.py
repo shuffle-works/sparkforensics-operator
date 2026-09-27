@@ -222,3 +222,34 @@ def test_the_callback_copies_the_upstream_task_at_most_once_per_run(tmp_path, up
 
     assert len(copied) == copies
     assert backend.analyze.call_args.args[0] == RemoteEventLog("onprem_ssh", "/logs/run_1")
+
+
+def test_the_operator_renders_a_copy_of_the_baseline_log_source():
+    baseline = FilesystemLogSourceHook(path_template="/logs/{{ prev_ds }}/eventlog")
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+        baseline_log_source=baseline, max_regression_pct=20,
+    )
+
+    op.render_template_fields({"prev_ds": "2025-12-31"})
+
+    assert op.baseline_log_source.path_template == "/logs/2025-12-31/eventlog"
+    assert baseline.path_template == "/logs/{{ prev_ds }}/eventlog"
+
+
+def test_the_callback_renders_the_baseline_log_source_with_the_upstream_tasks_context(tmp_path):
+    log_source = RemotePathLogSourceHook(ssh_conn_id="onprem_ssh", path_template="/logs/{{ run_id }}")
+    baseline = RemotePathLogSourceHook(ssh_conn_id="onprem_ssh", path_template="/logs/{{ prev_ds }}")
+    backend = MagicMock(spec=["analyze"])
+    backend.analyze.return_value = _report()
+    callback = spark_forensics_callback(
+        log_source=log_source, backend=backend, report_dest=str(tmp_path / "r.json"),
+        baseline_log_source=baseline, fail_on_introduced="critical",
+    )
+    upstream = SparkForensicsOperator(task_id="spark", log_source=log_source, backend=backend, report_dest="x")
+
+    callback({"run_id": "run_2", "prev_ds": "2025-12-31", "task": upstream, "ti": MagicMock()})
+
+    assert backend.analyze.call_args.kwargs["baseline_ref"] == RemoteEventLog("onprem_ssh", "/logs/2025-12-31")
+    assert backend.analyze.call_args.args[1]["fail_on_introduced"] == "critical"
+    assert baseline.path_template == "/logs/{{ prev_ds }}"

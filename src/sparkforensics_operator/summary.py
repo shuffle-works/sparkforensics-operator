@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from urllib.parse import quote, urlparse
 
+from sparkforensics_operator.report import DEFAULT_REGRESSION_METRIC
+
 # XCom key of the summary; return_value stays the report destination.
 SUMMARY_XCOM_KEY = "sparkforensics_summary"
 
@@ -50,9 +52,19 @@ def render_report_url(destination: str | None, template: str | None) -> str | No
     return template.format(**_url_values(destination))
 
 
-def build_summary(report, *, destination: str, report_url: str | None, violated: bool) -> dict:
+def build_summary(
+    report,
+    *,
+    destination: str,
+    report_url: str | None,
+    violated: bool,
+    regression_metric: str | None = None,
+) -> dict:
+    """regression_metric is the comparison metric the summary reports on
+    (DEFAULT_REGRESSION_METRIC when None); it matters only for a report
+    compared against a baseline."""
     counts = report.summary.get("impactBandCounts", {}) if isinstance(report.summary, dict) else {}
-    return {
+    summary = {
         "schema_version": report.schema_version,
         "destination": destination,
         "report_url": report_url,
@@ -61,4 +73,34 @@ def build_summary(report, *, destination: str, report_url: str | None, violated:
         "breached_thresholds": [r.name for r in report.threshold_results if r.status == "violation"],
         "inconclusive_thresholds": [r.name for r in report.threshold_results if r.status == "inconclusive"],
         "exit_code": report.exit_code,
+    }
+    if report.comparison is not None:
+        summary["comparison"] = _comparison_summary(
+            report.comparison, regression_metric or DEFAULT_REGRESSION_METRIC
+        )
+    return summary
+
+
+def _comparison_summary(comparison: dict, metric: str) -> dict:
+    """How the run compares with its baseline on metric: verdict is the
+    CLI's direction for it (regression, improvement, unchanged, neutral for
+    a volume metric, or unavailable), and regression_pct its signed change
+    relative to the baseline (positive: it grew), None when that has no
+    finite value."""
+    metrics = comparison.get("metrics") if isinstance(comparison, dict) else None
+    row = next(
+        (m for m in metrics or [] if isinstance(m, dict) and m.get("key") == metric), {}
+    )
+    baseline, candidate = row.get("baseline"), row.get("candidate")
+    regression_pct = None
+    if isinstance(baseline, (int, float)) and isinstance(candidate, (int, float)) and baseline:
+        regression_pct = (candidate - baseline) / abs(baseline) * 100
+    return {
+        "verdict": row.get("direction", "unavailable"),
+        "confidence": comparison.get("confidence"),
+        "reason": comparison.get("reason"),
+        "metric": metric,
+        "baseline": baseline,
+        "candidate": candidate,
+        "regression_pct": regression_pct,
     }

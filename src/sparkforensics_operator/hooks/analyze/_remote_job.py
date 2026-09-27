@@ -169,6 +169,7 @@ def analysis_command(
     timeout: int,
     report_file: str,
     stderr_file: str,
+    baseline_ref: EventLogRef | None = None,
 ) -> str:
     """The command the job runs: the same CLI invocation as the synchronous
     path, under the same coreutils `timeout`, writing the report to
@@ -179,7 +180,10 @@ def analysis_command(
         [
             "timeout",
             str(timeout),
-            *build_cli_args(analyze_bin, log_ref, thresholds, out_path=PurePosixPath(report_file)),
+            *build_cli_args(
+                analyze_bin, log_ref, thresholds,
+                out_path=PurePosixPath(report_file), baseline_ref=baseline_ref,
+            ),
         ]
     )
     return f"{{ {cli} 2>{shlex.quote(stderr_file)}; }}"
@@ -212,9 +216,18 @@ esac
 """
 
 
-def sync_cli_argv(analyze_bin: str, log_ref: EventLogRef, thresholds: dict, timeout: int) -> list[str]:
+def sync_cli_argv(
+    analyze_bin: str,
+    log_ref: EventLogRef,
+    thresholds: dict,
+    timeout: int,
+    baseline_ref: EventLogRef | None = None,
+) -> list[str]:
     """The synchronous path's CLI invocation, writing the report to stdout."""
-    return ["timeout", str(timeout), *build_cli_args(analyze_bin, log_ref, thresholds)]
+    return [
+        "timeout", str(timeout),
+        *build_cli_args(analyze_bin, log_ref, thresholds, baseline_ref=baseline_ref),
+    ]
 
 
 def sync_analysis_command(argv: list[str]) -> str:

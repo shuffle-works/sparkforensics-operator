@@ -456,3 +456,35 @@ def test_deferrable_true_on_an_older_ssh_provider_fails_at_dag_parse(monkeypatch
             task_id="forensics", log_source=MagicMock(), backend=SSHAnalyzeHook(ssh_conn_id="onprem_ssh"),
             report_dest="/tmp/r.json", deferrable=True,
         )
+
+
+@needs_posix_host
+def test_analyze_passes_a_baseline_path_on_the_same_host_and_reads_the_comparison(host):
+    comparison = {"confidence": "low", "reason": "Run names differ.", "metrics": [], "findings": {}}
+    wrapped = json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison})
+    host.fake_cli(f"printf '%s' '{wrapped}' | emit\n")
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=60)
+
+    report = hook.analyze(
+        RemoteEventLog("onprem_ssh", "/logs/app-2"), {"fail_on_introduced": "critical"},
+        baseline_ref=RemoteEventLog("onprem_ssh", "/logs/app-1"),
+    )
+
+    assert host.argv() == [
+        "/logs/app-2", "--format", "json", "--baseline", "/logs/app-1", "--fail-on-introduced", "critical",
+    ]
+    assert report.comparison == comparison
+
+
+@pytest.mark.parametrize("baseline, error", [
+    (RemoteEventLog("other_ssh", "/logs/app-1"), "baseline on a different SSH host"),
+    (LocalEventLog("/tmp/app-1.log"), "cannot use LocalEventLog.*reads a baseline only as RemoteEventLog"),
+    (HistoryServerApp(base_url="http://localhost:18080", app_id="app-1"), "History Server application cannot be a baseline"),
+])
+def test_analyze_rejects_a_baseline_the_ssh_host_cannot_read_before_connecting(baseline, error):
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
+
+    with patch("airflow.providers.ssh.hooks.ssh.SSHHook") as ssh_cls:
+        with pytest.raises(AirflowException, match=error):
+            hook.analyze(RemoteEventLog("onprem_ssh", "/logs/app-2"), {}, baseline_ref=baseline)
+    ssh_cls.assert_not_called()

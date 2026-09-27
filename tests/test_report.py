@@ -53,6 +53,20 @@ def test_parse_report_text_defaults_evidence_availability_and_detectors_when_abs
     assert report.detectors == []
 
 
+def test_parse_report_text_has_no_comparison_without_a_baseline():
+    assert parse_report_text(json.dumps(SAMPLE_JSON)).comparison is None
+
+
+def test_parse_report_text_unwraps_the_candidate_report_of_a_baseline_run():
+    comparison = {"confidence": "ok", "reason": None, "matchedCoverage": 1, "metrics": [], "findings": {}}
+
+    report = parse_report_text(json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison}))
+
+    assert report.schema_version == 3
+    assert report.findings[0]["type"] == "spill"
+    assert report.comparison == comparison
+
+
 def test_threshold_cli_flags_cover_every_thresholds_key():
     assert set(THRESHOLD_CLI_FLAGS) == {
         "max_runtime_ms",
@@ -60,12 +74,18 @@ def test_threshold_cli_flags_cover_every_thresholds_key():
         "max_skew_ratio",
         "max_failed_task_rate_pct",
         "min_efficiency_pct",
+        "max_regression_pct",
+        "regression_metric",
+        "fail_on_introduced",
     }
     assert THRESHOLD_CLI_FLAGS["max_runtime_ms"] == "--max-runtime"
     assert THRESHOLD_CLI_FLAGS["max_spill_gb"] == "--max-spill"
     assert THRESHOLD_CLI_FLAGS["max_skew_ratio"] == "--max-skew"
     assert THRESHOLD_CLI_FLAGS["max_failed_task_rate_pct"] == "--max-failed-task-rate"
     assert THRESHOLD_CLI_FLAGS["min_efficiency_pct"] == "--min-efficiency"
+    assert THRESHOLD_CLI_FLAGS["max_regression_pct"] == "--max-regression-pct"
+    assert THRESHOLD_CLI_FLAGS["regression_metric"] == "--regression-metric"
+    assert THRESHOLD_CLI_FLAGS["fail_on_introduced"] == "--fail-on-introduced"
 
 
 def test_parse_threshold_results_defaults_requested_thresholds_to_pass():
@@ -126,3 +146,14 @@ def test_report_violated_and_inconclusive_properties():
     )
     assert not inconclusive.violated
     assert inconclusive.inconclusive
+
+
+def test_parse_threshold_results_seeds_the_comparison_budgets_but_not_the_metric():
+    thresholds = {"max_regression_pct": 20, "regression_metric": "gcTime", "fail_on_introduced": "critical"}
+    stderr = '[violation] max-regression: Metric "gcTime" regressed 31.0%, exceeding budget 20%.\n'
+
+    results = {r.name: r for r in parse_threshold_results(thresholds, stderr)}
+
+    assert set(results) == {"max-regression", "fail-on-introduced"}
+    assert results["max-regression"].status == "violation"
+    assert results["fail-on-introduced"].status == "pass"
