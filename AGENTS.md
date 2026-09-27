@@ -9,8 +9,8 @@ Python 3.9+, apache-airflow 2.6+ or 3.0+, pytest. Runtime dependency: Node.js
 18+ + the `sparkforensics-cli` npm package (`npm install -g sparkforensics-cli`)
 wherever the analysis runs: the worker for `SubprocessAnalyzeHook`, the SSH
 host for `SSHAnalyzeHook`. Log sources resolve an `EventLogRef` (`log_ref.py`)
-that backends consume; see `docs/architecture.md`. `deferrable=True` runs the
-SSH analysis as the SSH provider's detached remote job (architecture.md's
+that backends consume; see `ARCHITECTURE.md`. `deferrable=True` runs the
+SSH analysis as the SSH provider's detached remote job (`ARCHITECTURE.md`'s
 "Deferrable execution").
 
 ## Commands
@@ -44,9 +44,10 @@ of going public. The original multi-PR history (42 commits, 4 PRs) lives in
 indefinitely). `git blame`/`git log -p` on any line predating that date stop
 at the squash commit; check the archive repo instead.
 
-## Design docs
-- `docs/architecture.md`, `docs/api-reference.md`, `docs/runbook.md`,
-  `docs/glossary.md`, see below.
+## Docs
+- User docs: `docs/index.md` (getting started, configuration,
+  troubleshooting). Contributor docs: `CONTRIBUTING.md` (dev, tox matrix,
+  release), `ARCHITECTURE.md` (design notes).
 
 ## Maintaining this file
 

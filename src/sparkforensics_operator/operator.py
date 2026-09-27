@@ -391,7 +391,7 @@ class SparkForensicsOperator(BaseOperator):
         remote job, the synchronous path asks the backend to stop its run.
         Airflow runs no process for a task while it is deferred, so a kill,
         clear or mark-failed then reaches the job only through the next
-        try's sweep (see docs/runbook.md).
+        try's sweep (see docs/troubleshooting.md).
 
         Airflow 2 can call this on the fresh operator it resumes a deferral
         with before running any of its methods, when execution_timeout ran
