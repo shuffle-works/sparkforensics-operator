@@ -30,8 +30,21 @@ Each backend declares the reference kinds it can read from where it runs
 (`AnalyzeHook.supported_log_refs`); `AnalyzeHook.analyze()` rejects any
 other kind with an error naming what it reads, before running anything, so
 a mismatched pairing (say, `SSHAnalyzeHook` with a log the worker
-downloaded) fails fast instead of analyzing the wrong file. Both trigger
-shapes (the standalone `SparkForensicsOperator` and the
+downloaded) fails fast instead of analyzing the wrong file.
+
+A run can also be compared against an earlier one: `baseline_log_source`
+is a second `LogSourceHook`, located and cleaned up next to `log_source`,
+and the backend passes its reference to the CLI as `--baseline`. The CLI
+reads a baseline only from a path, never from a History Server, so each
+backend declares the kinds it can pass that way
+(`AnalyzeHook.supported_baseline_refs`: `LocalEventLog` on the worker,
+`RemoteEventLog` on the SSH host) and `analyze()` or the deferrable
+submit step rejects any other before running anything. The comparison
+itself, and the budgets on it, are the CLI's. Which run is the baseline
+is the DAG author's choice, made through that log source: the operator
+keeps no state across DAG runs.
+
+Both trigger shapes (the standalone `SparkForensicsOperator` and the
 `spark_forensics_callback` `on_success_callback` factory) converge on one function,
 `operator.run_spark_forensics(context, ...)`, so there is exactly one
 execute-analyze-persist-notify-threshold code path to maintain. Notify
@@ -103,15 +116,16 @@ breach that raises still gets a notification out first.
   convention shared by `filesystem.py`/`sftp.py`, and the owned-temp-dir
   bookkeeping (create if `dest_dir` is unset, `rmtree` on cleanup/error if
   owned) shared by `sftp.py`/`history_server.py`.
-- `hooks/analyze/base.py`, `AnalyzeHook`: `analyze(log_ref, thresholds)`
-  checks the reference against `supported_log_refs` (`check_log_ref()`),
-  then calls the backend's `_analyze()`. `DeferrableAnalyzeHook` adds the
+- `hooks/analyze/base.py`, `AnalyzeHook`: `analyze(log_ref, thresholds,
+  baseline_ref=None)` checks the reference against `supported_log_refs`
+  (`check_log_ref()`) and any baseline against `supported_baseline_refs`
+  (`check_baseline_ref()`), then calls the backend's `_analyze()`. `DeferrableAnalyzeHook` adds the
   detached-job interface the deferrable mode drives (`submit`,
   `trigger_for`, `defer_timeout`, `collect`, `abandon`); see "Deferrable
   execution" below.
 - `hooks/analyze/_cli.py`, the CLI contract every backend shares: argument
   building for each reference kind (a positional path, or
-  `--shs-base-url`/`--app-id`/`--attempt-id`), threshold flags, exit-code
+  `--shs-base-url`/`--app-id`/`--attempt-id`), `--baseline`, threshold flags, exit-code
   handling (0/1/3 usable, 2 and anything else raise), and building the
   `Report` from the JSON report and stderr threshold lines. Backends only
   differ in how they run the command and collect its output.
@@ -195,7 +209,7 @@ worker slot while the CLI runs on the SSH host:
 ```
 worker:     execute()  locate log_ref -> backend.submit() -> defer(trigger_for(job), kwargs)
 triggerer:  SSHRemoteJobTrigger polls exit_code, streams stdout.log
-worker:     execute_complete(event, job, log_ref, report_dest, thresholds)
+worker:     execute_complete(event, job, log_ref, report_dest, thresholds, baseline_log_ref)
               -> backend.collect()  read stderr + report.json, remove the job dir
               -> handle_report()    same persist/notify/threshold code as a sync run
 ```
@@ -218,8 +232,9 @@ survives. Everything `execute_complete()` needs travels in the resume
 kwargs, as JSON-native values that Airflow 2's `BaseSerialization` and
 Airflow 3's serde both round-trip: the job dict (connection id, CLI
 binary, `timeout`, `poll_interval`, the job id, the submission time and
-every remote path), the log reference as a dict, the
-rendered `report_dest` and the thresholds the job was submitted with. The
+every remote path), the log reference as a dict (and the baseline's, when
+there is one), the rendered `report_dest` and the thresholds the job was
+submitted with. The
 job dict and the log reference are built from the rendered hooks, so
 templated hook arguments cross the deferral as the values the job ran
 with. The notifier, `on_threshold_breach` and `report_url_template` come
@@ -319,7 +334,7 @@ synchronous.
 Hook arguments are Jinja templates, rendered by Airflow's own nested
 template-field mechanism, the same one used for any object assigned to a
 templated operator field. `SparkForensicsOperator.template_fields` is
-`("report_dest", "log_source", "backend")`, and each hook class declares
+`("report_dest", "log_source", "backend", "baseline_log_source")`, and each hook class declares
 the attributes it templates in its own `template_fields`; Airflow renders
 those in place, on Airflow 2 and 3 alike. There is one mechanism, and no
 hook formats a string itself. The earlier `{run_id}`-style `str.format`
@@ -329,7 +344,7 @@ one is rejected with an error naming the Jinja replacement.
 Three details keep this safe.
 
 - `render_template_fields()` gives the task its own shallow copy of
-  `log_source` and `backend` before rendering, because Airflow renders in
+  `log_source`, `baseline_log_source` and `backend` before rendering, because Airflow renders in
   place and the same hook instance is often shared by several tasks or by
   every mapped instance.
 - The log-source method is `locate()`, not `resolve()`. Airflow 3's
@@ -359,7 +374,12 @@ Before notifying and before any threshold breach raises,
 `handle_report()` pushes a summary under the `sparkforensics_summary`
 XCom key: the schema version, the destination, the report URL, the
 impact-band counts, whether the run violated a threshold, the breached
-and inconclusive threshold names, and the CLI exit code. Downstream tasks
+and inconclusive threshold names, and the CLI exit code. A run compared
+against a baseline adds a `comparison` entry: the direction the CLI
+computed for one metric (`regression_metric`, wall-clock by default) as
+the verdict, the comparison's confidence and reason, and that metric's
+values and change in percent, taken from the CLI's comparison section.
+The full section is persisted with the report. Downstream tasks
 can branch on it without reading the report. It is built from the same
 `Report` on both the synchronous and the deferred path, and
 `return_value` stays the destination.

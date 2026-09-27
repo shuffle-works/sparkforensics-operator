@@ -17,7 +17,15 @@ THRESHOLD_CLI_FLAGS = {
     "max_skew_ratio": "--max-skew",
     "max_failed_task_rate_pct": "--max-failed-task-rate",
     "min_efficiency_pct": "--min-efficiency",
+    # The comparison budgets: the CLI accepts them only with --baseline, and
+    # --regression-metric only with --max-regression-pct.
+    "max_regression_pct": "--max-regression-pct",
+    "regression_metric": "--regression-metric",
+    "fail_on_introduced": "--fail-on-introduced",
 }
+
+# The metric --max-regression-pct checks when --regression-metric is unset.
+DEFAULT_REGRESSION_METRIC = "wallClock"
 
 # CLI's own BudgetResult['name'] values (src/cli/budgets.ts), keyed by our
 # thresholds dict's keys so parse_threshold_results can seed a "pass"
@@ -28,6 +36,8 @@ THRESHOLD_RESULT_NAMES = {
     "max_skew_ratio": "max-skew",
     "max_failed_task_rate_pct": "max-failed-task-rate",
     "min_efficiency_pct": "min-efficiency",
+    "max_regression_pct": "max-regression",
+    "fail_on_introduced": "fail-on-introduced",
 }
 
 _THRESHOLD_LINE_RE = re.compile(r"^\[(violation|inconclusive)\] ([a-z-]+): (.*)$")
@@ -51,6 +61,9 @@ class Report:
     detectors: list = field(default_factory=list)
     threshold_results: list[ThresholdResult] = field(default_factory=list)
     exit_code: int = 0
+    # The CLI's comparison section (confidence, reason, matchedCoverage,
+    # metrics, findings), present only when it ran with --baseline.
+    comparison: dict | None = None
 
     @property
     def violated(self) -> bool:
@@ -63,8 +76,13 @@ class Report:
 
 def parse_report_text(text: str) -> Report:
     """Parses the CLI's JSON report, as written to its --out file or, with
-    no --out, to stdout."""
+    no --out, to stdout. With --baseline the CLI wraps the run's own report
+    as {"candidate": <report>, "comparison": {...}}."""
     data = json.loads(text)
+    comparison = None
+    if isinstance(data, dict) and "candidate" in data and "comparison" in data:
+        comparison = data["comparison"]
+        data = data["candidate"]
     return Report(
         schema_version=data["schemaVersion"],
         summary=data["summary"],
@@ -73,6 +91,7 @@ def parse_report_text(text: str) -> Report:
         clean_checks=data["cleanChecks"],
         evidence_availability=data.get("evidenceAvailability"),
         detectors=data.get("detectors", []),
+        comparison=comparison,
     )
 
 

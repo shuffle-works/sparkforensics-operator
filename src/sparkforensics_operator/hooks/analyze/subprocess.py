@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import subprocess
 import tempfile
 from pathlib import Path
@@ -14,12 +16,14 @@ class SubprocessAnalyzeHook(AnalyzeHook):
     """Shells out to `sparkforensics-analyze <log_path> --format json --out
     <tmpfile> [threshold flags]` on the Airflow worker, or, for a
     HistoryServerApp, `--shs-base-url <url> --app-id <id>` so the CLI
-    fetches the run itself. Requires Node.js 18+ and the sparkforensics-cli
+    fetches the run itself. A baseline, when given, is a LocalEventLog
+    passed as --baseline. Requires Node.js 18+ and the sparkforensics-cli
     npm package (`npm install -g sparkforensics-cli`) installed on the
     worker, with sparkforensics-analyze resolvable on PATH (or pass
     analyze_bin=<full path>)."""
 
     supported_log_refs = (LocalEventLog, HistoryServerApp)
+    supported_baseline_refs = (LocalEventLog,)
 
     template_fields = ("analyze_bin",)
 
@@ -28,11 +32,15 @@ class SubprocessAnalyzeHook(AnalyzeHook):
         self.analyze_bin = analyze_bin
         self.timeout = timeout
 
-    def _analyze(self, log_ref: EventLogRef, thresholds: dict) -> Report:
+    def _analyze(
+        self, log_ref: EventLogRef, thresholds: dict, baseline_ref: EventLogRef | None = None
+    ) -> Report:
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
             out_path = Path(out_file.name)
 
-        args = build_cli_args(self.analyze_bin, log_ref, thresholds, out_path=out_path)
+        args = build_cli_args(
+            self.analyze_bin, log_ref, thresholds, out_path=out_path, baseline_ref=baseline_ref
+        )
 
         try:
             try:

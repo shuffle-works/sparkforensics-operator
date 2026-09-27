@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timedelta, timezone
+from pathlib import PurePosixPath
 from typing import Sequence
 
 from sparkforensics_operator import sinks
@@ -13,9 +14,14 @@ from sparkforensics_operator._compat import (
     current_context,
 )
 from sparkforensics_operator.exceptions import ThresholdBreached
-from sparkforensics_operator.hooks.analyze.base import DeferrableAnalyzeHook
+from sparkforensics_operator.hooks.analyze.base import AnalyzeHook, DeferrableAnalyzeHook
 from sparkforensics_operator.links import ReportLink
-from sparkforensics_operator.log_ref import log_ref_from_dict, log_ref_to_dict
+from sparkforensics_operator.log_ref import (
+    LocalEventLog,
+    RemoteEventLog,
+    log_ref_from_dict,
+    log_ref_to_dict,
+)
 from sparkforensics_operator.summary import (
     SUMMARY_XCOM_KEY,
     build_summary,
@@ -24,6 +30,10 @@ from sparkforensics_operator.summary import (
 )
 
 _THRESHOLD_BREACH_ACTIONS = ("fail", "warn", "ignore")
+# The thresholds the CLI evaluates only against a baseline (--baseline).
+COMPARISON_THRESHOLDS = ("max_regression_pct", "regression_metric", "fail_on_introduced")
+# fail_on_introduced's values: an impact band, or any introduced finding.
+_INTRODUCED_BANDS = ("critical", "warning", "info", "all")
 # The XCom a deferrable run keeps its submitted job under, until the task
 # instance's next try clears it.
 REMOTE_JOB_XCOM_KEY = "sparkforensics_remote_job"
@@ -33,6 +43,68 @@ def _validate_on_threshold_breach(value: str) -> None:
     if value not in _THRESHOLD_BREACH_ACTIONS:
         raise ValueError(
             f"on_threshold_breach must be one of {_THRESHOLD_BREACH_ACTIONS}, got {value!r}"
+        )
+
+
+def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dict) -> None:
+    """Raise ValueError for the comparison settings the CLI would reject
+    or could never evaluate: a comparison threshold without a baseline,
+    regression_metric without max_regression_pct, an unknown
+    fail_on_introduced band, or a baseline for a backend that cannot pass
+    one to the CLI."""
+    if baseline_log_source is None:
+        orphans = [name for name in COMPARISON_THRESHOLDS if thresholds.get(name) is not None]
+        if orphans:
+            raise ValueError(
+                f"{', '.join(orphans)} compare the run against a baseline, so they need "
+                "baseline_log_source: a log source for the run to compare against."
+            )
+    if thresholds.get("regression_metric") is not None and thresholds.get("max_regression_pct") is None:
+        raise ValueError(
+            "regression_metric needs max_regression_pct: it names the metric that "
+            "max_regression_pct budgets."
+        )
+    band = thresholds.get("fail_on_introduced")
+    if band is not None and band not in _INTRODUCED_BANDS:
+        raise ValueError(f"fail_on_introduced must be one of {_INTRODUCED_BANDS}, got {band!r}")
+    if (
+        baseline_log_source is not None
+        and isinstance(backend, AnalyzeHook)
+        and not backend.supported_baseline_refs
+    ):
+        raise ValueError(
+            f"{type(backend).__name__} cannot compare a run against a baseline; drop "
+            "baseline_log_source, or use SubprocessAnalyzeHook or SSHAnalyzeHook."
+        )
+
+
+def _baseline_kwargs(baseline_ref) -> dict:
+    # Passed only when there is one, so a backend without baseline support
+    # is called exactly as before.
+    return {} if baseline_ref is None else {"baseline_ref": baseline_ref}
+
+
+def _check_baseline_is_another_log(log_ref, baseline_ref) -> None:
+    """Raise AirflowException when the baseline is the log under analysis,
+    or one's path contains the other's: the run would be compared against
+    itself, or against a log that staging one overwrote with the other."""
+    overlaps = baseline_ref == log_ref
+    if isinstance(log_ref, (LocalEventLog, RemoteEventLog)) and type(baseline_ref) is type(log_ref):
+        same_host = not isinstance(log_ref, RemoteEventLog) or (
+            baseline_ref.ssh_conn_id == log_ref.ssh_conn_id
+        )
+        log_path, baseline_path = PurePosixPath(log_ref.path), PurePosixPath(baseline_ref.path)
+        overlaps = same_host and (
+            log_path == baseline_path
+            or log_path in baseline_path.parents
+            or baseline_path in log_path.parents
+        )
+    if overlaps:
+        raise AirflowException(
+            f"The baseline ({baseline_ref.describe()}) overlaps the log under analysis "
+            f"({log_ref.describe()}), so the run would be compared against itself. Point "
+            "baseline_log_source at another run's log, or give the two log sources "
+            "different dest_dirs."
         )
 
 
@@ -48,16 +120,23 @@ def run_spark_forensics(
     log,
     aws_conn_id: str | None = None,
     report_url_template: str | None = None,
+    baseline_log_source=None,
 ) -> str:
     """The one code path shared by SparkForensicsOperator.execute() and the
-    spark_forensics_callback() factory."""
+    spark_forensics_callback() factory. baseline_log_source, if given,
+    resolves the run to compare against, the same way log_source resolves
+    the run under analysis."""
     _validate_on_threshold_breach(on_threshold_breach)
     # Where the log is (log_source) and where it is analyzed (backend) are
     # independent: the reference may point at a file the worker fetched, a
     # path on an SSH host, or a History Server app the backend reads itself.
     log_ref = log_source.locate(context)
+    baseline_ref = None
     try:
-        report = backend.analyze(log_ref, thresholds)
+        if baseline_log_source is not None:
+            baseline_ref = baseline_log_source.locate(context)
+            _check_baseline_is_another_log(log_ref, baseline_ref)
+        report = backend.analyze(log_ref, thresholds, **_baseline_kwargs(baseline_ref))
         return handle_report(
             report,
             report_dest=report_dest,
@@ -67,9 +146,14 @@ def run_spark_forensics(
             aws_conn_id=aws_conn_id,
             ti=context.get("ti"),
             report_url_template=report_url_template,
+            regression_metric=thresholds.get("regression_metric"),
         )
     finally:
-        log_source.cleanup(log_ref)
+        try:
+            if baseline_ref is not None:
+                baseline_log_source.cleanup(baseline_ref)
+        finally:
+            log_source.cleanup(log_ref)
 
 
 def handle_report(
@@ -82,12 +166,14 @@ def handle_report(
     aws_conn_id: str | None = None,
     ti=None,
     report_url_template: str | None = None,
+    regression_metric: str | None = None,
 ) -> str:
     """Persists the report, logs inconclusive thresholds, pushes the summary
     XCom (to ti, when there is one), notifies, and applies
     on_threshold_breach. Shared by run_spark_forensics and the deferrable
     operator's resume step, so a deferred run acts on its report exactly as
-    a synchronous one does."""
+    a synchronous one does. regression_metric is the comparison metric the
+    summary XCom reports on, for a report compared against a baseline."""
     report_json = {
         "schemaVersion": report.schema_version,
         "summary": report.summary,
@@ -101,6 +187,8 @@ def handle_report(
             for r in report.threshold_results
         ],
     }
+    if report.comparison is not None:
+        report_json["comparison"] = report.comparison
     destination = sinks.persist(report_json, report_dest, aws_conn_id=aws_conn_id)
 
     for result in report.threshold_results:
@@ -146,6 +234,7 @@ def handle_report(
                 destination=destination,
                 report_url=render_report_url(destination, report_url_template),
                 violated=violated,
+                regression_metric=regression_metric,
             ),
         )
 
@@ -184,13 +273,20 @@ class SparkForensicsOperator(BaseOperator):
     Airflow's [operators] default_deferrable, applied only when the backend
     can defer.
 
+    baseline_log_source, if set, is a LogSourceHook for an earlier run to
+    compare against (a path template on prev_ds, an XCom pull, ...); the
+    backend passes it to the CLI as --baseline, which reads a file path
+    only, so it must resolve to one the backend can read where the analysis
+    runs. max_regression_pct, regression_metric and fail_on_introduced
+    budget that comparison and need it.
+
     report_dest, and each hook's own template_fields, are Jinja templates
     Airflow renders before execute(). report_url_template, if set, turns the
     persisted destination into the browser URL ReportLink shows; each run
     also pushes a summary XCom (summary.SUMMARY_XCOM_KEY)."""
 
     operator_extra_links = (ReportLink(),)
-    template_fields: Sequence[str] = ("report_dest", "log_source", "backend")
+    template_fields: Sequence[str] = ("report_dest", "log_source", "backend", "baseline_log_source")
 
     def __init__(
         self,
@@ -208,10 +304,25 @@ class SparkForensicsOperator(BaseOperator):
         aws_conn_id: str | None = None,
         deferrable: bool | None = None,
         report_url_template: str | None = None,
+        baseline_log_source=None,
+        max_regression_pct: float | None = None,
+        regression_metric: str | None = None,
+        fail_on_introduced: str | None = None,
         **kwargs,
     ):
+        thresholds = {
+            "max_runtime_ms": max_runtime_ms,
+            "max_spill_gb": max_spill_gb,
+            "max_skew_ratio": max_skew_ratio,
+            "max_failed_task_rate_pct": max_failed_task_rate_pct,
+            "min_efficiency_pct": min_efficiency_pct,
+            "max_regression_pct": max_regression_pct,
+            "regression_metric": regression_metric,
+            "fail_on_introduced": fail_on_introduced,
+        }
         # Validate before super().__init__() to avoid DAG registration side effects if construction will fail.
         _validate_on_threshold_breach(on_threshold_breach)
+        validate_comparison_thresholds(baseline_log_source, backend, thresholds)
         if report_url_template is not None:
             validate_report_url_template(report_url_template)
         can_defer = isinstance(backend, DeferrableAnalyzeHook)
@@ -236,13 +347,8 @@ class SparkForensicsOperator(BaseOperator):
         self.log_source = log_source
         self.backend = backend
         self.report_dest = report_dest
-        self.thresholds = {
-            "max_runtime_ms": max_runtime_ms,
-            "max_spill_gb": max_spill_gb,
-            "max_skew_ratio": max_skew_ratio,
-            "max_failed_task_rate_pct": max_failed_task_rate_pct,
-            "min_efficiency_pct": min_efficiency_pct,
-        }
+        self.baseline_log_source = baseline_log_source
+        self.thresholds = thresholds
         self.on_threshold_breach = on_threshold_breach
         self.notifier = notifier
         self.aws_conn_id = aws_conn_id
@@ -264,6 +370,7 @@ class SparkForensicsOperator(BaseOperator):
         # test` runs them in one process, so each task renders its own copy.
         self.log_source = copy.copy(self.log_source)
         self.backend = copy.copy(self.backend)
+        self.baseline_log_source = copy.copy(self.baseline_log_source)
         super().render_template_fields(context, jinja_env)
 
     def _record_persisted(self, destination: str | None) -> None:
@@ -286,6 +393,7 @@ class SparkForensicsOperator(BaseOperator):
                 log=self.log,
                 aws_conn_id=self.aws_conn_id,
                 report_url_template=self.report_url_template,
+                baseline_log_source=self.baseline_log_source,
             )
         except ThresholdBreached as breach:
             self._record_persisted(breach.destination)
@@ -295,10 +403,17 @@ class SparkForensicsOperator(BaseOperator):
 
     def _submit_and_defer(self, context: dict) -> None:
         log_ref = self.log_source.locate(context)
+        baseline_ref = None
         job = None
         try:
             self.backend.check_log_ref(log_ref)
-            job = self.backend.submit(log_ref, self.thresholds, context)
+            if self.baseline_log_source is not None:
+                baseline_ref = self.baseline_log_source.locate(context)
+                _check_baseline_is_another_log(log_ref, baseline_ref)
+                self.backend.check_baseline_ref(baseline_ref)
+            job = self.backend.submit(
+                log_ref, self.thresholds, context, **_baseline_kwargs(baseline_ref)
+            )
             self._kill_job = job
             # Airflow replaces the resume kwargs with an error when the
             # deferral fails or times out, and on_kill() gets no kwargs at
@@ -313,15 +428,18 @@ class SparkForensicsOperator(BaseOperator):
             # DAG edited while the task is deferred can't pair this job's
             # output with other settings. Only notifier and
             # on_threshold_breach come from the fresh instance.
+            resume_kwargs = {
+                "job": job,
+                "log_ref": log_ref_to_dict(log_ref),
+                "report_dest": self.report_dest,
+                "thresholds": dict(self.thresholds),
+            }
+            if baseline_ref is not None:
+                resume_kwargs["baseline_log_ref"] = log_ref_to_dict(baseline_ref)
             self.defer(
                 trigger=self.backend.trigger_for(job),
                 method_name="execute_complete",
-                kwargs={
-                    "job": job,
-                    "log_ref": log_ref_to_dict(log_ref),
-                    "report_dest": self.report_dest,
-                    "thresholds": dict(self.thresholds),
-                },
+                kwargs=resume_kwargs,
                 timeout=self._defer_timeout(job, context),
             )
         except TaskDeferred:
@@ -331,7 +449,11 @@ class SparkForensicsOperator(BaseOperator):
             # timeout or kill reaches on_kill(), which stops it instead.
             if job is not None and isinstance(e, Exception):
                 self._abandon_quietly(context, job)
-            self.log_source.cleanup(log_ref)
+            try:
+                if baseline_ref is not None:
+                    self.baseline_log_source.cleanup(baseline_ref)
+            finally:
+                self.log_source.cleanup(log_ref)
             raise
 
     def _defer_timeout(self, job: dict, context: dict) -> timedelta:
@@ -354,6 +476,7 @@ class SparkForensicsOperator(BaseOperator):
         log_ref: dict,
         report_dest: str,
         thresholds: dict,
+        baseline_log_ref: dict | None = None,
     ) -> str:
         """Resumes a deferred run on a worker once the trigger fires: reads
         the report back and acts on it exactly as execute() does."""
@@ -365,6 +488,7 @@ class SparkForensicsOperator(BaseOperator):
             self.log.info("[remote] %s", line)
 
         resolved_ref = log_ref_from_dict(log_ref)
+        baseline_ref = log_ref_from_dict(baseline_log_ref) if baseline_log_ref else None
         try:
             report = self.backend.collect(job, event, resolved_ref, thresholds)
             destination = handle_report(
@@ -376,12 +500,17 @@ class SparkForensicsOperator(BaseOperator):
                 aws_conn_id=self.aws_conn_id,
                 ti=context.get("ti"),
                 report_url_template=self.report_url_template,
+                regression_metric=thresholds.get("regression_metric"),
             )
         except ThresholdBreached as breach:
             self._record_persisted(breach.destination)
             raise
         finally:
-            self.log_source.cleanup(resolved_ref)
+            try:
+                if baseline_ref is not None and self.baseline_log_source is not None:
+                    self.baseline_log_source.cleanup(baseline_ref)
+            finally:
+                self.log_source.cleanup(resolved_ref)
         self._record_persisted(destination)
         return destination
 

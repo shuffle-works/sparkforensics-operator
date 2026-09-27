@@ -538,3 +538,19 @@ def test_a_timeout_while_on_the_ssh_host_is_not_rewrapped(host):
     host.fail_exec_matching = None
     hook.abandon(ti_context())
 
+
+
+def test_deferred_run_passes_the_baseline_path_and_reads_the_comparison(host):
+    comparison = {"confidence": "ok", "reason": None, "metrics": [], "findings": {}}
+    wrapped = json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison})
+    host.fake_cli(f"printf '%s' '{wrapped}' | emit\n")
+    hook = _hook()
+    thresholds = {"max_regression_pct": 20}
+
+    job = hook.submit(LOG, thresholds, ti_context(), baseline_ref=RemoteEventLog(CONN, "/logs/app-0"))
+    event = run_trigger(hook.trigger_for(job))
+    report = hook.collect(job, event, LOG, thresholds)
+
+    assert host.argv()[:5] == ["/logs/app-1", "--format", "json", "--baseline", "/logs/app-0"]
+    assert report.comparison == comparison
+    assert [r.name for r in report.threshold_results] == ["max-regression"]

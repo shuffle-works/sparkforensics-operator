@@ -517,3 +517,95 @@ def test_default_deferrable_config_runs_synchronously_when_the_backend_cannot_de
         op = _operator(CannotDeferHereHook(), tmp_path, deferrable=None)
 
     assert op.deferrable is False
+
+
+# Comparing against a baseline run.
+
+BASELINE = RemoteEventLog("onprem_ssh", "/logs/app-0")
+
+
+class FakeComparingHook(FakeDeferrableHook):
+    supported_baseline_refs = (RemoteEventLog,)
+
+    def submit(self, log_ref, thresholds, context, baseline_ref=None):
+        self.submitted.append((log_ref, thresholds, baseline_ref))
+        return {"job_id": "job-1", "timeout": 900}
+
+
+def _comparing_operator(backend, tmp_path, baseline=BASELINE, **kwargs):
+    baseline_log_source = MagicMock()
+    baseline_log_source.locate.return_value = baseline
+    return _operator(backend, tmp_path, baseline_log_source=baseline_log_source, **kwargs)
+
+
+def test_deferrable_execute_submits_the_baseline_and_carries_it_across_the_deferral(tmp_path):
+    backend = FakeComparingHook()
+    op = _comparing_operator(backend, tmp_path, max_regression_pct=20)
+
+    deferred = _defer(op)
+
+    assert backend.submitted == [(LOG, op.thresholds, BASELINE)]
+    assert deferred.kwargs["baseline_log_ref"] == {"kind": "remote", "ssh_conn_id": "onprem_ssh", "path": "/logs/app-0"}
+    assert deferred.kwargs["thresholds"]["max_regression_pct"] == 20
+
+
+def test_a_baseline_the_backend_cannot_read_fails_before_submitting_and_cleans_up(tmp_path):
+    backend = FakeComparingHook()
+    op = _comparing_operator(backend, tmp_path, baseline=HistoryServerApp(base_url="http://localhost:18080", app_id="app-0"))
+
+    with pytest.raises(AirflowException, match="History Server application cannot be a baseline"):
+        op.execute({})
+
+    assert backend.submitted == []
+    op.baseline_log_source.cleanup.assert_called_once()
+    op.log_source.cleanup.assert_called_once_with(LOG)
+
+
+@pytest.mark.parametrize("baseline", [
+    LOG,
+    RemoteEventLog("onprem_ssh", "/logs/app-1/events_1_app-1"),
+    RemoteEventLog("onprem_ssh", "/logs"),
+    HistoryServerApp(base_url="http://localhost:18080", app_id="app-1"),
+])
+def test_a_baseline_that_overlaps_the_log_fails_before_submitting_and_cleans_up(tmp_path, baseline):
+    backend = FakeComparingHook()
+    op = _comparing_operator(backend, tmp_path, baseline=baseline)
+    if isinstance(baseline, HistoryServerApp):
+        op.log_source.locate.return_value = baseline
+
+    with pytest.raises(AirflowException, match="compared against itself"):
+        op.execute({})
+
+    assert backend.submitted == []
+    op.baseline_log_source.cleanup.assert_called_once_with(baseline)
+    op.log_source.cleanup.assert_called_once()
+
+
+def test_the_same_path_on_another_ssh_host_is_a_valid_baseline(tmp_path):
+    backend = FakeComparingHook()
+    op = _comparing_operator(backend, tmp_path, baseline=RemoteEventLog("other_ssh", LOG.path))
+
+    _defer(op)
+
+    assert backend.submitted == [(LOG, op.thresholds, RemoteEventLog("other_ssh", LOG.path))]
+
+
+@needs_resume_execution
+def test_resume_reports_the_comparison_and_cleans_up_the_baseline(tmp_path):
+    first = _comparing_operator(FakeComparingHook(), tmp_path, max_regression_pct=20, regression_metric="gcTime")
+    kwargs = _serialize_round_trip(_defer(first).kwargs)
+    report = _report()
+    report.comparison = {
+        "confidence": "ok", "reason": None,
+        "metrics": [{"key": "gcTime", "baseline": 10, "candidate": 15, "delta": 5, "direction": "regression"}],
+    }
+    fresh = _comparing_operator(FakeComparingHook(report), tmp_path, max_regression_pct=20, regression_metric="gcTime")
+    ti = _TI()
+
+    fresh.resume_execution("execute_complete", {"event": _event(), **kwargs}, {"ti": ti})
+
+    assert ti.xcoms["sparkforensics_summary"]["comparison"]["metric"] == "gcTime"
+    assert ti.xcoms["sparkforensics_summary"]["comparison"]["regression_pct"] == 50.0
+    assert json.loads((tmp_path / "report.json").read_text())["comparison"] == report.comparison
+    fresh.baseline_log_source.cleanup.assert_called_once_with(BASELINE)
+    fresh.log_source.cleanup.assert_called_once_with(LOG)

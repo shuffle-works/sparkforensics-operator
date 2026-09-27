@@ -47,8 +47,9 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
     Node.js 18+ and the sparkforensics-cli npm package. Reads a
     RemoteEventLog on the same ssh_conn_id (RemotePathLogSourceHook) or a
     HistoryServerApp (HistoryServerAppLogSourceHook), whose base_url is
-    resolved on that host, e.g. http://localhost:18080. Requires the `ssh`
-    extra.
+    resolved on that host, e.g. http://localhost:18080. A baseline, when
+    given, is a RemoteEventLog on the same ssh_conn_id, passed as
+    --baseline. Requires the `ssh` extra.
 
     With SparkForensicsOperator(deferrable=True) the CLI instead runs as a
     detached job on that host (the SSH provider's remote-job wrapper, under
@@ -58,6 +59,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
     $HOME/.sparkforensics/jobs of the SSH user."""
 
     supported_log_refs = (RemoteEventLog, HistoryServerApp)
+    supported_baseline_refs = (RemoteEventLog,)
     template_fields = ("ssh_conn_id", "analyze_bin", "remote_base_dir")
 
     def __init__(
@@ -112,13 +114,26 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
                 "for the log source and the backend."
             )
 
-    def _analyze(self, log_ref: EventLogRef, thresholds: dict) -> Report:
+    def check_baseline_ref(self, baseline_ref: EventLogRef) -> None:
+        super().check_baseline_ref(baseline_ref)
+        if baseline_ref.ssh_conn_id != self.ssh_conn_id:
+            raise AirflowException(
+                f"SSHAnalyzeHook(ssh_conn_id={self.ssh_conn_id!r}) cannot compare against a "
+                f"baseline on a different SSH host ({baseline_ref.describe()}). Use the same "
+                "ssh_conn_id for the baseline log source and the backend."
+            )
+
+    def _analyze(
+        self, log_ref: EventLogRef, thresholds: dict, baseline_ref: EventLogRef | None = None
+    ) -> Report:
         # Every argument is shlex-quoted for the remote POSIX shell, so a
         # rendered path, app id or analyze_bin can't inject shell syntax.
         # Closing a non-PTY channel doesn't signal the remote process, so
         # coreutils `timeout` bounds it on the host itself, and the command
         # reports its pid on the channel so on_kill() can stop it.
-        argv = _remote_job.sync_cli_argv(self.analyze_bin, log_ref, thresholds, self.timeout)
+        argv = _remote_job.sync_cli_argv(
+            self.analyze_bin, log_ref, thresholds, self.timeout, baseline_ref=baseline_ref
+        )
         self._sync_argv = argv
         try:
             returncode, stdout, stderr = self._run_remote(_remote_job.sync_analysis_command(argv), log_ref)
@@ -178,7 +193,13 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
     # in the job dict, not on self: the operator that resumes is rebuilt
     # from the DAG file, and its backend is not the one that submitted.
 
-    def submit(self, log_ref: EventLogRef, thresholds: dict, context: Any) -> dict:
+    def submit(
+        self,
+        log_ref: EventLogRef,
+        thresholds: dict,
+        context: Any,
+        baseline_ref: EventLogRef | None = None,
+    ) -> dict:
         from airflow.providers.ssh.utils.remote_job import generate_job_id
 
         ti = context["ti"]
@@ -207,7 +228,8 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
             report_file = f"{scope_dir}/{job_id}/{_remote_job.REPORT_FILE_NAME}"
             stderr_file = f"{scope_dir}/{job_id}/{_remote_job.STDERR_FILE_NAME}"
             command = _remote_job.analysis_command(
-                self.analyze_bin, log_ref, thresholds, self.timeout, report_file, stderr_file
+                self.analyze_bin, log_ref, thresholds, self.timeout, report_file, stderr_file,
+                baseline_ref=baseline_ref,
             )
             submit, paths = _remote_job.submit_command(command, job_id, scope_dir)
             self._checked(client, submit, "submitting the remote analysis job")

@@ -40,6 +40,10 @@ SparkForensicsOperator(
     aws_conn_id: str | None = None,          # non-default Airflow AWS connection for s3:// report_dest
     deferrable: bool | None = None,          # see "Deferrable execution"
     report_url_template: str | None = None,  # see "Report link and report URL"
+    baseline_log_source: LogSourceHook | None = None,  # see "Comparing against a baseline run"
+    max_regression_pct: float | None = None,
+    regression_metric: str | None = None,
+    fail_on_introduced: str | None = None,   # "critical" | "warning" | "info" | "all"
     **base_operator_kwargs,
 )
 ```
@@ -49,16 +53,16 @@ All arguments are keyword-only.
 - `log_source` says where the event log comes from, and `backend` where
   the analysis runs. See [log sources](#log-sources) and
   [analyze backends](#analyze-backends).
-- The five threshold arguments are described under
+- The threshold arguments are described under
   [Thresholds](#thresholds). Only the ones you set are enforced.
 - `on_threshold_breach` decides what a violated threshold does: `"fail"`
   raises `ThresholdBreached`, `"warn"` logs a warning, `"ignore"` does
   nothing. Any other value raises `ValueError` when the DAG is parsed.
 - `notifier` is an optional [Notifier](#notifier).
 
-`template_fields` is `("report_dest", "log_source", "backend")`: Airflow
-renders `report_dest` and every [templated hook argument](#templated-hook-arguments)
-before `execute()`.
+`template_fields` is `("report_dest", "log_source", "backend",
+"baseline_log_source")`: Airflow renders `report_dest` and every
+[templated hook argument](#templated-hook-arguments) before `execute()`.
 
 The operator returns the destination it persisted the report to, which
 Airflow pushes to XCom as `return_value`. See
@@ -118,6 +122,54 @@ SparkForensicsOperator(
 )
 ```
 
+### Comparing against a baseline run
+
+`baseline_log_source` names an earlier run to compare this one against,
+the baseline; the run under analysis is the candidate. It takes any
+`LogSourceHook` and is rendered like `log_source`, so the DAG author
+decides which run is the baseline: a path template on `prev_ds`, an XCom
+pull, a fixed reference run. The operator keeps no state across DAG runs
+and never picks a baseline by itself.
+
+```python
+check_spark_job = SparkForensicsOperator(
+    task_id="check_spark_job",
+    log_source=FilesystemLogSourceHook(path_template="/mnt/spark-logs/{{ ds }}/eventlog"),
+    baseline_log_source=FilesystemLogSourceHook(path_template="/mnt/spark-logs/{{ prev_ds }}/eventlog"),
+    backend=SubprocessAnalyzeHook(),
+    report_dest="s3://reports/{{ run_id }}/report.json",
+    max_regression_pct=20,                     # wall-clock, unless regression_metric says otherwise
+    fail_on_introduced="critical",
+)
+```
+
+Most log sources work as a baseline. With `SubprocessAnalyzeHook`, any
+hook that resolves to a `LocalEventLog` does: `FilesystemLogSourceHook`,
+`XComLogSourceHook`, `SFTPLogSourceHook`, and
+`HistoryServerLogSourceHook`, which fetches the baseline's log from a
+Spark History Server. With `SSHAnalyzeHook`, `RemotePathLogSourceHook`
+does, as a `RemoteEventLog` on the backend's own `ssh_conn_id`. The one
+exception is `HistoryServerAppLogSourceHook`: the backend passes the
+baseline to `sparkforensics-analyze --baseline`, which reads an event log
+file or rolling-log directory and cannot fetch from a History Server, so
+its unfetched `HistoryServerApp` reference fails with `AirflowException`
+before the CLI runs, naming the hook to use instead. The log under
+analysis has no such limit: a `HistoryServerApp` candidate with a path
+baseline works. A baseline that is the log under analysis, or whose
+path contains or sits inside it (on the same host), also fails with
+`AirflowException` before the CLI runs, since the run would be compared
+against itself. That is what happens when two `FilesystemLogSourceHook`s
+or `SFTPLogSourceHook`s share one `dest_dir` for same-named logs, so give
+each its own. `deferrable=True` works too; the resolved baseline crosses
+the deferral with the rest of the resume kwargs.
+
+`max_regression_pct`, `regression_metric` and `fail_on_introduced` (see
+[Thresholds](#thresholds)) budget the comparison. Without
+`baseline_log_source`, any of them raises `ValueError` when the DAG is
+parsed. A comparison runs even with none of them set: its section lands
+in the persisted report under `comparison`, and its outcome in the
+[summary XCom](#summary-xcom).
+
 ### Killing a task
 
 `SparkForensicsOperator.on_kill()` stops the analysis when the task is
@@ -142,7 +194,8 @@ spark_forensics_callback(**kwargs) -> Callable[[dict], None]
 ```
 
 Takes the same keyword arguments as `SparkForensicsOperator` except
-`task_id` and the `BaseOperator` kwargs, and returns a callable to attach
+`task_id` and the `BaseOperator` kwargs, `baseline_log_source` and the
+comparison thresholds included, and returns a callable to attach
 as `on_success_callback` on the upstream Spark task:
 
 ```python
@@ -164,7 +217,7 @@ A callback cannot defer. `deferrable` defaults to `False` here, ignores
 
 Airflow does not render callback arguments, so the callback renders them
 itself when it runs: `report_dest` and the templated arguments of
-`log_source` and `backend`, with the upstream task's Jinja environment
+`log_source`, `baseline_log_source` and `backend`, with the upstream task's Jinja environment
 (its DAG's macros and filters) and the callback's context. Every value is
 rendered as a template string, never loaded as a template file, so a
 `report_dest` ending in `.json` works on an upstream task whose
@@ -278,12 +331,14 @@ hook. Don't define a `resolve` method: Airflow 3's templater calls
 
 - `SubprocessAnalyzeHook(analyze_bin="sparkforensics-analyze", timeout=900)`
   runs the CLI on the Airflow worker. Reads `LocalEventLog` and
-  `HistoryServerApp`. `timeout` is in seconds.
+  `HistoryServerApp`, and a `LocalEventLog` baseline. `timeout` is in
+  seconds.
 - `SSHAnalyzeHook(ssh_conn_id, analyze_bin="sparkforensics-analyze", timeout=900, remote_base_dir=None, poll_interval=5)`
   runs the CLI on the host behind `ssh_conn_id` (the same Airflow SSH
   connection `SSHOperator` uses) and reads the JSON report from its
   stdout. Reads `RemoteEventLog` on the same `ssh_conn_id` and
-  `HistoryServerApp`. `timeout` bounds the whole remote run in seconds,
+  `HistoryServerApp`, and a `RemoteEventLog` baseline on the same
+  `ssh_conn_id`. `timeout` bounds the whole remote run in seconds,
   on the worker and on the SSH host through coreutils `timeout`. Every
   argument is shell-quoted. Requires the `ssh` extra on the worker, and
   coreutils `timeout`, Node.js 18+ and `sparkforensics-cli` on the SSH
@@ -336,6 +391,15 @@ can read from where it runs, and implement `_analyze(log_ref, thresholds)
 for an unsupported kind; override it to add checks, as `SSHAnalyzeHook`
 does for the SSH host. Override `on_kill()` to stop a running analysis
 when the task is killed.
+
+A backend declares the reference kinds it can pass as `--baseline` in
+`supported_baseline_refs` (empty by default: no comparison). Such a
+backend's `_analyze()`, and `submit()` for a deferrable one, also take a
+`baseline_ref` keyword, passed only when there is a baseline and already
+checked by `check_baseline_ref()`, so a custom backend written without
+it keeps working for single-run analysis. `baseline_log_source` with a
+backend whose `supported_baseline_refs` is empty raises `ValueError` when
+the DAG is parsed.
 
 A backend that can run detached subclasses `DeferrableAnalyzeHook` and
 implements, on top of `_analyze()`:
@@ -415,6 +479,22 @@ the evaluation (upstream calls a threshold a "budget"):
 | `max_skew_ratio` | `--max-skew` | P95/median ratio |
 | `max_failed_task_rate_pct` | `--max-failed-task-rate` | percent |
 | `min_efficiency_pct` | `--min-efficiency` | percent |
+| `max_regression_pct` | `--max-regression-pct` | percent the checked metric may regress past the baseline |
+| `regression_metric` | `--regression-metric` | the metric `max_regression_pct` checks (default `wallClock`) |
+| `fail_on_introduced` | `--fail-on-introduced` | fail on a finding the baseline did not have, of this impact band (`critical`, `warning`, `info`) or `all` |
+
+The last three are comparison thresholds, budgets on the difference
+between the run and its baseline (upstream names them `max-regression`
+and `fail-on-introduced`). They need `baseline_log_source`, and
+`regression_metric` needs `max_regression_pct`, as the CLI requires; any
+other combination, or an unknown `fail_on_introduced` band, raises
+`ValueError` when the DAG is parsed. The CLI validates
+`regression_metric` itself (`wallClock`, `shuffleSpill`, `taskSkew`,
+`failedTaskRate`, `diskSpill`, `gcTime`, `executorRunTime`, and the
+volume metrics `inputBytes`, `outputBytes`, `taskCount`,
+`executorsAdded`, which it reports as inconclusive since they have no
+regression direction). A breach raises `ThresholdBreached` like any
+other threshold.
 
 Each configured threshold comes back as a pass, a violation or
 inconclusive. Inconclusive means the event log lacked the evidence the
@@ -484,6 +564,22 @@ reading the report. It is a dict:
 | `breached_thresholds` | names of violated thresholds |
 | `inconclusive_thresholds` | names of thresholds the CLI could not evaluate |
 | `exit_code` | the CLI's exit code |
+| `comparison` | only when a baseline ran: see below |
+
+`comparison` describes the run against its baseline on one metric,
+`regression_metric` (`wallClock` when unset):
+
+| key | value |
+|---|---|
+| `verdict` | the CLI's direction for the metric: `regression`, `improvement`, `unchanged`, `neutral` (a volume metric such as `inputBytes`, where more is neither better nor worse), or `unavailable` |
+| `confidence` | `ok`, or `low` when the run names differ or few stages matched, so the deltas may compare different work |
+| `reason` | why confidence is low, or `None` |
+| `metric` | the metric's key |
+| `baseline`, `candidate` | the metric's value in each run, or `None` |
+| `regression_pct` | the metric's change relative to the baseline in percent, positive when it grew; `None` when either value is missing or the baseline is 0 |
+
+Whether a regression breached a budget is in `breached_thresholds`
+(`max-regression`, `fail-on-introduced`), as for any threshold.
 
 A deferred run pushes the same summary. `return_value` stays the
 destination string.

@@ -36,6 +36,14 @@ runs as part of the DAG, right where the Spark task just ran.
   you configure are enforced, and a breach raises `ThresholdBreached`
   without consuming the task's retries, since re-running would just reach
   the same verdict.
+- Compare a run against an earlier one. `baseline_log_source` takes any
+  log source that resolves to an event log path the analysis can read
+  (`path_template="/spark-logs/{{ prev_ds }}/eventlog"`, an XCom pull),
+  and `max_regression_pct` fails the DAG when runtime, or the metric
+  `regression_metric` names, regressed past that budget.
+  `fail_on_introduced` fails it when the run gained new findings. The
+  comparison's verdict, confidence and measured regression land in the
+  summary XCom.
 - Reports persist to a local path, `file://`, or `s3://`, and a clickable
   "SparkForensics report" link shows up on the task in the Airflow UI. Set
   `report_url_template` (an S3 console URL, say) to make it open in a

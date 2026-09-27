@@ -206,3 +206,37 @@ def test_analyze_raises_a_clear_error_when_the_report_is_not_valid_json(tmp_path
     with patch("subprocess.run", side_effect=run):
         with pytest.raises(AirflowException, match="JSON report could not be parsed"):
             hook.analyze(LocalEventLog(tmp_path / "app.log"), {})
+
+
+def test_analyze_passes_a_local_baseline_and_reads_the_comparison(tmp_path):
+    hook = SubprocessAnalyzeHook()
+    comparison = {"confidence": "ok", "reason": None, "metrics": [], "findings": {}}
+    captured = {}
+
+    def run(args, capture_output, text, timeout):
+        captured["args"] = args
+        _out_path_from_args(args).write_text(json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison}))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    with patch("subprocess.run", side_effect=run):
+        report = hook.analyze(
+            LocalEventLog(tmp_path / "app-2.log"), {"max_regression_pct": 20},
+            baseline_ref=LocalEventLog(tmp_path / "app-1.log"),
+        )
+
+    args = captured["args"]
+    assert args[args.index("--baseline") + 1] == str(tmp_path / "app-1.log")
+    assert args[args.index("--max-regression-pct") + 1] == "20"
+    assert report.comparison == comparison
+    assert [r.name for r in report.threshold_results] == ["max-regression"]
+
+
+@pytest.mark.parametrize("baseline", [
+    HistoryServerApp(base_url="http://shs:18080", app_id="app-1"),
+    RemoteEventLog("onprem_ssh", "/logs/app-1"),
+])
+def test_analyze_rejects_a_baseline_that_is_not_a_worker_local_path_before_running(tmp_path, baseline):
+    with patch("subprocess.run") as run:
+        with pytest.raises(AirflowException, match="SubprocessAnalyzeHook cannot use"):
+            SubprocessAnalyzeHook().analyze(LocalEventLog(tmp_path / "app-2.log"), {}, baseline_ref=baseline)
+    run.assert_not_called()

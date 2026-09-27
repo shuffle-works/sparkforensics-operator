@@ -40,7 +40,7 @@ def host(tmp_path):
         yield host
 
 
-def _operator(report_dest, deferrable, notifier, on_threshold_breach):
+def _operator(report_dest, deferrable, notifier, on_threshold_breach, **extra):
     return SparkForensicsOperator(
         task_id="forensics",
         # Templated arguments: what crosses the deferral must be the
@@ -53,6 +53,7 @@ def _operator(report_dest, deferrable, notifier, on_threshold_breach):
         on_threshold_breach=on_threshold_breach,
         notifier=notifier,
         deferrable=deferrable,
+        **extra,
     )
 
 
@@ -69,8 +70,8 @@ def _round_trip(value):
     return BaseSerialization.deserialize(json.loads(json.dumps(BaseSerialization.serialize(value))))
 
 
-def _run_sync(report_dest, notifier, on_threshold_breach, context):
-    op = _operator(report_dest, False, notifier, on_threshold_breach)
+def _run_sync(report_dest, notifier, on_threshold_breach, context, extra):
+    op = _operator(report_dest, False, notifier, on_threshold_breach, **extra)
     op.render_template_fields(context)
     try:
         return op, op.execute(context), None
@@ -78,8 +79,8 @@ def _run_sync(report_dest, notifier, on_threshold_breach, context):
         return op, None, e
 
 
-def _run_deferred(report_dest, notifier, on_threshold_breach, context):
-    first = _operator(report_dest, True, MagicMock(), on_threshold_breach)
+def _run_deferred(report_dest, notifier, on_threshold_breach, context, extra):
+    first = _operator(report_dest, True, MagicMock(), on_threshold_breach, **extra)
     first.render_template_fields(context)
     with pytest.raises(TaskDeferred) as deferred:
         first.execute(context)
@@ -89,7 +90,7 @@ def _run_deferred(report_dest, notifier, on_threshold_breach, context):
     event = run_trigger(trigger)
     next_kwargs = {"event": event, **_round_trip(deferred.value.kwargs)}
 
-    fresh = _operator(report_dest, True, notifier, on_threshold_breach)
+    fresh = _operator(report_dest, True, notifier, on_threshold_breach, **extra)
     fresh.render_template_fields(context)
     try:
         return fresh, fresh.resume_execution(deferred.value.method_name, next_kwargs, context), None
@@ -107,14 +108,15 @@ def _without_out(argv):
     return argv[:i] + argv[i + 2:]
 
 
-@pytest.mark.parametrize("on_threshold_breach", ["warn", "fail"])
-def test_deferred_and_synchronous_runs_give_identical_results(host, tmp_path, on_threshold_breach):
+def _outcomes(host, tmp_path, on_threshold_breach, **extra):
+    """Runs the same operator input synchronously and deferred; what each
+    mode produced, with its own directory normalized away."""
     outcomes = {}
     for mode, run in (("sync", _run_sync), ("deferred", _run_deferred)):
         context = ti_context(run_id="manual__2026-01-01")
         report_dest = str(tmp_path / mode / "report.json")
         notifier = MagicMock()
-        op, result, breach = run(report_dest, notifier, on_threshold_breach, context)
+        op, result, breach = run(report_dest, notifier, on_threshold_breach, context, extra)
 
         def norm(path, mode_dir=str(tmp_path / mode)):
             return path and path.replace(mode_dir, "<dir>")
@@ -130,6 +132,12 @@ def test_deferred_and_synchronous_runs_give_identical_results(host, tmp_path, on
             "cli_argv": _without_out(host.argv()),
             "summary": {k: norm(v) if isinstance(v, str) else v for k, v in context["ti"].pushed["sparkforensics_summary"].items()},
         }
+    return outcomes
+
+
+@pytest.mark.parametrize("on_threshold_breach", ["warn", "fail"])
+def test_deferred_and_synchronous_runs_give_identical_results(host, tmp_path, on_threshold_breach):
+    outcomes = _outcomes(host, tmp_path, on_threshold_breach)
 
     assert outcomes["deferred"] == outcomes["sync"]
     persisted = json.loads(outcomes["sync"]["persisted"])
@@ -142,6 +150,53 @@ def test_deferred_and_synchronous_runs_give_identical_results(host, tmp_path, on
     assert outcomes["sync"]["cli_argv"][0] == "/logs/manual__2026-01-01"
     assert outcomes["sync"]["summary"]["breached_thresholds"] == ["max-spill"]
     # Nothing left on the host.
+    assert not any((host.home / ".sparkforensics" / "jobs").iterdir())
+
+
+COMPARISON = {
+    "confidence": "low",
+    "reason": "Run names differ, so deltas may compare different work.",
+    "matchedCoverage": 0.8,
+    "metrics": [{"key": "wallClock", "baseline": 1000, "candidate": 1300, "delta": 300, "direction": "regression"}],
+    "findings": {"introduced": [], "resolved": []},
+}
+
+
+@pytest.mark.parametrize("on_threshold_breach", ["warn", "fail"])
+def test_deferred_and_synchronous_baseline_runs_give_identical_results(tmp_path, on_threshold_breach):
+    host = LocalHost(tmp_path)
+    wrapped = json.dumps({"candidate": SAMPLE_JSON, "comparison": COMPARISON})
+    host.fake_cli(f"""\
+        printf '%s' '{wrapped}' | emit
+        echo '[violation] max-regression: Metric "wallClock" regressed 30.0%, exceeding budget 20%.' >&2
+        exit 1
+    """)
+    with host.patched():
+        outcomes = _outcomes(
+            host, tmp_path, on_threshold_breach,
+            # Templated like log_source: the rendered path crosses the deferral.
+            baseline_log_source=RemotePathLogSourceHook(
+                ssh_conn_id="{{ 'onprem' }}_ssh", path_template="/baselines/{{ run_id }}"
+            ),
+            max_regression_pct=20,
+            fail_on_introduced="critical",
+        )
+
+    assert outcomes["deferred"] == outcomes["sync"]
+    sync = outcomes["sync"]
+    assert sync["cli_argv"][:5] == ["/logs/manual__2026-01-01", "--format", "json", "--baseline", "/baselines/manual__2026-01-01"]
+    assert json.loads(sync["persisted"])["comparison"] == COMPARISON
+    assert sync["summary"]["breached_thresholds"] == ["max-regression"]
+    assert sync["summary"]["comparison"] == {
+        "verdict": "regression",
+        "confidence": "low",
+        "reason": "Run names differ, so deltas may compare different work.",
+        "metric": "wallClock",
+        "baseline": 1000,
+        "candidate": 1300,
+        "regression_pct": 30.0,
+    }
+    assert (sync["breach"] is not None) == (on_threshold_breach == "fail")
     assert not any((host.home / ".sparkforensics" / "jobs").iterdir())
 
 

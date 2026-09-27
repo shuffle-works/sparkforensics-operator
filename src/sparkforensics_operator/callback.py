@@ -6,7 +6,7 @@ from typing import Callable
 
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks._templating import task_renderer
-from sparkforensics_operator.operator import run_spark_forensics
+from sparkforensics_operator.operator import run_spark_forensics, validate_comparison_thresholds
 from sparkforensics_operator.summary import validate_report_url_template
 
 log = logging.getLogger("airflow.task")
@@ -27,6 +27,10 @@ def spark_forensics_callback(
     aws_conn_id: str | None = None,
     deferrable: bool = False,
     report_url_template: str | None = None,
+    baseline_log_source=None,
+    max_regression_pct: float | None = None,
+    regression_metric: str | None = None,
+    fail_on_introduced: str | None = None,
 ) -> Callable[[dict], None]:
     """Builds an on_success_callback for the upstream Spark task, sharing
     SparkForensicsOperator's exact execute() logic via run_spark_forensics.
@@ -39,6 +43,9 @@ def spark_forensics_callback(
 
     A callback runs outside any task, so it cannot defer: deferrable=True
     raises ValueError. Use SparkForensicsOperator(deferrable=True) instead.
+
+    baseline_log_source and the comparison thresholds work as on
+    SparkForensicsOperator.
 
     Airflow renders no callback arguments, so the callback renders
     report_dest and the hooks' template_fields itself, with the upstream
@@ -61,17 +68,24 @@ def spark_forensics_callback(
         "max_skew_ratio": max_skew_ratio,
         "max_failed_task_rate_pct": max_failed_task_rate_pct,
         "min_efficiency_pct": min_efficiency_pct,
+        "max_regression_pct": max_regression_pct,
+        "regression_metric": regression_metric,
+        "fail_on_introduced": fail_on_introduced,
     }
+    validate_comparison_thresholds(baseline_log_source, backend, thresholds)
 
     def _callback(context: dict) -> None:
         ti = context.get("ti")
         run_log_source, run_backend, run_report_dest = copy.copy(log_source), copy.copy(backend), report_dest
+        run_baseline_log_source = copy.copy(baseline_log_source)
         task = context.get("task")
         if task is not None:
             renderer = task_renderer(task)
             run_log_source = renderer.render_template(run_log_source, context)
             run_backend = renderer.render_template(run_backend, context)
             run_report_dest = renderer.render_template(run_report_dest, context)
+            if run_baseline_log_source is not None:
+                run_baseline_log_source = renderer.render_template(run_baseline_log_source, context)
         try:
             destination = run_spark_forensics(
                 context,
@@ -84,6 +98,7 @@ def spark_forensics_callback(
                 log=log,
                 aws_conn_id=aws_conn_id,
                 report_url_template=report_url_template,
+                baseline_log_source=run_baseline_log_source,
             )
         except ThresholdBreached as e:
             # on_threshold_breach="fail" (the default) makes run_spark_forensics
