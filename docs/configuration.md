@@ -143,16 +143,19 @@ check_spark_job = SparkForensicsOperator(
 )
 ```
 
-The backend passes the baseline to `sparkforensics-analyze --baseline`,
-which reads an event log file or rolling-log directory and nothing else.
-So the baseline must resolve to a path readable where the analysis runs:
-a `LocalEventLog` for `SubprocessAnalyzeHook`, a `RemoteEventLog` on the
-backend's own `ssh_conn_id` for `SSHAnalyzeHook`. Any other reference,
-including a `HistoryServerApp`, fails with `AirflowException` naming the
-problem before the CLI runs. To compare against a run on a History
-Server, fetch its log with `HistoryServerLogSourceHook` instead. The log
-under analysis has no such limit: a `HistoryServerApp` candidate with a
-path baseline works. A baseline that is the log under analysis, or whose
+Most log sources work as a baseline. With `SubprocessAnalyzeHook`, any
+hook that resolves to a `LocalEventLog` does: `FilesystemLogSourceHook`,
+`XComLogSourceHook`, `SFTPLogSourceHook`, and
+`HistoryServerLogSourceHook`, which fetches the baseline's log from a
+Spark History Server. With `SSHAnalyzeHook`, `RemotePathLogSourceHook`
+does, as a `RemoteEventLog` on the backend's own `ssh_conn_id`. The one
+exception is `HistoryServerAppLogSourceHook`: the backend passes the
+baseline to `sparkforensics-analyze --baseline`, which reads an event log
+file or rolling-log directory and cannot fetch from a History Server, so
+its unfetched `HistoryServerApp` reference fails with `AirflowException`
+before the CLI runs, naming the hook to use instead. The log under
+analysis has no such limit: a `HistoryServerApp` candidate with a path
+baseline works. A baseline that is the log under analysis, or whose
 path contains or sits inside it (on the same host), also fails with
 `AirflowException` before the CLI runs, since the run would be compared
 against itself. That is what happens when two `FilesystemLogSourceHook`s

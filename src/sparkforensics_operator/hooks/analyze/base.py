@@ -6,8 +6,19 @@ from typing import Any, Sequence
 
 from sparkforensics_operator._compat import AirflowException, BaseHook
 from sparkforensics_operator.hooks._templating import TemplatedHookMixin
-from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp
+from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, LocalEventLog, RemoteEventLog
 from sparkforensics_operator.report import Report
+
+
+# The log source to use for a History Server run's baseline instead of a
+# HistoryServerApp, per reference kind a backend can pass as --baseline.
+_HISTORY_SERVER_BASELINE_ALTERNATIVES = {
+    LocalEventLog: "fetch its log with HistoryServerLogSourceHook, which resolves to LocalEventLog",
+    RemoteEventLog: (
+        "point RemotePathLogSourceHook at its event log on the analysis host, which "
+        "resolves to RemoteEventLog"
+    ),
+}
 
 
 class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
@@ -62,13 +73,21 @@ class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
         if not self.supported_baseline_refs:
             raise AirflowException(f"{name} cannot compare a run against a baseline.")
         if isinstance(baseline_ref, HistoryServerApp):
-            problem = (
-                "a Spark History Server application cannot be a baseline: "
-                "sparkforensics-analyze --baseline reads only an event log file or "
-                "rolling-log directory, never a History Server"
+            alternatives = [
+                _HISTORY_SERVER_BASELINE_ALTERNATIVES[kind]
+                for kind in self.supported_baseline_refs
+                if kind in _HISTORY_SERVER_BASELINE_ALTERNATIVES
+            ]
+            instead = " or ".join(alternatives) or (
+                f"use a log source that resolves to {self._baseline_ref_names()}"
             )
-        else:
-            problem = f"it reads a baseline only as {self._baseline_ref_names()}"
+            raise AirflowException(
+                f"{name} cannot use {baseline_ref!r} as the baseline; a Spark History "
+                "Server application cannot be a baseline: sparkforensics-analyze "
+                "--baseline reads only an event log file or rolling-log directory, "
+                f"never a History Server. Instead, {instead}."
+            )
+        problem = f"it reads a baseline only as {self._baseline_ref_names()}"
         raise AirflowException(
             f"{name} cannot use {baseline_ref!r} as the baseline; {problem}. Point "
             "baseline_log_source at a log source that resolves to "

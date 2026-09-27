@@ -67,7 +67,38 @@ def test_a_history_server_app_is_never_a_baseline():
 
     with pytest.raises(AirflowException, match="History Server application cannot be a baseline") as e:
         _ComparesLocal().analyze(LocalEventLog(Path("/tmp/app-2.log")), {}, baseline_ref=baseline)
-    assert "resolves to LocalEventLog" in str(e.value)
+    assert "fetch its log with HistoryServerLogSourceHook, which resolves to LocalEventLog" in str(e.value)
+    assert "RemotePathLogSourceHook" not in str(e.value)
+
+
+class _ComparesRemote(AnalyzeHook):
+    supported_log_refs = (RemoteEventLog,)
+    supported_baseline_refs = (RemoteEventLog,)
+
+    def _analyze(self, log_ref, thresholds, baseline_ref=None):
+        return ("analyzed", log_ref, thresholds, baseline_ref)
+
+
+def test_a_history_server_app_baseline_points_a_remote_backend_at_remote_path_log_source_hook():
+    baseline = HistoryServerApp(base_url="http://shs:18080", app_id="app-1")
+
+    with pytest.raises(AirflowException, match="History Server application cannot be a baseline") as e:
+        _ComparesRemote().analyze(RemoteEventLog("onprem_ssh", "/logs/app-2"), {}, baseline_ref=baseline)
+    assert "point RemotePathLogSourceHook at its event log on the analysis host" in str(e.value)
+    assert "HistoryServerLogSourceHook" not in str(e.value)
+
+
+def test_a_history_server_app_baseline_names_the_kind_for_a_backend_with_no_known_replacement():
+    class _CustomRef:
+        pass
+
+    class _ComparesCustom(_LocalOnly):
+        supported_baseline_refs = (_CustomRef,)
+
+    baseline = HistoryServerApp(base_url="http://shs:18080", app_id="app-1")
+
+    with pytest.raises(AirflowException, match="Instead, use a log source that resolves to _CustomRef"):
+        _ComparesCustom().analyze(LocalEventLog(Path("/tmp/app-2.log")), {}, baseline_ref=baseline)
 
 
 def test_a_baseline_the_backend_cannot_read_names_what_it_reads():
