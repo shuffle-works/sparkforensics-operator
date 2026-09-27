@@ -152,8 +152,13 @@ including a `HistoryServerApp`, fails with `AirflowException` naming the
 problem before the CLI runs. To compare against a run on a History
 Server, fetch its log with `HistoryServerLogSourceHook` instead. The log
 under analysis has no such limit: a `HistoryServerApp` candidate with a
-path baseline works. `deferrable=True` works too; the resolved baseline
-crosses the deferral with the rest of the resume kwargs.
+path baseline works. A baseline that is the log under analysis, or whose
+path contains or sits inside it (on the same host), also fails with
+`AirflowException` before the CLI runs, since the run would be compared
+against itself. That is what happens when two `FilesystemLogSourceHook`s
+or `SFTPLogSourceHook`s share one `dest_dir` for same-named logs, so give
+each its own. `deferrable=True` works too; the resolved baseline crosses
+the deferral with the rest of the resume kwargs.
 
 `max_regression_pct`, `regression_metric` and `fail_on_introduced` (see
 [Thresholds](#thresholds)) budget the comparison. Without
