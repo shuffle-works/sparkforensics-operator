@@ -38,10 +38,8 @@ such as a Slack provider or an SMTP library, yourself.
 ## Where the analysis runs
 
 The analysis is the `sparkforensics-analyze` command from the
-`sparkforensics-cli` npm package, version 0.4.0 or newer: the operator
-reads the report schema 0.4.0 introduced and refuses an older CLI's
-report. It needs Node.js 18 or newer (the npm package declares
-`node >=18`). Install both on whichever host runs the
+`sparkforensics-cli` npm package. It needs Node.js 18 or newer (the npm
+package declares `node >=18`). Install both on whichever host runs the
 analysis, which depends on the backend you pick:
 
 - `SubprocessAnalyzeHook` runs the CLI on the Airflow worker.
@@ -53,7 +51,7 @@ analysis, which depends on the backend you pick:
 Install Node.js 18+ and the CLI on every worker that runs the task:
 
 ```bash
-npm install -g "sparkforensics-cli@>=0.4.0"
+npm install -g sparkforensics-cli
 ```
 
 `sparkforensics-analyze` must resolve on the worker's `PATH`. If it
@@ -70,8 +68,7 @@ with the `ssh` extra and network access to the SSH host.
 
 On the SSH host:
 
-- Install Node.js 18 or newer and run
-  `npm install -g "sparkforensics-cli@>=0.4.0"`
+- Install Node.js 18 or newer and run `npm install -g sparkforensics-cli`
   for the user `ssh_conn_id` logs in as.
 - Check that the binary resolves in a non-interactive session, the kind
   `SSHAnalyzeHook` opens:

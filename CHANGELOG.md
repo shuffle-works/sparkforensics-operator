@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-28
+
 ### Added
 
 - Run comparison: `baseline_log_source` on `SparkForensicsOperator` and
@@ -31,15 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Requires `sparkforensics-cli` 0.4.0 or newer. The operator reads its
-  report schema 5, where a finding's text figure is in `valueText` and its
-  `value` is always a number or `null`, and a report with an older
-  `schemaVersion` fails the task with an error naming the required CLI
-  version.
-- The persisted report and `Report` carry the `verdict` and
-  `notRunChecks` sections 0.4.0 adds (`Report.verdict`,
-  `Report.not_run_checks`). Before this, the operator persisted only the
-  sections it listed, so these two would have been dropped.
+- The operator reads report schema 5, where a finding's text figure is in
+  `valueText` and its `value` is always a number or `null`. A report with
+  an older `schemaVersion` fails the task.
+- The persisted report and `Report` carry the CLI's `verdict` and
+  `notRunChecks` sections (`Report.verdict`, `Report.not_run_checks`).
+  Before this, the operator persisted only the sections it listed, so
+  these two would have been dropped.
 
 ## [0.2.0] - 2026-09-25
 
@@ -188,7 +188,8 @@ Initial release.
 - Generic `Notifier` interface for threshold-breach alerting.
 - PyPI trusted-publishing GitHub Actions workflow (OIDC, no stored token).
 
-[Unreleased]: https://github.com/shuffle-works/sparkforensics-operator/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/shuffle-works/sparkforensics-operator/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.3.0
 [0.2.0]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.2.0
 [0.1.1]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.1.1
 [0.1.0]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.1.0
