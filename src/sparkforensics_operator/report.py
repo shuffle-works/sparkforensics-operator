@@ -1,7 +1,7 @@
 """
 Parses what the sparkforensics-analyze CLI produces: the JSON --out file
-(summary/verdict/findings/recommendations/cleanChecks/notRunChecks) and the stderr threshold
-lines (the CLI's own budget evaluation isn't in the JSON output at all: see the "Global constraints" section of the implementation plan). Threshold
+(summary/verdict/findings/recommendations/cleanChecks/notRunChecks) and the
+stderr threshold lines (the CLI's own budget evaluation isn't in the JSON output at all: see the "Global constraints" section of the implementation plan). Threshold
 logic lives entirely upstream in sparkforensics; this module only parses
 its output, so it can never drift from what the CLI actually enforces.
 """

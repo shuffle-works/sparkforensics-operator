@@ -29,10 +29,15 @@ The raised `AirflowException`'s message includes the CLI's stderr.
 
 #### "sparkforensics-analyze exited ... but its JSON report could not be parsed"
 
-The CLI exited 0, 1 or 3 but its report was not valid JSON. With
-`SSHAnalyzeHook` the usual cause is the login shell printing a banner or
-message to stdout in non-interactive sessions (an `echo` in `~/.bashrc`,
-say); make it print only for interactive shells.
+The CLI exited 0, 1 or 3 but its report was not valid JSON, or lacked a
+section the operator reads. With `SSHAnalyzeHook` the usual cause is the
+login shell printing a banner or message to stdout in non-interactive
+sessions (an `echo` in `~/.bashrc`, say); make it print only for
+interactive shells.
+
+If the message says `report schemaVersion ... is not supported`, the host
+runs a `sparkforensics-cli` older than 0.4.0. Upgrade it with
+`npm install -g "sparkforensics-cli@>=0.4.0"`.
 
 #### "sparkforensics-analyze exited with unexpected code {returncode}"
 
