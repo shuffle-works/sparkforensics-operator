@@ -1,0 +1,1 @@
+[inconclusive] run-complete: This event log never recorded an ApplicationEnd event: the capture stopped before the run finished (an in-flight job, a rotated-away log, or a cut-short capture). Findings and metrics elsewhere on this board reflect only what was captured up to that point, not the full run.

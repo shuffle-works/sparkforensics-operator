@@ -246,7 +246,7 @@ def test_missing_binary_raises_the_same_error_as_the_synchronous_path(host):
     [
         "echo 'cannot parse log' >&2; exit 2",
         "echo 'oom' >&2; exit 137",
-        "printf '%s' '{\"schemaVersion\": 3, \"summ' | emit",
+        "printf '%s' '{\"schemaVersion\": 5, \"summ' | emit",
         "exit 0",
     ],
     ids=["exit-2", "unexpected-exit", "truncated-report", "no-report"],

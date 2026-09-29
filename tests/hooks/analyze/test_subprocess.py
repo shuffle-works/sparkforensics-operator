@@ -10,11 +10,15 @@ from sparkforensics_operator.hooks.analyze.subprocess import SubprocessAnalyzeHo
 from sparkforensics_operator.log_ref import HistoryServerApp, LocalEventLog, RemoteEventLog
 
 SAMPLE_JSON = {
-    "schemaVersion": 3,
+    "schemaVersion": 5,
     "summary": {"impactBandCounts": {"critical": 0, "warning": 0, "info": 0}},
+    "verdict": {"title": "No issues found", "summary": [], "steps": [], "remainingPlaces": 0, "copyText": None},
+    "evidenceAvailability": None,
+    "detectors": [],
     "findings": [],
     "recommendations": [],
     "cleanChecks": [],
+    "notRunChecks": [],
 }
 
 
@@ -49,7 +53,7 @@ def test_analyze_builds_cli_args_and_parses_the_out_file(tmp_path):
     assert "--format" in args and args[args.index("--format") + 1] == "json"
     assert "--max-runtime" in args and args[args.index("--max-runtime") + 1] == "10000"
     assert "--max-skew" in args and args[args.index("--max-skew") + 1] == "3.0"
-    assert report.schema_version == 3
+    assert report.schema_version == 5
     assert report.exit_code == 0
 
 
@@ -183,7 +187,7 @@ def test_analyze_passes_a_history_server_app_to_the_cli_instead_of_a_path():
         "sparkforensics-analyze", "--shs-base-url", "http://shs:18080", "--app-id", "app-1",
         "--attempt-id", "2",
     ]
-    assert report.schema_version == 3
+    assert report.schema_version == 5
 
 
 def test_analyze_rejects_a_log_that_lives_on_an_ssh_host():

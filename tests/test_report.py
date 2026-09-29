@@ -1,4 +1,7 @@
 import json
+from pathlib import Path
+
+import pytest
 
 from sparkforensics_operator.report import (
     THRESHOLD_CLI_FLAGS,
@@ -8,63 +11,81 @@ from sparkforensics_operator.report import (
     parse_threshold_results,
 )
 
-SAMPLE_JSON = {
-    "schemaVersion": 3,
-    "summary": {
-        "app": {"id": "app-1", "name": "etl_ar_ventas", "sparkVersion": "3.5.1"},
-        "stageCount": 12,
-        "jobCount": 4,
-        "sqlExecutionCount": 2,
-        "findingCount": 3,
-        "impactBandCounts": {"critical": 1, "warning": 1, "info": 1},
-    },
-    "evidenceAvailability": None,
-    "detectors": [],
-    "findings": [{"id": "f1", "type": "spill", "tag": "spill", "impactBand": "critical"}],
-    "recommendations": [],
-    "cleanChecks": [],
-}
+# Real sparkforensics-cli 0.4.0 output (--redact) for public corpus logs; see
+# tests/fixtures/sparkforensics_cli_0_4_0/README.md for how it was produced.
+CLI_FIXTURES = Path(__file__).parent / "fixtures" / "sparkforensics_cli_0_4_0"
 
 
-def test_parse_report_text_reads_the_cli_json_report():
-    report = parse_report_text(json.dumps(SAMPLE_JSON))
+def _fixture_text(name: str) -> str:
+    return (CLI_FIXTURES / name).read_text()
 
-    assert report.schema_version == 3
-    assert report.summary["impactBandCounts"]["critical"] == 1
-    assert report.findings[0]["type"] == "spill"
+
+def test_parse_report_text_reads_a_real_cli_report():
+    data = json.loads(_fixture_text("report.json"))
+
+    report = parse_report_text(_fixture_text("report.json"))
+
+    assert report.schema_version == 5
+    assert report.summary == data["summary"]
+    assert report.verdict == data["verdict"]
+    assert report.evidence_availability == data["evidenceAvailability"]
+    assert report.detectors == data["detectors"]
+    assert report.findings == data["findings"]
+    assert report.recommendations == data["recommendations"]
+    assert report.clean_checks == data["cleanChecks"]
+    assert report.not_run_checks == data["notRunChecks"]
+    assert report.comparison is None
     assert report.threshold_results == []
 
 
-def test_parse_report_text_captures_evidence_availability_and_detectors():
-    data = dict(SAMPLE_JSON, evidenceAvailability={"taskLevel": False}, detectors=["spill", "skew"])
+def test_a_real_cli_report_carries_text_figures_in_value_text():
+    findings = parse_report_text(_fixture_text("report.json")).findings
 
-    report = parse_report_text(json.dumps(data))
-
-    assert report.evidence_availability == {"taskLevel": False}
-    assert report.detectors == ["spill", "skew"]
-
-
-def test_parse_report_text_defaults_evidence_availability_and_detectors_when_absent():
-    data = {k: v for k, v in SAMPLE_JSON.items() if k not in ("evidenceAvailability", "detectors")}
-
-    report = parse_report_text(json.dumps(data))
-
-    assert report.evidence_availability is None
-    assert report.detectors == []
+    assert all(f["value"] is None or isinstance(f["value"], (int, float)) for f in findings)
+    text_findings = [f for f in findings if "valueText" in f]
+    assert {f["type"] for f in text_findings} >= {"stageFailed", "configAudit"}
+    assert all(f["value"] is None for f in text_findings)
 
 
-def test_parse_report_text_has_no_comparison_without_a_baseline():
-    assert parse_report_text(json.dumps(SAMPLE_JSON)).comparison is None
+def test_parse_report_text_unwraps_the_candidate_report_of_a_real_baseline_run():
+    data = json.loads(_fixture_text("comparison.json"))
+
+    report = parse_report_text(_fixture_text("comparison.json"))
+
+    assert report.schema_version == 5
+    assert report.findings == data["candidate"]["findings"]
+    assert report.not_run_checks == data["candidate"]["notRunChecks"]
+    assert report.comparison == data["comparison"]
 
 
-def test_parse_report_text_unwraps_the_candidate_report_of_a_baseline_run():
-    comparison = {"confidence": "ok", "reason": None, "matchedCoverage": 1, "metrics": [], "findings": {}}
+def test_parse_threshold_results_reads_real_cli_stderr():
+    thresholds = {"max_runtime_ms": 1, "max_skew_ratio": 2, "max_spill_gb": 100}
 
-    report = parse_report_text(json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison}))
+    results = {r.name: r for r in parse_threshold_results(thresholds, _fixture_text("report.stderr"))}
 
-    assert report.schema_version == 3
-    assert report.findings[0]["type"] == "spill"
-    assert report.comparison == comparison
+    assert results["max-runtime"].status == "violation"
+    assert results["max-skew"].status == "violation"
+    assert results["max-spill"].status == "pass"
+
+
+def test_parse_threshold_results_reads_a_real_incomplete_run():
+    results = parse_threshold_results({}, _fixture_text("incomplete-run.stderr"))
+
+    assert [(r.name, r.status) for r in results] == [("run-complete", "inconclusive")]
+    report = parse_report_text(_fixture_text("incomplete-run.json"))
+    assert report.schema_version == 5
+    assert {c["type"] for c in report.not_run_checks} == {
+        c["type"] for c in json.loads(_fixture_text("incomplete-run.json"))["notRunChecks"]
+    }
+    assert report.not_run_checks
+
+
+@pytest.mark.parametrize("schema_version", [3, 4])
+def test_parse_report_text_refuses_a_report_older_than_sparkforensics_cli_0_4_0(schema_version):
+    data = dict(json.loads(_fixture_text("report.json")), schemaVersion=schema_version)
+
+    with pytest.raises(ValueError, match="requires sparkforensics-cli 0.4.0 or newer"):
+        parse_report_text(json.dumps(data))
 
 
 def test_threshold_cli_flags_cover_every_thresholds_key():
@@ -127,21 +148,21 @@ def test_parse_threshold_results_always_surfaces_run_complete_even_if_unrequeste
 
 def test_report_violated_and_inconclusive_properties():
     passing = Report(
-        schema_version=3, summary={}, findings=[], recommendations=[], clean_checks=[],
+        schema_version=5, summary={}, findings=[], recommendations=[], clean_checks=[],
         threshold_results=[ThresholdResult("max-runtime", "pass", "")],
     )
     assert not passing.violated
     assert not passing.inconclusive
 
     violated = Report(
-        schema_version=3, summary={}, findings=[], recommendations=[], clean_checks=[],
+        schema_version=5, summary={}, findings=[], recommendations=[], clean_checks=[],
         threshold_results=[ThresholdResult("max-runtime", "violation", "too slow")],
     )
     assert violated.violated
     assert not violated.inconclusive
 
     inconclusive = Report(
-        schema_version=3, summary={}, findings=[], recommendations=[], clean_checks=[],
+        schema_version=5, summary={}, findings=[], recommendations=[], clean_checks=[],
         threshold_results=[ThresholdResult("max-skew", "inconclusive", "no data")],
     )
     assert not inconclusive.violated

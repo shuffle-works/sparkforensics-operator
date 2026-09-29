@@ -26,11 +26,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 SAMPLE_JSON = {
-    "schemaVersion": 3,
+    "schemaVersion": 5,
     "summary": {"impactBandCounts": {"critical": 1, "warning": 0, "info": 2}},
+    "verdict": {"title": "No issues found", "summary": [], "steps": [], "remainingPlaces": 0, "copyText": None},
+    "evidenceAvailability": None,
+    "detectors": [],
     "findings": [{"id": "spill", "impactBand": "critical"}],
     "recommendations": [{"id": "raise-partitions"}],
     "cleanChecks": [],
+    "notRunChecks": [],
 }
 
 needs_posix_host = pytest.mark.skipif(

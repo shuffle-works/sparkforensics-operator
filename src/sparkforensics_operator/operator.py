@@ -177,11 +177,13 @@ def handle_report(
     report_json = {
         "schemaVersion": report.schema_version,
         "summary": report.summary,
+        "verdict": report.verdict,
         "evidenceAvailability": report.evidence_availability,
         "detectors": report.detectors,
         "findings": report.findings,
         "recommendations": report.recommendations,
         "cleanChecks": report.clean_checks,
+        "notRunChecks": report.not_run_checks,
         "thresholdResults": [
             {"name": r.name, "status": r.status, "detail": r.detail}
             for r in report.threshold_results
