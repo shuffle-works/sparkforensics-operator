@@ -1,7 +1,7 @@
 """
 Parses what the sparkforensics-analyze CLI produces: the JSON --out file
-(findings/recommendations/cleanChecks/summary) and the stderr threshold
-lines (the CLI's own budget evaluation isn't in the JSON output at all: see the "Global constraints" section of the implementation plan). Threshold
+(summary/verdict/findings/recommendations/cleanChecks/notRunChecks) and the
+stderr threshold lines (the CLI's own budget evaluation isn't in the JSON output at all: see the "Global constraints" section of the implementation plan). Threshold
 logic lives entirely upstream in sparkforensics; this module only parses
 its output, so it can never drift from what the CLI actually enforces.
 """
@@ -40,6 +40,11 @@ THRESHOLD_RESULT_NAMES = {
     "fail_on_introduced": "fail-on-introduced",
 }
 
+# The report schema sparkforensics-cli 0.4.0 introduced (each finding's text
+# figure moved from value to valueText). An older report is refused rather
+# than parsed into a partial one.
+MIN_SCHEMA_VERSION = 5
+
 _THRESHOLD_LINE_RE = re.compile(r"^\[(violation|inconclusive)\] ([a-z-]+): (.*)$")
 
 
@@ -59,6 +64,10 @@ class Report:
     clean_checks: list
     evidence_availability: dict | None = None
     detectors: list = field(default_factory=list)
+    # The CLI's run verdict (title, summary, next steps) and the checks the
+    # log lacked the data to run.
+    verdict: dict | None = None
+    not_run_checks: list = field(default_factory=list)
     threshold_results: list[ThresholdResult] = field(default_factory=list)
     exit_code: int = 0
     # The CLI's comparison section (confidence, reason, matchedCoverage,
@@ -83,14 +92,23 @@ def parse_report_text(text: str) -> Report:
     if isinstance(data, dict) and "candidate" in data and "comparison" in data:
         comparison = data["comparison"]
         data = data["candidate"]
+    schema_version = data["schemaVersion"]
+    if not isinstance(schema_version, int) or schema_version < MIN_SCHEMA_VERSION:
+        raise ValueError(
+            f"report schemaVersion {schema_version!r} is not supported (need "
+            f"{MIN_SCHEMA_VERSION} or newer): sparkforensics-operator requires "
+            "sparkforensics-cli 0.4.0 or newer."
+        )
     return Report(
-        schema_version=data["schemaVersion"],
+        schema_version=schema_version,
         summary=data["summary"],
         findings=data["findings"],
         recommendations=data["recommendations"],
         clean_checks=data["cleanChecks"],
-        evidence_availability=data.get("evidenceAvailability"),
-        detectors=data.get("detectors", []),
+        evidence_availability=data["evidenceAvailability"],
+        detectors=data["detectors"],
+        verdict=data["verdict"],
+        not_run_checks=data["notRunChecks"],
         comparison=comparison,
     )
 

@@ -139,7 +139,8 @@ triggerer polls it, which needs a running triggerer with
 
 Whichever host runs the analysis (the worker for `SubprocessAnalyzeHook`,
 the SSH host for `SSHAnalyzeHook`) needs Node.js 18+ and the
-`sparkforensics-cli` npm package (`npm install -g sparkforensics-cli`), so
+`sparkforensics-cli` npm package, version 0.4.0 or newer
+(`npm install -g "sparkforensics-cli@>=0.4.0"`), so
 `sparkforensics-analyze` is resolvable on `PATH`. Add the `ssh` extra for
 the SSH hooks (it works from Airflow 2.6, like the package; only
 `deferrable=True` needs Airflow 2.11+), and the `s3` extra if

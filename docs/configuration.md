@@ -341,8 +341,8 @@ hook. Don't define a `resolve` method: Airflow 3's templater calls
   `ssh_conn_id`. `timeout` bounds the whole remote run in seconds,
   on the worker and on the SSH host through coreutils `timeout`. Every
   argument is shell-quoted. Requires the `ssh` extra on the worker, and
-  coreutils `timeout`, Node.js 18+ and `sparkforensics-cli` on the SSH
-  host; the worker needs none of them.
+  coreutils `timeout`, Node.js 18+ and `sparkforensics-cli` 0.4.0+ on the
+  SSH host; the worker needs none of them.
 
   With `deferrable=True` on the operator, the CLI runs as a detached job
   instead, writing its report to a file in a job directory under
@@ -522,7 +522,8 @@ run that produced a report, before applying `on_threshold_breach`.
 warning and never fails the task, whatever `_send()` raises.
 
 `report` is a `sparkforensics_operator.report.Report`, with the CLI's
-`summary`, `findings`, `recommendations` and `threshold_results` (each a
+`summary`, `verdict`, `findings`, `recommendations`, `clean_checks`,
+`not_run_checks` and `threshold_results` (each a
 `ThresholdResult` with `name`, `status` and `detail`), its `exit_code`,
 and `violated`/`inconclusive` properties. The static helper
 `Notifier._default_message(report, report_destination)` builds a one-line

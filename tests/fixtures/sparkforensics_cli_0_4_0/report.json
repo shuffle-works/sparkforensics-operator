@@ -1,0 +1,1209 @@
+{
+  "schemaVersion": 5,
+  "summary": {
+    "app": {
+      "id": "app-1",
+      "name": "spark-event-corpus-workload",
+      "sparkVersion": "4.2.0"
+    },
+    "stageCount": 1,
+    "jobCount": 1,
+    "sqlExecutionCount": 0,
+    "findingCount": 12,
+    "impactBandCounts": {
+      "critical": 5,
+      "warning": 2,
+      "info": 5
+    },
+    "actionableFindingCount": 11,
+    "actionableImpactBandCounts": {
+      "critical": 5,
+      "warning": 2,
+      "info": 4
+    },
+    "clean": false,
+    "outcome": {
+      "failedJobs": 1,
+      "totalJobs": 1,
+      "failureReason": "[PYTHON_EXCEPTION] An exception was thrown from the Python worker: Traceback (most recent call last):",
+      "failureReasonStageId": 0
+    },
+    "runShape": {
+      "wallClockMs": 47688,
+      "efficiencyPct": 94,
+      "unusedCoreTimePct": 76,
+      "etlPhasesMs": null,
+      "peakBusyCores": 0.9757829651866123
+    }
+  },
+  "verdict": {
+    "title": "This run failed: its job did not finish",
+    "summary": [
+      "Fix the failure before tuning: the other findings cover only the work that ran.",
+      "11 findings in 5 places.",
+      "Findings in the same stage usually share one cause, so they are grouped together and their savings overlap rather than add up.",
+      "76% of the executor capacity sat idle, so the cluster may be larger than this job needs."
+    ],
+    "steps": [
+      {
+        "key": "stage:0",
+        "stageId": 0,
+        "type": "stageFailed",
+        "tag": "SFAIL",
+        "leadFindingId": "8902c0fb",
+        "actionLabel": "Inspect stage failure",
+        "recommendation": "Spark's recorded reason: [PYTHON_EXCEPTION] An exception was thrown from the Python worker: Traceback (most recent call last):. Open the driver log only if you need the full stack trace.",
+        "impact": null,
+        "impactMeaning": null,
+        "relatedTypes": [
+          "retryWaste",
+          "skew",
+          "straggler",
+          "failures",
+          "gc"
+        ],
+        "text": "Inspect stage failure in Stage 0: Spark's recorded reason: [PYTHON_EXCEPTION] An exception was thrown from the Python worker: Traceback (most recent call last):. Open the driver log only if you need the full stack trace."
+      },
+      {
+        "key": "app:jobFailureRate",
+        "stageId": null,
+        "type": "jobFailureRate",
+        "tag": "JOBS",
+        "leadFindingId": "e1a1cfc6",
+        "actionLabel": "Investigate failed jobs",
+        "recommendation": "Spark's recorded reason: [PYTHON_EXCEPTION] An exception was thrown from the Python worker: Traceback (most recent call last):. Open the driver log only if you need the full stack trace.",
+        "impact": null,
+        "impactMeaning": "of core time",
+        "relatedTypes": [],
+        "text": "Investigate failed jobs: Spark's recorded reason: [PYTHON_EXCEPTION] An exception was thrown from the Python worker: Traceback (most recent call last):. Open the driver log only if you need the full stack trace."
+      },
+      {
+        "key": "app:memoryUtilization:idleCores",
+        "stageId": null,
+        "type": "memoryUtilization",
+        "tag": "MEM",
+        "leadFindingId": "e4dd7618",
+        "actionLabel": "Reduce idle cores",
+        "recommendation": "76% of allocated core-time ran no task: reduce cluster size or enable dynamic allocation.",
+        "impact": null,
+        "impactMeaning": null,
+        "relatedTypes": [],
+        "text": "Reduce idle cores: 76% of allocated core-time ran no task: reduce cluster size or enable dynamic allocation."
+      }
+    ],
+    "remainingPlaces": 2,
+    "copyText": "Spark run spark-event-corpus-workload: This run failed: its job did not finish\n\n1. Inspect stage failure in Stage 0: Spark's recorded reason: [PYTHON_EXCEPTION] An exception was thrown from the Python worker: Traceback (most recent call last):. Open the driver log only if you need the full stack trace.\n2. Investigate failed jobs: Spark's recorded reason: [PYTHON_EXCEPTION] An exception was thrown from the Python worker: Traceback (most recent call last):. Open the driver log only if you need the full stack trace.\n3. Reduce idle cores: 76% of allocated core-time ran no task: reduce cluster size or enable dynamic allocation.\n\n2 more places to look at in the full findings list."
+  },
+  "evidenceAvailability": {
+    "schemaVersion": 1,
+    "entries": [
+      {
+        "key": "executorMetrics",
+        "state": "notEmitted",
+        "reasonCode": "noObservedExecutorMetrics",
+        "summary": "Not emitted by this event log."
+      },
+      {
+        "key": "rddStorageSnapshots",
+        "state": "present",
+        "reasonCode": "observed",
+        "summary": "Observed in this event log.",
+        "evidence": {
+          "eventType": "rddStorageSnapshots",
+          "count": 2
+        }
+      },
+      {
+        "key": "sqlPlan",
+        "state": "notApplicable",
+        "reasonCode": "noSqlExecution",
+        "summary": "Not applicable to this event log."
+      },
+      {
+        "key": "sparkConfiguration",
+        "state": "present",
+        "reasonCode": "observed",
+        "summary": "Observed in this event log.",
+        "evidence": {
+          "eventType": "environmentUpdates",
+          "count": 1
+        }
+      },
+      {
+        "key": "taskCoreTime",
+        "state": "present",
+        "reasonCode": "observed",
+        "summary": "Observed in this event log.",
+        "evidence": {
+          "eventType": "taskRecords",
+          "count": 29
+        }
+      },
+      {
+        "key": "infrastructureContext",
+        "state": "outsideEventLog",
+        "reasonCode": "outsideEventLogScope",
+        "summary": "Available outside local event-log scope."
+      },
+      {
+        "key": "sourceContext",
+        "state": "outsideEventLog",
+        "reasonCode": "outsideEventLogScope",
+        "summary": "Available outside local event-log scope."
+      },
+      {
+        "key": "costContext",
+        "state": "outsideEventLog",
+        "reasonCode": "outsideEventLogScope",
+        "summary": "Available outside local event-log scope."
+      }
+    ]
+  },
+  "detectors": [
+    {
+      "type": "skew",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "ratioWarn": 3,
+        "minTasksForP95": 20,
+        "floorPctWarn": 0.005
+      },
+      "docAnchor": "#bottleneck-skew"
+    },
+    {
+      "type": "stageShape",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "pRatioMax": 0.5,
+        "oiRatioMax": 10,
+        "skewWarn": 3,
+        "lowParallelismFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-stage-shape"
+    },
+    {
+      "type": "shuffle",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minBytes": 52428800,
+        "stageFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-shuffle"
+    },
+    {
+      "type": "partitionSizing",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "skewRatio": 5,
+        "skewFloorBytes": 268435456,
+        "lowParTotalBytes": 1073741824,
+        "lowParMaxTasks": 7,
+        "maxPartBytes": 5368709120
+      },
+      "docAnchor": "#bottleneck-partition-sizing"
+    },
+    {
+      "type": "spill",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "singleTaskDiskGiB": 1,
+        "singleTaskMemGiB": 4,
+        "highDiskGiB": 1,
+        "highTaskDiskMB": 512,
+        "highMemGiB": 4,
+        "medDiskMB": 256,
+        "medMemGiB": 1,
+        "skewRatio": 5,
+        "skewDiskFloorMB": 128,
+        "skewMemFloorMB": 256,
+        "skewMinTasks": 10,
+        "stageFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-spill"
+    },
+    {
+      "type": "gc",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "warnPct100": 10,
+        "lowInfoPct100": 5,
+        "minRunTimeMs": 10000,
+        "lowInfoFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-gc"
+    },
+    {
+      "type": "slowHost",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minHosts": 3,
+        "minTasks": 15,
+        "ratioWarn": 2,
+        "minShare": 0.2,
+        "shareWarn": 0.75,
+        "taskShareWarn": 0.5,
+        "ratioTiers": [
+          1.33,
+          1.78,
+          3.16,
+          10
+        ],
+        "floorMs": 1000,
+        "floorBytes": 67108864,
+        "stageFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-slow-host"
+    },
+    {
+      "type": "stageSlowness",
+      "version": 2,
+      "scope": "stage",
+      "thresholds": {
+        "infoMin": 15
+      },
+      "docAnchor": "#bottleneck-stage-slowness"
+    },
+    {
+      "type": "stageFailed",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {},
+      "docAnchor": "#bottleneck-failures"
+    },
+    {
+      "type": "failures",
+      "version": 2,
+      "scope": "stage",
+      "thresholds": {
+        "minTasks": 10,
+        "warnRate": 0.05,
+        "critRate": 0.2
+      },
+      "docAnchor": "#bottleneck-failures"
+    },
+    {
+      "type": "straggler",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minTasks": 10,
+        "shareWarn": 0.05,
+        "shareWarnAtFloor": 0.025,
+        "warnPct": 0.1,
+        "critPct": 0.2,
+        "floorPctWarn": 0.005,
+        "floorPctCrit": 0.02
+      },
+      "docAnchor": "#bottleneck-straggler"
+    },
+    {
+      "type": "speculationWaste",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minWasted": 5,
+        "minWasteMs": 60000
+      },
+      "docAnchor": "#bottleneck-speculation-waste"
+    },
+    {
+      "type": "retryWaste",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minWasted": 3,
+        "minWasteMs": 30000
+      },
+      "docAnchor": "#bottleneck-retry-waste"
+    },
+    {
+      "type": "tinyTask",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minTasks": 100,
+        "maxP50": 500,
+        "maxP95": 1000,
+        "stageFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-tiny-tasks"
+    },
+    {
+      "type": "incompleteRun",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {}
+    },
+    {
+      "type": "coldStart",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "gapSeconds": 30
+      },
+      "docAnchor": "#bottleneck-cold-start"
+    },
+    {
+      "type": "utilization",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "minUtil": 0.6
+      },
+      "docAnchor": "#bottleneck-utilization"
+    },
+    {
+      "type": "memoryUtilization",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "idleCoreWarn": 0.5,
+        "bandTooSmall": 0.95,
+        "bandTooHigh": 0.7,
+        "wasteBufferMultiplier": 1.5
+      },
+      "docAnchor": "#bottleneck-memory-utilization"
+    },
+    {
+      "type": "cacheUtilization",
+      "version": 2,
+      "scope": "app",
+      "thresholds": {
+        "cachedRatioWarn": 0.5,
+        "cachedRatioInfo": 0.9,
+        "diskRatioWarn": 0.4,
+        "diskRatioInfo": 0.15
+      },
+      "docAnchor": "#bottleneck-cache-utilization"
+    },
+    {
+      "type": "coreLocality",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "minTasks": 50,
+        "warnRatio": 0.15,
+        "critRatio": 0.35
+      },
+      "docAnchor": "#bottleneck-core-locality"
+    },
+    {
+      "type": "autoscalingChurn",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "shortLivedMs": 120000,
+        "warningPct": 0.3,
+        "criticalPct": 0.6,
+        "minExecutors": 5
+      },
+      "docAnchor": "#bottleneck-autoscaling-churn"
+    },
+    {
+      "type": "cachingOpportunity",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "minExecutions": 2
+      },
+      "docAnchor": "#bottleneck-caching-opportunity"
+    },
+    {
+      "type": "jobFailureRate",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "infoRate": 0.1,
+        "warnRate": 0.3,
+        "critRate": 0.5
+      },
+      "docAnchor": "#bottleneck-job-failure-rate"
+    },
+    {
+      "type": "configAudit",
+      "version": 1,
+      "scope": "config",
+      "thresholds": {},
+      "docAnchor": "#config-shuffle-service"
+    },
+    {
+      "type": "configAudit",
+      "version": 1,
+      "scope": "config",
+      "thresholds": {},
+      "docAnchor": "#config-autoscale-bounds"
+    },
+    {
+      "type": "configAudit",
+      "version": 1,
+      "scope": "config",
+      "thresholds": {},
+      "docAnchor": "#config-serializer"
+    },
+    {
+      "type": "configAudit",
+      "version": 1,
+      "scope": "config",
+      "thresholds": {
+        "floorMB": 384,
+        "floorPct": 0.1
+      },
+      "docAnchor": "#config-memory-overhead"
+    },
+    {
+      "type": "duplicatePlanSubtree",
+      "version": 2,
+      "scope": "sql",
+      "thresholds": {
+        "minSubtreeSize": 3,
+        "minOccurrences": 2,
+        "stageFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-duplicate-plan-subtree"
+    },
+    {
+      "type": "smallFiles",
+      "version": 2,
+      "scope": "sql",
+      "thresholds": {
+        "minFiles": 100,
+        "maxAvgFileSizeMB": 3
+      },
+      "docAnchor": "#bottleneck-small-files"
+    },
+    {
+      "type": "broadcastSizing",
+      "version": 2,
+      "scope": "sql",
+      "thresholds": {
+        "broadcastTiers": [
+          10485760,
+          104857600,
+          1073741824,
+          5368709120
+        ],
+        "comparisonTiers": [
+          10737418240,
+          322122547200,
+          1099511627776
+        ],
+        "overBroadcastBytes": 1073741824
+      },
+      "docAnchor": "#bottleneck-broadcast-sizing"
+    }
+  ],
+  "findings": [
+    {
+      "id": "e1a1cfc6",
+      "type": "jobFailureRate",
+      "name": "Job Failure Rate",
+      "tag": "JOBS",
+      "impactBand": "critical",
+      "stageId": null,
+      "metric": "jobFailureRate",
+      "value": 100,
+      "recommendation": "1 of 1 jobs never recovered: inspect the driver log for the failed job(s) and the stage failures that triggered them.",
+      "detectorVersion": 1,
+      "evidence": {
+        "avgJobDurationMs": 44652,
+        "failedJobs": 1,
+        "failedTasks": 4,
+        "taskFailureRate": 20,
+        "totalJobs": 1,
+        "totalTasks": 20
+      },
+      "actionLabel": "Investigate failed jobs",
+      "docAnchor": "#bottleneck-job-failure-rate",
+      "impactEstimate": {
+        "basis": "resourceOnly",
+        "wallClock": null,
+        "estimateMethod": "modeled",
+        "rawWaste": {
+          "value": 0.012403333333333334,
+          "unit": "coreHours"
+        }
+      }
+    },
+    {
+      "id": "878f95d7",
+      "type": "retryWaste",
+      "name": "Retry Waste",
+      "tag": "RETRY",
+      "impactBand": "critical",
+      "stageId": 0,
+      "metric": "retryWasteMs",
+      "value": 91378,
+      "recommendation": "Retried task attempts wasted 91s of executor time (9 attempts) even though the stage completed: investigate executor loss or fetch failures.",
+      "detectorVersion": 1,
+      "evidence": {
+        "memoryBytesSpilled": 0,
+        "numTasks": 20,
+        "retriedTaskDetails": [
+          {
+            "taskId": 21,
+            "attemptNumber": 0,
+            "host": "host-2",
+            "executorId": "0",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 20,
+            "attemptNumber": 0,
+            "host": "host-2",
+            "executorId": "0",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 22,
+            "attemptNumber": 0,
+            "host": "host-1",
+            "executorId": "1",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 23,
+            "attemptNumber": 0,
+            "host": "host-1",
+            "executorId": "1",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 24,
+            "attemptNumber": 0,
+            "host": "host-2",
+            "executorId": "0",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 25,
+            "attemptNumber": 0,
+            "host": "host-2",
+            "executorId": "0",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 26,
+            "attemptNumber": 0,
+            "host": "host-1",
+            "executorId": "1",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 27,
+            "attemptNumber": 0,
+            "host": "host-1",
+            "executorId": "1",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 28,
+            "attemptNumber": 0,
+            "host": "host-2",
+            "executorId": "0",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          }
+        ]
+      },
+      "actionLabel": "Investigate retry cause",
+      "docAnchor": "#bottleneck-retry-waste",
+      "impactEstimate": {
+        "basis": "serial",
+        "wallClock": {
+          "low": 18275.6,
+          "high": 18275.6
+        },
+        "estimateMethod": "modeled",
+        "rawWaste": {
+          "value": 91378,
+          "unit": "ms"
+        }
+      },
+      "impact": "18.3s",
+      "impactMeaning": "of run time"
+    },
+    {
+      "id": "06678a10",
+      "type": "skew",
+      "name": "Task Skew",
+      "tag": "SKEW",
+      "impactBand": "critical",
+      "stageId": 0,
+      "metric": "P95/median",
+      "value": 138.6,
+      "recommendation": "Task duration ratio (P95/median) is 138.6×: for join-driven skew, enable AQE skew-join handling (spark.sql.adaptive.skewJoin.enabled); otherwise salt the key or repartition on a better key to reduce task skew.",
+      "detectorVersion": 1,
+      "evidence": {},
+      "actionLabel": "Fix task skew",
+      "confidence": "high",
+      "validationRequired": "This finding is gated by a 0.5% runtime-floor threshold, our own noise floor for this metric.",
+      "docAnchor": "#bottleneck-skew",
+      "impactEstimate": {
+        "basis": "serial",
+        "wallClock": {
+          "low": 10858,
+          "high": 10858
+        },
+        "estimateMethod": "measured",
+        "rawWaste": {
+          "value": 10858,
+          "unit": "ms"
+        }
+      },
+      "impact": "10.9s",
+      "impactMeaning": "of run time"
+    },
+    {
+      "id": "8902c0fb",
+      "type": "stageFailed",
+      "name": "Failed Stage",
+      "tag": "SFAIL",
+      "impactBand": "critical",
+      "stageId": 0,
+      "metric": "stageFailureReason",
+      "value": null,
+      "valueText": "[PYTHON_EXCEPTION] An exception was thrown from the Python worker: Traceback (most recent call last):\n  File \"/opt/spark/python/lib/pyspark.zip/pyspark/worker.py\", line 3622, in main\n    process()\n  File \"/opt/spark/python/lib/pyspark.zip/pyspark/worker.py\", line 3610, in process\n    out_iter = func(split_index, iterator)\n  File \"/opt/spark/python/lib/pyspark.zip/pyspark/core/rdd.py\", line 5290, in pipeline_func\n  File \"/opt/spark/python/lib/pyspark.zip/pyspark/core/rdd.py\", line 5290, in pipeline_func\n  File \"/opt/spark/python/lib/pyspark.zip/pyspark/core/rdd.py\", line 5290, in pipeline_func\n  [Previous line repeated 1 more time]\n  File \"/workload/generate_events.py\", line 129, in fail_doomed_partitions\n  File \"/workload/generate_events.py\", line 88, in fail_attempt\nInjectedTaskFailure: partition 16, attempt 3: injected failure\n SQLSTATE: 38000",
+      "recommendation": "This stage attempt failed outright. Inspect the driver log for the failure reason and the job that triggered it.",
+      "detectorVersion": 1,
+      "evidence": {
+        "failedTaskDetails": [
+          {
+            "taskId": 16,
+            "attemptNumber": 0,
+            "host": "host-2",
+            "executorId": "0",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 17,
+            "attemptNumber": 0,
+            "host": "host-2",
+            "executorId": "0",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 18,
+            "attemptNumber": 0,
+            "host": "host-1",
+            "executorId": "1",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          },
+          {
+            "taskId": 19,
+            "attemptNumber": 0,
+            "host": "host-1",
+            "executorId": "1",
+            "reason": "ExceptionFailure",
+            "peakExecMem": 0,
+            "memSpilled": 0,
+            "shuffleWrite": 0
+          }
+        ],
+        "memoryBytesSpilled": 0,
+        "numTasks": 20,
+        "variant": "stageFailure"
+      },
+      "actionLabel": "Inspect stage failure",
+      "docAnchor": "#bottleneck-failures",
+      "impactEstimate": {
+        "basis": "informational",
+        "wallClock": null,
+        "estimateMethod": "none"
+      }
+    },
+    {
+      "id": "0c2465c2",
+      "type": "straggler",
+      "name": "Straggling Task",
+      "tag": "STRAG",
+      "impactBand": "critical",
+      "stageId": 0,
+      "metric": "stragglerShare",
+      "value": 40,
+      "recommendation": "40% of tasks straggled: rule out a GC pause or a slow shuffle fetch before assuming a hardware issue; if a skewed key is the real cause, that's a candidate for AQE's skew-join handling.",
+      "detectorVersion": 1,
+      "evidence": {
+        "speculativeTasks": 0,
+        "stragglerCount": 8,
+        "unit": "pct"
+      },
+      "actionLabel": "Fix stragglers",
+      "confidence": "high",
+      "validationRequired": "This finding is gated by 0.5%/2% runtime-floor thresholds, our own noise floor for this metric.",
+      "docAnchor": "#bottleneck-straggler",
+      "impactEstimate": {
+        "basis": "serial",
+        "wallClock": {
+          "low": 10858,
+          "high": 10858
+        },
+        "estimateMethod": "measured",
+        "rawWaste": {
+          "value": 10858,
+          "unit": "ms"
+        }
+      },
+      "impact": "10.9s",
+      "impactMeaning": "of run time"
+    },
+    {
+      "id": "07e63228",
+      "type": "failures",
+      "name": "Failed Tasks",
+      "tag": "FAIL",
+      "impactBand": "warning",
+      "stageId": 0,
+      "metric": "failureRate",
+      "value": 20,
+      "recommendation": "20% of tasks failed (dominant error: org.apache.spark.api.python.PythonException): investigate driver logs for executor instability or data-driven errors.",
+      "detectorVersion": 2,
+      "evidence": {
+        "dominantError": "org.apache.spark.api.python.PythonException",
+        "dominantReason": "ExceptionFailure",
+        "failedTasks": 4,
+        "failureGroups": [
+          {
+            "reason": "ExceptionFailure",
+            "className": "org.apache.spark.api.python.PythonException",
+            "message": "[redacted]",
+            "lossReason": null,
+            "stackExcerpt": "org.apache.spark.api.python.PythonException\n\t...\n\t...",
+            "count": 4
+          }
+        ],
+        "otherFailedTasks": 0
+      },
+      "actionLabel": "Investigate task failures",
+      "docAnchor": "#bottleneck-failures",
+      "impactEstimate": {
+        "basis": "informational",
+        "wallClock": null,
+        "estimateMethod": "none"
+      }
+    },
+    {
+      "id": "e4dd7618",
+      "type": "memoryUtilization",
+      "name": "Memory Utilization",
+      "tag": "MEM",
+      "impactBand": "warning",
+      "stageId": null,
+      "metric": "idleCoreRate",
+      "value": 76,
+      "recommendation": "76% of allocated core-time ran no task: reduce cluster size or enable dynamic allocation.",
+      "detectorVersion": 1,
+      "evidence": {
+        "variant": "idleCores"
+      },
+      "actionLabel": "Reduce idle cores",
+      "docAnchor": "#bottleneck-memory-utilization",
+      "impactEstimate": {
+        "basis": "informational",
+        "wallClock": null,
+        "estimateMethod": "modeled"
+      }
+    },
+    {
+      "id": "414db60e",
+      "type": "configAudit",
+      "name": "Config Audit",
+      "tag": "CFG",
+      "impactBand": "info",
+      "stageId": null,
+      "metric": "config",
+      "value": null,
+      "valueText": "(unset)",
+      "recommendation": "Dynamic allocation is on with no upper bound: set spark.dynamicAllocation.maxExecutors to cap cluster growth.",
+      "detectorVersion": 1,
+      "evidence": {
+        "property": "spark.dynamicAllocation.maxExecutors"
+      },
+      "actionLabel": "Set max executors",
+      "docAnchor": "#config-autoscale-bounds",
+      "impactEstimate": {
+        "basis": "informational",
+        "wallClock": null,
+        "estimateMethod": "none"
+      }
+    },
+    {
+      "id": "6650899b",
+      "type": "configAudit",
+      "name": "Config Audit",
+      "tag": "CFG",
+      "impactBand": "info",
+      "stageId": null,
+      "metric": "config",
+      "value": null,
+      "valueText": "(default JavaSerializer)",
+      "recommendation": "Current serializer is the default JavaSerializer: consider spark.serializer=org.apache.spark.serializer.KryoSerializer for faster, smaller buffers.",
+      "detectorVersion": 1,
+      "evidence": {
+        "property": "spark.serializer"
+      },
+      "actionLabel": "Switch to Kryo",
+      "docAnchor": "#config-serializer",
+      "impactEstimate": {
+        "basis": "informational",
+        "wallClock": null,
+        "estimateMethod": "none"
+      }
+    },
+    {
+      "id": "07b41a64",
+      "type": "gc",
+      "name": "GC Pressure",
+      "tag": "GC",
+      "impactBand": "info",
+      "stageId": 0,
+      "metric": "gcPct",
+      "value": 0,
+      "recommendation": "GC consumed only 0% of executor run time: memory may be over-provisioned; consider reducing spark.executor.memory for cost savings.",
+      "detectorVersion": 1,
+      "evidence": {
+        "direction": "low"
+      },
+      "actionLabel": "Right-size executor memory",
+      "confidence": "high",
+      "validationRequired": "This finding is gated by a 10-second minimum-runtime floor, our own noise floor for this metric.",
+      "docAnchor": "#bottleneck-gc",
+      "impactEstimate": {
+        "basis": "informational",
+        "wallClock": null,
+        "estimateMethod": "none"
+      }
+    },
+    {
+      "id": "1c68cda2",
+      "type": "memoryUtilization",
+      "name": "Memory Utilization",
+      "tag": "MEM",
+      "impactBand": "info",
+      "stageId": null,
+      "metric": "memoryBand",
+      "value": null,
+      "recommendation": "Per-executor memory usage requires spark.eventLog.logStageExecutorMetrics=true: not enabled for this run.",
+      "detectorVersion": 1,
+      "evidence": {
+        "dataUnavailable": true,
+        "variant": "memoryBand"
+      },
+      "actionLabel": "Enable memory metrics",
+      "docAnchor": "#bottleneck-memory-utilization",
+      "impactEstimate": {
+        "basis": "informational",
+        "wallClock": null,
+        "estimateMethod": "modeled"
+      }
+    },
+    {
+      "id": "d41c0f73",
+      "type": "utilization",
+      "name": "Executor Utilization",
+      "tag": "UTIL",
+      "impactBand": "info",
+      "stageId": null,
+      "metric": "avgUtilization",
+      "value": 24,
+      "recommendation": "Average executor utilization was only 24%: consider reducing cluster size or enabling dynamic allocation.",
+      "detectorVersion": 1,
+      "evidence": {
+        "cpuUtilizationPct": 0
+      },
+      "actionLabel": "Reduce cluster size",
+      "docAnchor": "#bottleneck-utilization",
+      "impactEstimate": {
+        "basis": "resourceOnly",
+        "wallClock": null,
+        "estimateMethod": "measured",
+        "rawWaste": {
+          "value": 0.040495277777777776,
+          "unit": "coreHours"
+        }
+      }
+    }
+  ],
+  "recommendations": [
+    {
+      "type": "retryWaste",
+      "tag": "RETRY",
+      "actionLabel": "Investigate retry cause",
+      "findingCount": 1,
+      "findingIds": [
+        "878f95d7"
+      ],
+      "kind": "time",
+      "stageCount": 1,
+      "recoverableMsHigh": 18275.6,
+      "impact": "18.3s",
+      "impactMeaning": "of run time"
+    },
+    {
+      "type": "skew",
+      "tag": "SKEW",
+      "actionLabel": "Fix task skew",
+      "findingCount": 1,
+      "findingIds": [
+        "06678a10"
+      ],
+      "kind": "time",
+      "stageCount": 1,
+      "recoverableMsHigh": 10858,
+      "impact": "10.9s",
+      "impactMeaning": "of run time"
+    },
+    {
+      "type": "straggler",
+      "tag": "STRAG",
+      "actionLabel": "Fix stragglers",
+      "findingCount": 1,
+      "findingIds": [
+        "0c2465c2"
+      ],
+      "kind": "time",
+      "stageCount": 1,
+      "recoverableMsHigh": 10858,
+      "impact": "10.9s",
+      "impactMeaning": "of run time"
+    },
+    {
+      "type": "jobFailureRate",
+      "tag": "JOBS",
+      "actionLabel": "Investigate failed jobs",
+      "findingCount": 1,
+      "findingIds": [
+        "e1a1cfc6"
+      ],
+      "kind": "resource",
+      "unit": "coreHours",
+      "total": 0.012403333333333334,
+      "impact": null,
+      "impactMeaning": null
+    },
+    {
+      "type": "utilization",
+      "tag": "UTIL",
+      "actionLabel": "Reduce cluster size",
+      "findingCount": 1,
+      "findingIds": [
+        "d41c0f73"
+      ],
+      "kind": "resource",
+      "unit": "coreHours",
+      "total": 0.040495277777777776,
+      "impact": null,
+      "impactMeaning": null
+    },
+    {
+      "type": "stageFailed",
+      "tag": "SFAIL",
+      "actionLabel": "Inspect stage failure",
+      "findingCount": 1,
+      "findingIds": [
+        "8902c0fb"
+      ],
+      "kind": "count",
+      "byImpactBand": {
+        "critical": 1
+      },
+      "impact": null,
+      "impactMeaning": null
+    },
+    {
+      "type": "failures",
+      "tag": "FAIL",
+      "actionLabel": "Investigate task failures",
+      "findingCount": 1,
+      "findingIds": [
+        "07e63228"
+      ],
+      "kind": "count",
+      "byImpactBand": {
+        "warning": 1
+      },
+      "impact": null,
+      "impactMeaning": null
+    },
+    {
+      "type": "memoryUtilization",
+      "tag": "MEM",
+      "actionLabel": "Reduce idle cores",
+      "findingCount": 1,
+      "findingIds": [
+        "e4dd7618"
+      ],
+      "kind": "count",
+      "byImpactBand": {
+        "warning": 1
+      },
+      "impact": null,
+      "impactMeaning": null
+    },
+    {
+      "type": "gc",
+      "tag": "GC",
+      "actionLabel": "Right-size executor memory",
+      "findingCount": 1,
+      "findingIds": [
+        "07b41a64"
+      ],
+      "kind": "count",
+      "byImpactBand": {
+        "info": 1
+      },
+      "impact": null,
+      "impactMeaning": null
+    },
+    {
+      "type": "configAudit",
+      "tag": "CFG",
+      "actionLabel": "Set max executors",
+      "findingCount": 2,
+      "findingIds": [
+        "414db60e",
+        "6650899b"
+      ],
+      "kind": "count",
+      "byImpactBand": {
+        "info": 2
+      },
+      "impact": null,
+      "impactMeaning": null
+    }
+  ],
+  "cleanChecks": [
+    {
+      "type": "stageShape",
+      "tag": "SHAPE",
+      "thresholdSummary": "low parallelism, data explosion, or task-count skew relative to core count"
+    },
+    {
+      "type": "shuffle",
+      "tag": "SHFL",
+      "thresholdSummary": "shuffle read above the configured minimum byte threshold"
+    },
+    {
+      "type": "partitionSizing",
+      "tag": "PART",
+      "thresholdSummary": "partition byte size outside the configured target range"
+    },
+    {
+      "type": "spill",
+      "tag": "SPILL",
+      "thresholdSummary": "single-task disk spill above 1 GiB"
+    },
+    {
+      "type": "slowHost",
+      "tag": "HOST",
+      "thresholdSummary": "a host running 2x+ slower than its peers by mean task duration (per-executor byte/time dimensions use a separate, narrower ratio ladder starting at 1.33x; only those can reach critical on ratio alone)"
+    },
+    {
+      "type": "stageSlowness",
+      "tag": "SLOW",
+      "thresholdSummary": "a stage running far longer than its peers, not attributable to a single slow host"
+    },
+    {
+      "type": "speculationWaste",
+      "tag": "SPEC",
+      "thresholdSummary": "speculative task attempts that completed after the original"
+    },
+    {
+      "type": "tinyTask",
+      "tag": "TINY",
+      "thresholdSummary": "median task duration below the configured floor"
+    },
+    {
+      "type": "incompleteRun",
+      "tag": "INCMP",
+      "thresholdSummary": "an event log missing its terminal ApplicationEnd/job-completion event"
+    },
+    {
+      "type": "coldStart",
+      "tag": "COLD",
+      "thresholdSummary": "executor startup time above the configured floor"
+    },
+    {
+      "type": "cacheUtilization",
+      "tag": "CSTOR",
+      "thresholdSummary": "cached partitions evicted or spilled to disk"
+    },
+    {
+      "type": "coreLocality",
+      "tag": "LOCAL",
+      "thresholdSummary": "task placement missing data-local core assignment"
+    },
+    {
+      "type": "autoscalingChurn",
+      "tag": "CHRN",
+      "thresholdSummary": "executor add/remove churn above the configured rate"
+    },
+    {
+      "type": "cachingOpportunity",
+      "tag": "CACHE",
+      "thresholdSummary": "a dataset re-read from source multiple times with no cache/persist"
+    },
+    {
+      "type": "duplicatePlanSubtree",
+      "tag": "PLAN",
+      "thresholdSummary": "the same physical plan subtree executed more than once"
+    },
+    {
+      "type": "smallFiles",
+      "tag": "PLAN",
+      "thresholdSummary": "output files below the configured target size"
+    },
+    {
+      "type": "overBroadcast",
+      "tag": "PLAN",
+      "thresholdSummary": "a broadcast join above the configured size ceiling"
+    },
+    {
+      "type": "underBroadcast",
+      "tag": "PLAN",
+      "thresholdSummary": "a join below the configured size floor that skipped broadcast"
+    }
+  ],
+  "notRunChecks": []
+}

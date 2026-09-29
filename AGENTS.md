@@ -6,7 +6,8 @@ notifies on the result.
 
 ## Stack
 Python 3.9+, apache-airflow 2.6+ or 3.0+, pytest. Runtime dependency: Node.js
-18+ + the `sparkforensics-cli` npm package (`npm install -g sparkforensics-cli`)
+18+ + the `sparkforensics-cli` npm package, 0.4.0 or newer (report schema 5;
+`npm install -g "sparkforensics-cli@>=0.4.0"`)
 wherever the analysis runs: the worker for `SubprocessAnalyzeHook`, the SSH
 host for `SSHAnalyzeHook`. Log sources resolve an `EventLogRef` (`log_ref.py`)
 that backends consume; see `ARCHITECTURE.md`. `deferrable=True` runs the

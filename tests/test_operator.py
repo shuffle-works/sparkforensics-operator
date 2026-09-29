@@ -1,12 +1,14 @@
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from airflow import DAG
 
 from sparkforensics_operator.exceptions import ThresholdBreached
+from sparkforensics_operator.hooks.analyze._cli import build_report
 from sparkforensics_operator.log_ref import HistoryServerApp, LocalEventLog
 from sparkforensics_operator.operator import SparkForensicsOperator, run_spark_forensics
 from sparkforensics_operator.report import Report, ThresholdResult
@@ -153,6 +155,30 @@ def test_run_spark_forensics_persists_the_full_cli_shape_including_evidence_and_
     assert persisted["evidenceAvailability"] == {"taskLevel": False}
     assert persisted["detectors"] == ["spill"]
     assert persisted["thresholdResults"] == [{"name": "max-runtime", "status": "pass", "detail": ""}]
+
+
+def test_run_spark_forensics_persists_every_section_of_a_real_cli_report(tmp_path):
+    # Real sparkforensics-cli 0.4.0 output: the persisted report is the CLI's
+    # own report plus thresholdResults, with no section dropped.
+    fixtures = Path(__file__).parent / "fixtures" / "sparkforensics_cli_0_4_0"
+    cli_report = (fixtures / "report.json").read_text()
+    thresholds = {"max_runtime_ms": 1, "max_skew_ratio": 2, "max_spill_gb": 100}
+    report = build_report(cli_report, thresholds, (fixtures / "report.stderr").read_text(), 1)
+    log_source, backend = _fixtures(tmp_path, report)
+    dest = tmp_path / "report.json"
+
+    run_spark_forensics(
+        {}, log_source=log_source, backend=backend, report_dest=str(dest),
+        thresholds=thresholds, on_threshold_breach="ignore", notifier=None,
+        log=logging.getLogger("test"),
+    )
+
+    persisted = json.loads(dest.read_text())
+    thresholds_results = persisted.pop("thresholdResults")
+    assert persisted == json.loads(cli_report)
+    assert {r["name"]: r["status"] for r in thresholds_results} == {
+        "max-runtime": "violation", "max-skew": "violation", "max-spill": "pass",
+    }
 
 
 def test_run_spark_forensics_threads_aws_conn_id_to_sinks_persist(tmp_path):

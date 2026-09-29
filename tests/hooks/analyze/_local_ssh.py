@@ -26,11 +26,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 SAMPLE_JSON = {
-    "schemaVersion": 3,
+    "schemaVersion": 5,
     "summary": {"impactBandCounts": {"critical": 1, "warning": 0, "info": 2}},
+    "verdict": {"title": "No issues found", "summary": [], "steps": [], "remainingPlaces": 0, "copyText": None},
+    "evidenceAvailability": None,
+    "detectors": [],
     "findings": [{"id": "spill", "impactBand": "critical"}],
     "recommendations": [{"id": "raise-partitions"}],
     "cleanChecks": [],
+    "notRunChecks": [],
 }
 
 needs_posix_host = pytest.mark.skipif(
@@ -253,5 +257,8 @@ def pid_alive(pid: int) -> bool:
     try:
         with open(f"/proc/{pid}/stat") as f:
             return f.read().split(") ")[-1].split()[0] != "Z"
+    except ProcessLookupError:
+        # Reaped between kill(0) and the read.
+        return False
     except FileNotFoundError:
         return True

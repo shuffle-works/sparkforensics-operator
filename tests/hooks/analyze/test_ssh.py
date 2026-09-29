@@ -13,11 +13,15 @@ from ._local_ssh import LocalHost, needs_posix_host, pid_alive, wait_until
 pytest.importorskip("airflow.providers.ssh.hooks.ssh")
 
 SAMPLE_JSON = {
-    "schemaVersion": 3,
+    "schemaVersion": 5,
     "summary": {"impactBandCounts": {"critical": 0, "warning": 0, "info": 0}},
+    "verdict": {"title": "No issues found", "summary": [], "steps": [], "remainingPlaces": 0, "copyText": None},
+    "evidenceAvailability": None,
+    "detectors": [],
     "findings": [],
     "recommendations": [],
     "cleanChecks": [],
+    "notRunChecks": [],
 }
 
 
@@ -99,7 +103,7 @@ def test_analyze_runs_the_cli_on_the_ssh_host_against_a_remote_path_and_reads_st
     report = hook.analyze(RemoteEventLog(ssh_conn_id="onprem_ssh", path="/logs/app-1"), {"max_runtime_ms": 10_000})
 
     assert host.argv() == ["/logs/app-1", "--format", "json", "--max-runtime", "10000"]
-    assert report.schema_version == 3
+    assert report.schema_version == 5
     assert report.exit_code == 0
     assert report.threshold_results[0].status == "pass"
     assert _jobs_left(host) == []
@@ -235,7 +239,7 @@ def test_a_synchronous_analysis_writes_nothing_on_the_host(host):
 
     report = hook.analyze(RemoteEventLog("onprem_ssh", "/logs/app-1"), {})
 
-    assert report.schema_version == 3
+    assert report.schema_version == 5
     assert report.summary == SAMPLE_JSON["summary"]
     assert sorted(p for p in host.home.rglob("*") if p.name != "argv") == before
 
@@ -248,7 +252,7 @@ def test_analyze_leaves_the_pid_line_out_of_the_report():
 
     report, _, _ = _run(hook, RemoteEventLog("onprem_ssh", "/logs/app-1"), {}, channel)
 
-    assert report.schema_version == 3
+    assert report.schema_version == 5
     assert report.summary == SAMPLE_JSON["summary"]
 
 

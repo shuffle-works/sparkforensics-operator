@@ -1,0 +1,691 @@
+{
+  "schemaVersion": 5,
+  "summary": {
+    "app": {
+      "id": "app-1",
+      "name": "spark-event-corpus-workload",
+      "sparkVersion": "4.2.0"
+    },
+    "stageCount": 1,
+    "jobCount": 1,
+    "sqlExecutionCount": 0,
+    "findingCount": 3,
+    "impactBandCounts": {
+      "critical": 0,
+      "warning": 1,
+      "info": 2
+    },
+    "actionableFindingCount": 2,
+    "actionableImpactBandCounts": {
+      "critical": 0,
+      "warning": 0,
+      "info": 2
+    },
+    "clean": false,
+    "outcome": {
+      "failedJobs": 0,
+      "totalJobs": 1,
+      "failureReason": null,
+      "failureReasonStageId": null
+    },
+    "runShape": {
+      "wallClockMs": null,
+      "efficiencyPct": null,
+      "unusedCoreTimePct": null,
+      "etlPhasesMs": null,
+      "peakBusyCores": 0.1687648860156516
+    }
+  },
+  "verdict": {
+    "title": "Start here: set max executors",
+    "summary": [
+      "2 findings in 1 place.",
+      "The log has no end-of-run record, so these figures cover only the part of the run it captured."
+    ],
+    "steps": [
+      {
+        "key": "app:configAudit",
+        "stageId": null,
+        "type": "configAudit",
+        "tag": "CFG",
+        "leadFindingId": "414db60e",
+        "actionLabel": "Set max executors",
+        "recommendation": "Dynamic allocation is on with no upper bound: set spark.dynamicAllocation.maxExecutors to cap cluster growth.",
+        "impact": null,
+        "impactMeaning": null,
+        "relatedTypes": [],
+        "text": "Set max executors: Dynamic allocation is on with no upper bound: set spark.dynamicAllocation.maxExecutors to cap cluster growth."
+      }
+    ],
+    "remainingPlaces": 0,
+    "copyText": "Spark run spark-event-corpus-workload: Start here: set max executors\n\n1. Set max executors: Dynamic allocation is on with no upper bound: set spark.dynamicAllocation.maxExecutors to cap cluster growth."
+  },
+  "evidenceAvailability": {
+    "schemaVersion": 1,
+    "entries": [
+      {
+        "key": "executorMetrics",
+        "state": "unknown",
+        "reasonCode": "parseIncomplete",
+        "summary": "Cannot determine from an incomplete parse."
+      },
+      {
+        "key": "rddStorageSnapshots",
+        "state": "present",
+        "reasonCode": "observed",
+        "summary": "Observed in this event log.",
+        "evidence": {
+          "eventType": "rddStorageSnapshots",
+          "count": 2
+        }
+      },
+      {
+        "key": "sqlPlan",
+        "state": "unknown",
+        "reasonCode": "parseIncomplete",
+        "summary": "Cannot determine from an incomplete parse."
+      },
+      {
+        "key": "sparkConfiguration",
+        "state": "present",
+        "reasonCode": "observed",
+        "summary": "Observed in this event log.",
+        "evidence": {
+          "eventType": "environmentUpdates",
+          "count": 1
+        }
+      },
+      {
+        "key": "taskCoreTime",
+        "state": "present",
+        "reasonCode": "observed",
+        "summary": "Observed in this event log.",
+        "evidence": {
+          "eventType": "taskRecords",
+          "count": 2
+        }
+      },
+      {
+        "key": "infrastructureContext",
+        "state": "outsideEventLog",
+        "reasonCode": "outsideEventLogScope",
+        "summary": "Available outside local event-log scope."
+      },
+      {
+        "key": "sourceContext",
+        "state": "outsideEventLog",
+        "reasonCode": "outsideEventLogScope",
+        "summary": "Available outside local event-log scope."
+      },
+      {
+        "key": "costContext",
+        "state": "outsideEventLog",
+        "reasonCode": "outsideEventLogScope",
+        "summary": "Available outside local event-log scope."
+      }
+    ]
+  },
+  "detectors": [
+    {
+      "type": "skew",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "ratioWarn": 3,
+        "minTasksForP95": 20,
+        "floorPctWarn": 0.005
+      },
+      "docAnchor": "#bottleneck-skew"
+    },
+    {
+      "type": "stageShape",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "pRatioMax": 0.5,
+        "oiRatioMax": 10,
+        "skewWarn": 3,
+        "lowParallelismFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-stage-shape"
+    },
+    {
+      "type": "shuffle",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minBytes": 52428800,
+        "stageFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-shuffle"
+    },
+    {
+      "type": "partitionSizing",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "skewRatio": 5,
+        "skewFloorBytes": 268435456,
+        "lowParTotalBytes": 1073741824,
+        "lowParMaxTasks": 7,
+        "maxPartBytes": 5368709120
+      },
+      "docAnchor": "#bottleneck-partition-sizing"
+    },
+    {
+      "type": "spill",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "singleTaskDiskGiB": 1,
+        "singleTaskMemGiB": 4,
+        "highDiskGiB": 1,
+        "highTaskDiskMB": 512,
+        "highMemGiB": 4,
+        "medDiskMB": 256,
+        "medMemGiB": 1,
+        "skewRatio": 5,
+        "skewDiskFloorMB": 128,
+        "skewMemFloorMB": 256,
+        "skewMinTasks": 10,
+        "stageFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-spill"
+    },
+    {
+      "type": "gc",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "warnPct100": 10,
+        "lowInfoPct100": 5,
+        "minRunTimeMs": 10000,
+        "lowInfoFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-gc"
+    },
+    {
+      "type": "slowHost",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minHosts": 3,
+        "minTasks": 15,
+        "ratioWarn": 2,
+        "minShare": 0.2,
+        "shareWarn": 0.75,
+        "taskShareWarn": 0.5,
+        "ratioTiers": [
+          1.33,
+          1.78,
+          3.16,
+          10
+        ],
+        "floorMs": 1000,
+        "floorBytes": 67108864,
+        "stageFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-slow-host"
+    },
+    {
+      "type": "stageSlowness",
+      "version": 2,
+      "scope": "stage",
+      "thresholds": {
+        "infoMin": 15
+      },
+      "docAnchor": "#bottleneck-stage-slowness"
+    },
+    {
+      "type": "stageFailed",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {},
+      "docAnchor": "#bottleneck-failures"
+    },
+    {
+      "type": "failures",
+      "version": 2,
+      "scope": "stage",
+      "thresholds": {
+        "minTasks": 10,
+        "warnRate": 0.05,
+        "critRate": 0.2
+      },
+      "docAnchor": "#bottleneck-failures"
+    },
+    {
+      "type": "straggler",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minTasks": 10,
+        "shareWarn": 0.05,
+        "shareWarnAtFloor": 0.025,
+        "warnPct": 0.1,
+        "critPct": 0.2,
+        "floorPctWarn": 0.005,
+        "floorPctCrit": 0.02
+      },
+      "docAnchor": "#bottleneck-straggler"
+    },
+    {
+      "type": "speculationWaste",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minWasted": 5,
+        "minWasteMs": 60000
+      },
+      "docAnchor": "#bottleneck-speculation-waste"
+    },
+    {
+      "type": "retryWaste",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minWasted": 3,
+        "minWasteMs": 30000
+      },
+      "docAnchor": "#bottleneck-retry-waste"
+    },
+    {
+      "type": "tinyTask",
+      "version": 1,
+      "scope": "stage",
+      "thresholds": {
+        "minTasks": 100,
+        "maxP50": 500,
+        "maxP95": 1000,
+        "stageFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-tiny-tasks"
+    },
+    {
+      "type": "incompleteRun",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {}
+    },
+    {
+      "type": "coldStart",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "gapSeconds": 30
+      },
+      "docAnchor": "#bottleneck-cold-start"
+    },
+    {
+      "type": "utilization",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "minUtil": 0.6
+      },
+      "docAnchor": "#bottleneck-utilization"
+    },
+    {
+      "type": "memoryUtilization",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "idleCoreWarn": 0.5,
+        "bandTooSmall": 0.95,
+        "bandTooHigh": 0.7,
+        "wasteBufferMultiplier": 1.5
+      },
+      "docAnchor": "#bottleneck-memory-utilization"
+    },
+    {
+      "type": "cacheUtilization",
+      "version": 2,
+      "scope": "app",
+      "thresholds": {
+        "cachedRatioWarn": 0.5,
+        "cachedRatioInfo": 0.9,
+        "diskRatioWarn": 0.4,
+        "diskRatioInfo": 0.15
+      },
+      "docAnchor": "#bottleneck-cache-utilization"
+    },
+    {
+      "type": "coreLocality",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "minTasks": 50,
+        "warnRatio": 0.15,
+        "critRatio": 0.35
+      },
+      "docAnchor": "#bottleneck-core-locality"
+    },
+    {
+      "type": "autoscalingChurn",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "shortLivedMs": 120000,
+        "warningPct": 0.3,
+        "criticalPct": 0.6,
+        "minExecutors": 5
+      },
+      "docAnchor": "#bottleneck-autoscaling-churn"
+    },
+    {
+      "type": "cachingOpportunity",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "minExecutions": 2
+      },
+      "docAnchor": "#bottleneck-caching-opportunity"
+    },
+    {
+      "type": "jobFailureRate",
+      "version": 1,
+      "scope": "app",
+      "thresholds": {
+        "infoRate": 0.1,
+        "warnRate": 0.3,
+        "critRate": 0.5
+      },
+      "docAnchor": "#bottleneck-job-failure-rate"
+    },
+    {
+      "type": "configAudit",
+      "version": 1,
+      "scope": "config",
+      "thresholds": {},
+      "docAnchor": "#config-shuffle-service"
+    },
+    {
+      "type": "configAudit",
+      "version": 1,
+      "scope": "config",
+      "thresholds": {},
+      "docAnchor": "#config-autoscale-bounds"
+    },
+    {
+      "type": "configAudit",
+      "version": 1,
+      "scope": "config",
+      "thresholds": {},
+      "docAnchor": "#config-serializer"
+    },
+    {
+      "type": "configAudit",
+      "version": 1,
+      "scope": "config",
+      "thresholds": {
+        "floorMB": 384,
+        "floorPct": 0.1
+      },
+      "docAnchor": "#config-memory-overhead"
+    },
+    {
+      "type": "duplicatePlanSubtree",
+      "version": 2,
+      "scope": "sql",
+      "thresholds": {
+        "minSubtreeSize": 3,
+        "minOccurrences": 2,
+        "stageFloorPct": 0.005
+      },
+      "docAnchor": "#bottleneck-duplicate-plan-subtree"
+    },
+    {
+      "type": "smallFiles",
+      "version": 2,
+      "scope": "sql",
+      "thresholds": {
+        "minFiles": 100,
+        "maxAvgFileSizeMB": 3
+      },
+      "docAnchor": "#bottleneck-small-files"
+    },
+    {
+      "type": "broadcastSizing",
+      "version": 2,
+      "scope": "sql",
+      "thresholds": {
+        "broadcastTiers": [
+          10485760,
+          104857600,
+          1073741824,
+          5368709120
+        ],
+        "comparisonTiers": [
+          10737418240,
+          322122547200,
+          1099511627776
+        ],
+        "overBroadcastBytes": 1073741824
+      },
+      "docAnchor": "#bottleneck-broadcast-sizing"
+    }
+  ],
+  "findings": [
+    {
+      "id": "1d473001",
+      "type": "incompleteRun",
+      "name": "Incomplete Run",
+      "tag": "INCMP",
+      "impactBand": "warning",
+      "stageId": null,
+      "metric": "applicationEnd",
+      "value": null,
+      "valueText": "missing",
+      "recommendation": "This event log never recorded an ApplicationEnd event: the capture stopped before the run finished (an in-flight job, a rotated-away log, or a cut-short capture). Findings and metrics elsewhere on this board reflect only what was captured up to that point, not the full run.",
+      "detectorVersion": 1,
+      "evidence": {},
+      "actionLabel": "incomplete run",
+      "impactEstimate": {
+        "basis": "informational",
+        "wallClock": null,
+        "estimateMethod": "none"
+      }
+    },
+    {
+      "id": "414db60e",
+      "type": "configAudit",
+      "name": "Config Audit",
+      "tag": "CFG",
+      "impactBand": "info",
+      "stageId": null,
+      "metric": "config",
+      "value": null,
+      "valueText": "(unset)",
+      "recommendation": "Dynamic allocation is on with no upper bound: set spark.dynamicAllocation.maxExecutors to cap cluster growth.",
+      "detectorVersion": 1,
+      "evidence": {
+        "property": "spark.dynamicAllocation.maxExecutors"
+      },
+      "actionLabel": "Set max executors",
+      "docAnchor": "#config-autoscale-bounds",
+      "impactEstimate": {
+        "basis": "informational",
+        "wallClock": null,
+        "estimateMethod": "none"
+      }
+    },
+    {
+      "id": "6650899b",
+      "type": "configAudit",
+      "name": "Config Audit",
+      "tag": "CFG",
+      "impactBand": "info",
+      "stageId": null,
+      "metric": "config",
+      "value": null,
+      "valueText": "(default JavaSerializer)",
+      "recommendation": "Current serializer is the default JavaSerializer: consider spark.serializer=org.apache.spark.serializer.KryoSerializer for faster, smaller buffers.",
+      "detectorVersion": 1,
+      "evidence": {
+        "property": "spark.serializer"
+      },
+      "actionLabel": "Switch to Kryo",
+      "docAnchor": "#config-serializer",
+      "impactEstimate": {
+        "basis": "informational",
+        "wallClock": null,
+        "estimateMethod": "none"
+      }
+    }
+  ],
+  "recommendations": [
+    {
+      "type": "configAudit",
+      "tag": "CFG",
+      "actionLabel": "Set max executors",
+      "findingCount": 2,
+      "findingIds": [
+        "414db60e",
+        "6650899b"
+      ],
+      "kind": "count",
+      "byImpactBand": {
+        "info": 2
+      },
+      "impact": null,
+      "impactMeaning": null
+    }
+  ],
+  "cleanChecks": [
+    {
+      "type": "skew",
+      "tag": "SKEW",
+      "thresholdSummary": "task duration skew above the configured ratio"
+    },
+    {
+      "type": "stageShape",
+      "tag": "SHAPE",
+      "thresholdSummary": "low parallelism, data explosion, or task-count skew relative to core count"
+    },
+    {
+      "type": "shuffle",
+      "tag": "SHFL",
+      "thresholdSummary": "shuffle read above the configured minimum byte threshold"
+    },
+    {
+      "type": "partitionSizing",
+      "tag": "PART",
+      "thresholdSummary": "partition byte size outside the configured target range"
+    },
+    {
+      "type": "spill",
+      "tag": "SPILL",
+      "thresholdSummary": "single-task disk spill above 1 GiB"
+    },
+    {
+      "type": "gc",
+      "tag": "GC",
+      "thresholdSummary": "JVM GC time share above the configured ratio"
+    },
+    {
+      "type": "slowHost",
+      "tag": "HOST",
+      "thresholdSummary": "a host running 2x+ slower than its peers by mean task duration (per-executor byte/time dimensions use a separate, narrower ratio ladder starting at 1.33x; only those can reach critical on ratio alone)"
+    },
+    {
+      "type": "stageSlowness",
+      "tag": "SLOW",
+      "thresholdSummary": "a stage running far longer than its peers, not attributable to a single slow host"
+    },
+    {
+      "type": "stageFailed",
+      "tag": "SFAIL",
+      "thresholdSummary": "a stage that failed outright"
+    },
+    {
+      "type": "failures",
+      "tag": "FAIL",
+      "thresholdSummary": "task failures above the configured rate"
+    },
+    {
+      "type": "straggler",
+      "tag": "STRAG",
+      "thresholdSummary": "one or more tasks finishing far after the rest of their stage"
+    },
+    {
+      "type": "speculationWaste",
+      "tag": "SPEC",
+      "thresholdSummary": "speculative task attempts that completed after the original"
+    },
+    {
+      "type": "retryWaste",
+      "tag": "RETRY",
+      "thresholdSummary": "retried task attempts consuming executor time"
+    },
+    {
+      "type": "tinyTask",
+      "tag": "TINY",
+      "thresholdSummary": "median task duration below the configured floor"
+    },
+    {
+      "type": "coldStart",
+      "tag": "COLD",
+      "thresholdSummary": "executor startup time above the configured floor"
+    },
+    {
+      "type": "cacheUtilization",
+      "tag": "CSTOR",
+      "thresholdSummary": "cached partitions evicted or spilled to disk"
+    },
+    {
+      "type": "coreLocality",
+      "tag": "LOCAL",
+      "thresholdSummary": "task placement missing data-local core assignment"
+    },
+    {
+      "type": "cachingOpportunity",
+      "tag": "CACHE",
+      "thresholdSummary": "a dataset re-read from source multiple times with no cache/persist"
+    },
+    {
+      "type": "jobFailureRate",
+      "tag": "JOBS",
+      "thresholdSummary": "job failure rate above the configured threshold"
+    },
+    {
+      "type": "duplicatePlanSubtree",
+      "tag": "PLAN",
+      "thresholdSummary": "the same physical plan subtree executed more than once"
+    },
+    {
+      "type": "smallFiles",
+      "tag": "PLAN",
+      "thresholdSummary": "output files below the configured target size"
+    },
+    {
+      "type": "overBroadcast",
+      "tag": "PLAN",
+      "thresholdSummary": "a broadcast join above the configured size ceiling"
+    },
+    {
+      "type": "underBroadcast",
+      "tag": "PLAN",
+      "thresholdSummary": "a join below the configured size floor that skipped broadcast"
+    }
+  ],
+  "notRunChecks": [
+    {
+      "type": "utilization",
+      "tag": "UTIL",
+      "thresholdSummary": "core occupancy below the configured floor across the run",
+      "reason": "The log has no end-of-run record, so the core usage, memory and executor churn checks had no run length to measure."
+    },
+    {
+      "type": "memoryUtilization",
+      "tag": "MEM",
+      "thresholdSummary": "executor heap usage outside the configured band",
+      "reason": "The log has no end-of-run record, so the core usage, memory and executor churn checks had no run length to measure."
+    },
+    {
+      "type": "autoscalingChurn",
+      "tag": "CHRN",
+      "thresholdSummary": "executor add/remove churn above the configured rate",
+      "reason": "The log has no end-of-run record, so the core usage, memory and executor churn checks had no run length to measure."
+    }
+  ]
+}

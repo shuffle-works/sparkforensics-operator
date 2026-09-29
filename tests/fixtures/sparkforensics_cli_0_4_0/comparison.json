@@ -1,0 +1,1064 @@
+{
+  "candidate": {
+    "schemaVersion": 5,
+    "summary": {
+      "app": {
+        "id": "app-1",
+        "name": "spark-event-corpus-workload",
+        "sparkVersion": "4.2.0"
+      },
+      "stageCount": 5,
+      "jobCount": 5,
+      "sqlExecutionCount": 1,
+      "findingCount": 7,
+      "impactBandCounts": {
+        "critical": 3,
+        "warning": 0,
+        "info": 4
+      },
+      "actionableFindingCount": 5,
+      "actionableImpactBandCounts": {
+        "critical": 3,
+        "warning": 0,
+        "info": 2
+      },
+      "clean": false,
+      "outcome": {
+        "failedJobs": 0,
+        "totalJobs": 5,
+        "failureReason": null,
+        "failureReasonStageId": null
+      },
+      "runShape": {
+        "wallClockMs": 30109,
+        "efficiencyPct": 85,
+        "unusedCoreTimePct": 15,
+        "etlPhasesMs": {
+          "extract": 1047,
+          "transform": 27037,
+          "load": 23007
+        },
+        "peakBusyCores": 1.8299338263915923
+      }
+    },
+    "verdict": {
+      "title": "Start with Stage 7",
+      "summary": [
+        "All 5 jobs succeeded.",
+        "5 findings in 3 places.",
+        "The first fix could save up to 12.0s of this 30.1s run.",
+        "Findings in the same stage usually share one cause, so they are grouped together and their savings overlap rather than add up."
+      ],
+      "steps": [
+        {
+          "key": "stage:7",
+          "stageId": 7,
+          "type": "tinyTask",
+          "tag": "TINY",
+          "leadFindingId": "85d3df70",
+          "actionLabel": "Coalesce small tasks",
+          "recommendation": "Many small tasks (2000, P50 38ms): scheduler overhead may dominate. Try lower spark.sql.shuffle.partitions or .coalesce(200).",
+          "impact": "12.0s",
+          "impactMeaning": "of run time",
+          "relatedTypes": [
+            "smallFiles",
+            "gc"
+          ],
+          "text": "Coalesce small tasks in Stage 7: Many small tasks (2000, P50 38ms): scheduler overhead may dominate. Try lower spark.sql.shuffle.partitions or .coalesce(200). Potential savings: 12.0s of run time"
+        },
+        {
+          "key": "app:configAudit",
+          "stageId": null,
+          "type": "configAudit",
+          "tag": "CFG",
+          "leadFindingId": "6650899b",
+          "actionLabel": "Switch to Kryo",
+          "recommendation": "Current serializer is the default JavaSerializer: consider spark.serializer=org.apache.spark.serializer.KryoSerializer for faster, smaller buffers.",
+          "impact": null,
+          "impactMeaning": null,
+          "relatedTypes": [],
+          "text": "Switch to Kryo: Current serializer is the default JavaSerializer: consider spark.serializer=org.apache.spark.serializer.KryoSerializer for faster, smaller buffers."
+        },
+        {
+          "key": "stages:duplicatePlanSubtree:0,2",
+          "stageId": null,
+          "type": "duplicatePlanSubtree",
+          "tag": "PLAN",
+          "leadFindingId": "378d9570",
+          "actionLabel": "Dedupe repeated subtree",
+          "recommendation": "A 3-node subtree rooted at WholeStageCodegen (1) repeats 2x in this plan: consider caching/persisting the shared computation or check for a duplicated query branch. Their filters, columns or scanned tables differ, so the repeats may compute different data.",
+          "impact": null,
+          "impactMeaning": null,
+          "relatedTypes": [],
+          "text": "Dedupe repeated subtree: A 3-node subtree rooted at WholeStageCodegen (1) repeats 2x in this plan: consider caching/persisting the shared computation or check for a duplicated query branch. Their filters, columns or scanned tables differ, so the repeats may compute different data."
+        }
+      ],
+      "remainingPlaces": 0,
+      "copyText": "Spark run spark-event-corpus-workload: Start with Stage 7\n\n1. Coalesce small tasks in Stage 7: Many small tasks (2000, P50 38ms): scheduler overhead may dominate. Try lower spark.sql.shuffle.partitions or .coalesce(200). Potential savings: 12.0s of run time\n2. Switch to Kryo: Current serializer is the default JavaSerializer: consider spark.serializer=org.apache.spark.serializer.KryoSerializer for faster, smaller buffers.\n3. Dedupe repeated subtree: A 3-node subtree rooted at WholeStageCodegen (1) repeats 2x in this plan: consider caching/persisting the shared computation or check for a duplicated query branch. Their filters, columns or scanned tables differ, so the repeats may compute different data."
+    },
+    "evidenceAvailability": {
+      "schemaVersion": 1,
+      "entries": [
+        {
+          "key": "executorMetrics",
+          "state": "notEmitted",
+          "reasonCode": "noObservedExecutorMetrics",
+          "summary": "Not emitted by this event log."
+        },
+        {
+          "key": "rddStorageSnapshots",
+          "state": "present",
+          "reasonCode": "observed",
+          "summary": "Observed in this event log.",
+          "evidence": {
+            "eventType": "rddStorageSnapshots",
+            "count": 34
+          }
+        },
+        {
+          "key": "sqlPlan",
+          "state": "present",
+          "reasonCode": "observed",
+          "summary": "Observed in this event log.",
+          "evidence": {
+            "eventType": "resolvedSqlPlans",
+            "count": 1
+          }
+        },
+        {
+          "key": "sparkConfiguration",
+          "state": "present",
+          "reasonCode": "observed",
+          "summary": "Observed in this event log.",
+          "evidence": {
+            "eventType": "environmentUpdates",
+            "count": 1
+          }
+        },
+        {
+          "key": "taskCoreTime",
+          "state": "present",
+          "reasonCode": "observed",
+          "summary": "Observed in this event log.",
+          "evidence": {
+            "eventType": "taskRecords",
+            "count": 2016
+          }
+        },
+        {
+          "key": "infrastructureContext",
+          "state": "outsideEventLog",
+          "reasonCode": "outsideEventLogScope",
+          "summary": "Available outside local event-log scope."
+        },
+        {
+          "key": "sourceContext",
+          "state": "outsideEventLog",
+          "reasonCode": "outsideEventLogScope",
+          "summary": "Available outside local event-log scope."
+        },
+        {
+          "key": "costContext",
+          "state": "outsideEventLog",
+          "reasonCode": "outsideEventLogScope",
+          "summary": "Available outside local event-log scope."
+        }
+      ]
+    },
+    "detectors": [
+      {
+        "type": "skew",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "ratioWarn": 3,
+          "minTasksForP95": 20,
+          "floorPctWarn": 0.005
+        },
+        "docAnchor": "#bottleneck-skew"
+      },
+      {
+        "type": "stageShape",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "pRatioMax": 0.5,
+          "oiRatioMax": 10,
+          "skewWarn": 3,
+          "lowParallelismFloorPct": 0.005
+        },
+        "docAnchor": "#bottleneck-stage-shape"
+      },
+      {
+        "type": "shuffle",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "minBytes": 52428800,
+          "stageFloorPct": 0.005
+        },
+        "docAnchor": "#bottleneck-shuffle"
+      },
+      {
+        "type": "partitionSizing",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "skewRatio": 5,
+          "skewFloorBytes": 268435456,
+          "lowParTotalBytes": 1073741824,
+          "lowParMaxTasks": 7,
+          "maxPartBytes": 5368709120
+        },
+        "docAnchor": "#bottleneck-partition-sizing"
+      },
+      {
+        "type": "spill",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "singleTaskDiskGiB": 1,
+          "singleTaskMemGiB": 4,
+          "highDiskGiB": 1,
+          "highTaskDiskMB": 512,
+          "highMemGiB": 4,
+          "medDiskMB": 256,
+          "medMemGiB": 1,
+          "skewRatio": 5,
+          "skewDiskFloorMB": 128,
+          "skewMemFloorMB": 256,
+          "skewMinTasks": 10,
+          "stageFloorPct": 0.005
+        },
+        "docAnchor": "#bottleneck-spill"
+      },
+      {
+        "type": "gc",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "warnPct100": 10,
+          "lowInfoPct100": 5,
+          "minRunTimeMs": 10000,
+          "lowInfoFloorPct": 0.005
+        },
+        "docAnchor": "#bottleneck-gc"
+      },
+      {
+        "type": "slowHost",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "minHosts": 3,
+          "minTasks": 15,
+          "ratioWarn": 2,
+          "minShare": 0.2,
+          "shareWarn": 0.75,
+          "taskShareWarn": 0.5,
+          "ratioTiers": [
+            1.33,
+            1.78,
+            3.16,
+            10
+          ],
+          "floorMs": 1000,
+          "floorBytes": 67108864,
+          "stageFloorPct": 0.005
+        },
+        "docAnchor": "#bottleneck-slow-host"
+      },
+      {
+        "type": "stageSlowness",
+        "version": 2,
+        "scope": "stage",
+        "thresholds": {
+          "infoMin": 15
+        },
+        "docAnchor": "#bottleneck-stage-slowness"
+      },
+      {
+        "type": "stageFailed",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {},
+        "docAnchor": "#bottleneck-failures"
+      },
+      {
+        "type": "failures",
+        "version": 2,
+        "scope": "stage",
+        "thresholds": {
+          "minTasks": 10,
+          "warnRate": 0.05,
+          "critRate": 0.2
+        },
+        "docAnchor": "#bottleneck-failures"
+      },
+      {
+        "type": "straggler",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "minTasks": 10,
+          "shareWarn": 0.05,
+          "shareWarnAtFloor": 0.025,
+          "warnPct": 0.1,
+          "critPct": 0.2,
+          "floorPctWarn": 0.005,
+          "floorPctCrit": 0.02
+        },
+        "docAnchor": "#bottleneck-straggler"
+      },
+      {
+        "type": "speculationWaste",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "minWasted": 5,
+          "minWasteMs": 60000
+        },
+        "docAnchor": "#bottleneck-speculation-waste"
+      },
+      {
+        "type": "retryWaste",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "minWasted": 3,
+          "minWasteMs": 30000
+        },
+        "docAnchor": "#bottleneck-retry-waste"
+      },
+      {
+        "type": "tinyTask",
+        "version": 1,
+        "scope": "stage",
+        "thresholds": {
+          "minTasks": 100,
+          "maxP50": 500,
+          "maxP95": 1000,
+          "stageFloorPct": 0.005
+        },
+        "docAnchor": "#bottleneck-tiny-tasks"
+      },
+      {
+        "type": "incompleteRun",
+        "version": 1,
+        "scope": "app",
+        "thresholds": {}
+      },
+      {
+        "type": "coldStart",
+        "version": 1,
+        "scope": "app",
+        "thresholds": {
+          "gapSeconds": 30
+        },
+        "docAnchor": "#bottleneck-cold-start"
+      },
+      {
+        "type": "utilization",
+        "version": 1,
+        "scope": "app",
+        "thresholds": {
+          "minUtil": 0.6
+        },
+        "docAnchor": "#bottleneck-utilization"
+      },
+      {
+        "type": "memoryUtilization",
+        "version": 1,
+        "scope": "app",
+        "thresholds": {
+          "idleCoreWarn": 0.5,
+          "bandTooSmall": 0.95,
+          "bandTooHigh": 0.7,
+          "wasteBufferMultiplier": 1.5
+        },
+        "docAnchor": "#bottleneck-memory-utilization"
+      },
+      {
+        "type": "cacheUtilization",
+        "version": 2,
+        "scope": "app",
+        "thresholds": {
+          "cachedRatioWarn": 0.5,
+          "cachedRatioInfo": 0.9,
+          "diskRatioWarn": 0.4,
+          "diskRatioInfo": 0.15
+        },
+        "docAnchor": "#bottleneck-cache-utilization"
+      },
+      {
+        "type": "coreLocality",
+        "version": 1,
+        "scope": "app",
+        "thresholds": {
+          "minTasks": 50,
+          "warnRatio": 0.15,
+          "critRatio": 0.35
+        },
+        "docAnchor": "#bottleneck-core-locality"
+      },
+      {
+        "type": "autoscalingChurn",
+        "version": 1,
+        "scope": "app",
+        "thresholds": {
+          "shortLivedMs": 120000,
+          "warningPct": 0.3,
+          "criticalPct": 0.6,
+          "minExecutors": 5
+        },
+        "docAnchor": "#bottleneck-autoscaling-churn"
+      },
+      {
+        "type": "cachingOpportunity",
+        "version": 1,
+        "scope": "app",
+        "thresholds": {
+          "minExecutions": 2
+        },
+        "docAnchor": "#bottleneck-caching-opportunity"
+      },
+      {
+        "type": "jobFailureRate",
+        "version": 1,
+        "scope": "app",
+        "thresholds": {
+          "infoRate": 0.1,
+          "warnRate": 0.3,
+          "critRate": 0.5
+        },
+        "docAnchor": "#bottleneck-job-failure-rate"
+      },
+      {
+        "type": "configAudit",
+        "version": 1,
+        "scope": "config",
+        "thresholds": {},
+        "docAnchor": "#config-shuffle-service"
+      },
+      {
+        "type": "configAudit",
+        "version": 1,
+        "scope": "config",
+        "thresholds": {},
+        "docAnchor": "#config-autoscale-bounds"
+      },
+      {
+        "type": "configAudit",
+        "version": 1,
+        "scope": "config",
+        "thresholds": {},
+        "docAnchor": "#config-serializer"
+      },
+      {
+        "type": "configAudit",
+        "version": 1,
+        "scope": "config",
+        "thresholds": {
+          "floorMB": 384,
+          "floorPct": 0.1
+        },
+        "docAnchor": "#config-memory-overhead"
+      },
+      {
+        "type": "duplicatePlanSubtree",
+        "version": 2,
+        "scope": "sql",
+        "thresholds": {
+          "minSubtreeSize": 3,
+          "minOccurrences": 2,
+          "stageFloorPct": 0.005
+        },
+        "docAnchor": "#bottleneck-duplicate-plan-subtree"
+      },
+      {
+        "type": "smallFiles",
+        "version": 2,
+        "scope": "sql",
+        "thresholds": {
+          "minFiles": 100,
+          "maxAvgFileSizeMB": 3
+        },
+        "docAnchor": "#bottleneck-small-files"
+      },
+      {
+        "type": "broadcastSizing",
+        "version": 2,
+        "scope": "sql",
+        "thresholds": {
+          "broadcastTiers": [
+            10485760,
+            104857600,
+            1073741824,
+            5368709120
+          ],
+          "comparisonTiers": [
+            10737418240,
+            322122547200,
+            1099511627776
+          ],
+          "overBroadcastBytes": 1073741824
+        },
+        "docAnchor": "#bottleneck-broadcast-sizing"
+      }
+    ],
+    "findings": [
+      {
+        "id": "bc321fd1",
+        "type": "gc",
+        "name": "GC Pressure",
+        "tag": "GC",
+        "impactBand": "critical",
+        "stageId": 7,
+        "metric": "gcPct",
+        "value": 13.2,
+        "recommendation": "GC consumed 13.2% of executor run time: reduce object creation, use primitive types, avoid UDFs, increase executor memory.",
+        "detectorVersion": 1,
+        "evidence": {},
+        "actionLabel": "Reduce GC pressure",
+        "confidence": "low",
+        "validationRequired": "This finding is gated by a 10-second minimum-runtime floor, our own noise floor for this metric.",
+        "docAnchor": "#bottleneck-gc",
+        "impactEstimate": {
+          "basis": "serial",
+          "wallClock": {
+            "low": 3032.3594335798966,
+            "high": 3032.3594335798966
+          },
+          "estimateMethod": "modeled",
+          "rawWaste": {
+            "value": 5203,
+            "unit": "coreMs"
+          }
+        },
+        "impact": "3.0s",
+        "impactMeaning": "of run time"
+      },
+      {
+        "id": "ab476dfb",
+        "type": "smallFiles",
+        "name": "Small Files",
+        "tag": "PLAN",
+        "impactBand": "critical",
+        "stageId": null,
+        "metric": "avgFileSizeBytes",
+        "value": 27812,
+        "recommendation": "807 small files were written at Execute InsertIntoHadoopFsRelationCommand: repartition or coalesce before writing to raise the average file size.",
+        "detectorVersion": 2,
+        "evidence": {
+          "direction": "write",
+          "executionId": 0,
+          "fileCount": 807,
+          "nodeName": "Execute InsertIntoHadoopFsRelationCommand",
+          "stageIds": [
+            7
+          ]
+        },
+        "actionLabel": "Coalesce output files",
+        "docAnchor": "#bottleneck-small-files",
+        "impactEstimate": {
+          "basis": "serial",
+          "wallClock": {
+            "low": 8070,
+            "high": 8070
+          },
+          "estimateMethod": "modeled",
+          "rawWaste": {
+            "value": 8070,
+            "unit": "ms"
+          }
+        },
+        "impact": "8.1s",
+        "impactMeaning": "of run time"
+      },
+      {
+        "id": "85d3df70",
+        "type": "tinyTask",
+        "name": "Tiny Tasks",
+        "tag": "TINY",
+        "impactBand": "critical",
+        "stageId": 7,
+        "metric": "taskDurationP50",
+        "value": 38,
+        "recommendation": "Many small tasks (2000, P50 38ms): scheduler overhead may dominate. Try lower spark.sql.shuffle.partitions or .coalesce(200).",
+        "detectorVersion": 1,
+        "evidence": {},
+        "actionLabel": "Coalesce small tasks",
+        "docAnchor": "#bottleneck-tiny-tasks",
+        "impactEstimate": {
+          "basis": "serial",
+          "wallClock": {
+            "low": 12011.552589590581,
+            "high": 12011.552589590581
+          },
+          "estimateMethod": "measured",
+          "rawWaste": {
+            "value": 12011.552589590581,
+            "unit": "ms"
+          }
+        },
+        "impact": "12.0s",
+        "impactMeaning": "of run time"
+      },
+      {
+        "id": "72b56cce",
+        "type": "cacheUtilization",
+        "name": "Cache Utilization",
+        "tag": "CSTOR",
+        "impactBand": "info",
+        "stageId": null,
+        "metric": "persistedRdds",
+        "value": 1,
+        "recommendation": "1 persisted RDD has no cache-storage evidence in this log, so eviction and disk spillover can't be checked: Spark 2.3+ records cached sizes only as block updates, which need spark.eventLog.logBlockUpdates.enabled=true.",
+        "detectorVersion": 2,
+        "evidence": {
+          "dataUnavailable": true,
+          "variant": "storageUnobserved"
+        },
+        "actionLabel": "Enable block-update logging",
+        "docAnchor": "#bottleneck-cache-utilization",
+        "impactEstimate": {
+          "basis": "informational",
+          "wallClock": null,
+          "estimateMethod": "none"
+        }
+      },
+      {
+        "id": "6650899b",
+        "type": "configAudit",
+        "name": "Config Audit",
+        "tag": "CFG",
+        "impactBand": "info",
+        "stageId": null,
+        "metric": "config",
+        "value": null,
+        "valueText": "(default JavaSerializer)",
+        "recommendation": "Current serializer is the default JavaSerializer: consider spark.serializer=org.apache.spark.serializer.KryoSerializer for faster, smaller buffers.",
+        "detectorVersion": 1,
+        "evidence": {
+          "property": "spark.serializer"
+        },
+        "actionLabel": "Switch to Kryo",
+        "docAnchor": "#config-serializer",
+        "impactEstimate": {
+          "basis": "informational",
+          "wallClock": null,
+          "estimateMethod": "none"
+        }
+      },
+      {
+        "id": "378d9570",
+        "type": "duplicatePlanSubtree",
+        "name": "Duplicate Plan Subtree",
+        "tag": "PLAN",
+        "impactBand": "info",
+        "stageId": null,
+        "metric": "subtreeOccurrences",
+        "value": 2,
+        "recommendation": "A 3-node subtree rooted at WholeStageCodegen (1) repeats 2x in this plan: consider caching/persisting the shared computation or check for a duplicated query branch. Their filters, columns or scanned tables differ, so the repeats may compute different data.",
+        "detectorVersion": 2,
+        "evidence": {
+          "executionId": 0,
+          "groupIndex": 0,
+          "occurrencesIdentical": false,
+          "rootName": "WholeStageCodegen (1)",
+          "sampleRelation": null,
+          "stageIds": [
+            0,
+            2
+          ],
+          "stageShares": {
+            "0": 1,
+            "2": 0.5
+          },
+          "subtreeSize": 3
+        },
+        "actionLabel": "Dedupe repeated subtree",
+        "confidence": "low",
+        "validationRequired": "Duplicate-subtree matching compares operator names and metric names only, not literal values or expr IDs: confirm the repeated work is real in the Spark SQL plan tab before acting.",
+        "docAnchor": "#bottleneck-duplicate-plan-subtree",
+        "impactEstimate": {
+          "basis": "informational",
+          "wallClock": null,
+          "estimateMethod": "none"
+        }
+      },
+      {
+        "id": "1c68cda2",
+        "type": "memoryUtilization",
+        "name": "Memory Utilization",
+        "tag": "MEM",
+        "impactBand": "info",
+        "stageId": null,
+        "metric": "memoryBand",
+        "value": null,
+        "recommendation": "Per-executor memory usage requires spark.eventLog.logStageExecutorMetrics=true: not enabled for this run.",
+        "detectorVersion": 1,
+        "evidence": {
+          "dataUnavailable": true,
+          "variant": "memoryBand"
+        },
+        "actionLabel": "Enable memory metrics",
+        "docAnchor": "#bottleneck-memory-utilization",
+        "impactEstimate": {
+          "basis": "informational",
+          "wallClock": null,
+          "estimateMethod": "modeled"
+        }
+      }
+    ],
+    "recommendations": [
+      {
+        "type": "tinyTask",
+        "tag": "TINY",
+        "actionLabel": "Coalesce small tasks",
+        "findingCount": 1,
+        "findingIds": [
+          "85d3df70"
+        ],
+        "kind": "time",
+        "stageCount": 1,
+        "recoverableMsHigh": 12011.552589590581,
+        "impact": "12.0s",
+        "impactMeaning": "of run time"
+      },
+      {
+        "type": "smallFiles",
+        "tag": "PLAN",
+        "actionLabel": "Coalesce output files",
+        "findingCount": 1,
+        "findingIds": [
+          "ab476dfb"
+        ],
+        "kind": "time",
+        "stageCount": 1,
+        "recoverableMsHigh": 8070,
+        "impact": "8.1s",
+        "impactMeaning": "of run time"
+      },
+      {
+        "type": "gc",
+        "tag": "GC",
+        "actionLabel": "Reduce GC pressure",
+        "findingCount": 1,
+        "findingIds": [
+          "bc321fd1"
+        ],
+        "kind": "time",
+        "stageCount": 1,
+        "recoverableMsHigh": 3032.3594335798966,
+        "impact": "3.0s",
+        "impactMeaning": "of run time"
+      },
+      {
+        "type": "duplicatePlanSubtree",
+        "tag": "PLAN",
+        "actionLabel": "Dedupe repeated subtree",
+        "findingCount": 1,
+        "findingIds": [
+          "378d9570"
+        ],
+        "kind": "count",
+        "byImpactBand": {
+          "info": 1
+        },
+        "impact": null,
+        "impactMeaning": null
+      },
+      {
+        "type": "configAudit",
+        "tag": "CFG",
+        "actionLabel": "Switch to Kryo",
+        "findingCount": 1,
+        "findingIds": [
+          "6650899b"
+        ],
+        "kind": "count",
+        "byImpactBand": {
+          "info": 1
+        },
+        "impact": null,
+        "impactMeaning": null
+      }
+    ],
+    "cleanChecks": [
+      {
+        "type": "skew",
+        "tag": "SKEW",
+        "thresholdSummary": "task duration skew above the configured ratio"
+      },
+      {
+        "type": "stageShape",
+        "tag": "SHAPE",
+        "thresholdSummary": "low parallelism, data explosion, or task-count skew relative to core count"
+      },
+      {
+        "type": "shuffle",
+        "tag": "SHFL",
+        "thresholdSummary": "shuffle read above the configured minimum byte threshold"
+      },
+      {
+        "type": "partitionSizing",
+        "tag": "PART",
+        "thresholdSummary": "partition byte size outside the configured target range"
+      },
+      {
+        "type": "spill",
+        "tag": "SPILL",
+        "thresholdSummary": "single-task disk spill above 1 GiB"
+      },
+      {
+        "type": "slowHost",
+        "tag": "HOST",
+        "thresholdSummary": "a host running 2x+ slower than its peers by mean task duration (per-executor byte/time dimensions use a separate, narrower ratio ladder starting at 1.33x; only those can reach critical on ratio alone)"
+      },
+      {
+        "type": "stageSlowness",
+        "tag": "SLOW",
+        "thresholdSummary": "a stage running far longer than its peers, not attributable to a single slow host"
+      },
+      {
+        "type": "stageFailed",
+        "tag": "SFAIL",
+        "thresholdSummary": "a stage that failed outright"
+      },
+      {
+        "type": "failures",
+        "tag": "FAIL",
+        "thresholdSummary": "task failures above the configured rate"
+      },
+      {
+        "type": "straggler",
+        "tag": "STRAG",
+        "thresholdSummary": "one or more tasks finishing far after the rest of their stage"
+      },
+      {
+        "type": "speculationWaste",
+        "tag": "SPEC",
+        "thresholdSummary": "speculative task attempts that completed after the original"
+      },
+      {
+        "type": "retryWaste",
+        "tag": "RETRY",
+        "thresholdSummary": "retried task attempts consuming executor time"
+      },
+      {
+        "type": "incompleteRun",
+        "tag": "INCMP",
+        "thresholdSummary": "an event log missing its terminal ApplicationEnd/job-completion event"
+      },
+      {
+        "type": "coldStart",
+        "tag": "COLD",
+        "thresholdSummary": "executor startup time above the configured floor"
+      },
+      {
+        "type": "utilization",
+        "tag": "UTIL",
+        "thresholdSummary": "core occupancy below the configured floor across the run"
+      },
+      {
+        "type": "coreLocality",
+        "tag": "LOCAL",
+        "thresholdSummary": "task placement missing data-local core assignment"
+      },
+      {
+        "type": "autoscalingChurn",
+        "tag": "CHRN",
+        "thresholdSummary": "executor add/remove churn above the configured rate"
+      },
+      {
+        "type": "cachingOpportunity",
+        "tag": "CACHE",
+        "thresholdSummary": "a dataset re-read from source multiple times with no cache/persist"
+      },
+      {
+        "type": "jobFailureRate",
+        "tag": "JOBS",
+        "thresholdSummary": "job failure rate above the configured threshold"
+      },
+      {
+        "type": "overBroadcast",
+        "tag": "PLAN",
+        "thresholdSummary": "a broadcast join above the configured size ceiling"
+      },
+      {
+        "type": "underBroadcast",
+        "tag": "PLAN",
+        "thresholdSummary": "a join below the configured size floor that skipped broadcast"
+      }
+    ],
+    "notRunChecks": [
+      {
+        "type": "memoryUtilization",
+        "tag": "MEM",
+        "thresholdSummary": "executor heap usage outside the configured band",
+        "reason": "Per-executor memory usage requires spark.eventLog.logStageExecutorMetrics=true: not enabled for this run."
+      }
+    ]
+  },
+  "comparison": {
+    "verdict": {
+      "title": "Run B finished 13.0s slower than run A (76%)",
+      "tone": "worse",
+      "sentences": [
+        "Worse in run B: Task skew (p95), GC time, Executor run-time.",
+        "New or more frequent in run B: Garbage collection pressure.",
+        "Less frequent in run B: Memory utilization, Task skew, Straggler tasks, Low utilization."
+      ]
+    },
+    "confidence": "low",
+    "reason": "Only 0% of stages matched between runs, so per-stage rows mostly compare unrelated work.",
+    "matchedCoverage": 0,
+    "metrics": [
+      {
+        "key": "wallClock",
+        "label": "Wall-clock duration",
+        "baseline": 17155,
+        "candidate": 30109,
+        "delta": 12954,
+        "direction": "regression"
+      },
+      {
+        "key": "shuffleSpill",
+        "label": "Shuffle spill",
+        "baseline": 0,
+        "candidate": 0,
+        "delta": 0,
+        "direction": "unchanged"
+      },
+      {
+        "key": "taskSkew",
+        "label": "Task skew (p95)",
+        "baseline": 0.7266331658291457,
+        "candidate": 0.9238237490664675,
+        "delta": 0.19719058323732175,
+        "direction": "regression"
+      },
+      {
+        "key": "failedTaskRate",
+        "label": "Failed-task rate",
+        "baseline": 0,
+        "candidate": 0,
+        "delta": 0,
+        "direction": "unchanged"
+      },
+      {
+        "key": "diskSpill",
+        "label": "Disk spill",
+        "baseline": 0,
+        "candidate": 0,
+        "delta": 0,
+        "direction": "unchanged"
+      },
+      {
+        "key": "gcTime",
+        "label": "GC time",
+        "baseline": 1269,
+        "candidate": 5527,
+        "delta": 4258,
+        "direction": "regression"
+      },
+      {
+        "key": "inputBytes",
+        "label": "Input read",
+        "baseline": 9608236,
+        "candidate": 9607251,
+        "delta": -985,
+        "direction": "neutral"
+      },
+      {
+        "key": "outputBytes",
+        "label": "Output written",
+        "baseline": 21594279,
+        "candidate": 22444630,
+        "delta": 850351,
+        "direction": "neutral"
+      },
+      {
+        "key": "executorRunTime",
+        "label": "Executor run-time",
+        "baseline": 19056,
+        "candidate": 47011,
+        "delta": 27955,
+        "direction": "regression"
+      },
+      {
+        "key": "taskCount",
+        "label": "Task count",
+        "baseline": 208,
+        "candidate": 2016,
+        "delta": 1808,
+        "direction": "neutral"
+      },
+      {
+        "key": "executorsAdded",
+        "label": "Executors added",
+        "baseline": 2,
+        "candidate": 2,
+        "delta": 0,
+        "direction": "unchanged"
+      }
+    ],
+    "findings": {
+      "introduced": [
+        {
+          "rule": "gc",
+          "type": "gc",
+          "impactBand": "critical",
+          "baseCount": 0,
+          "candCount": 1,
+          "delta": 1,
+          "stages": [
+            "$anonfun$withThreadLocalCaptured$1 at CompletableFuture.java:1768"
+          ]
+        }
+      ],
+      "resolved": [
+        {
+          "rule": "memoryUtilization",
+          "type": "memoryUtilization",
+          "impactBand": "warning",
+          "baseCount": 1,
+          "candCount": 0,
+          "delta": -1,
+          "stages": []
+        },
+        {
+          "rule": "skew",
+          "type": "skew",
+          "impactBand": "critical",
+          "baseCount": 1,
+          "candCount": 0,
+          "delta": -1,
+          "stages": [
+            "$anonfun$withThreadLocalCaptured$1 at CompletableFuture.java:1768"
+          ]
+        },
+        {
+          "rule": "straggler",
+          "type": "straggler",
+          "impactBand": "critical",
+          "baseCount": 1,
+          "candCount": 0,
+          "delta": -1,
+          "stages": [
+            "$anonfun$withThreadLocalCaptured$1 at CompletableFuture.java:1768"
+          ]
+        },
+        {
+          "rule": "utilization",
+          "type": "utilization",
+          "impactBand": "info",
+          "baseCount": 1,
+          "candCount": 0,
+          "delta": -1,
+          "stages": []
+        }
+      ]
+    }
+  }
+}
