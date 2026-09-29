@@ -31,15 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Requires `sparkforensics-cli` 0.4.0 or newer. The operator reads its
-  report schema 5, where a finding's text figure is in `valueText` and its
-  `value` is always a number or `null`, and a report with an older
-  `schemaVersion` fails the task with an error naming the required CLI
-  version.
-- The persisted report and `Report` carry the `verdict` and
-  `notRunChecks` sections 0.4.0 adds (`Report.verdict`,
-  `Report.not_run_checks`). Before this, the operator persisted only the
-  sections it listed, so these two would have been dropped.
+- The operator reads report schema 5, where a finding's text figure is in
+  `valueText` and its `value` is always a number or `null`. A report with
+  an older `schemaVersion` fails the task.
+- The persisted report and `Report` carry the CLI's `verdict` and
+  `notRunChecks` sections (`Report.verdict`, `Report.not_run_checks`).
+  Before this, the operator persisted only the sections it listed, so
+  these two would have been dropped.
 
 ## [0.2.0] - 2026-09-25
 

@@ -11,7 +11,7 @@ threshold is breached.
 ## Pages
 
 - [Getting started](getting-started.md): install, extras, the Node.js and
-  `sparkforensics-cli` 0.4.0+ prerequisite on the host that runs the analysis,
+  `sparkforensics-cli` prerequisite on the host that runs the analysis,
   and example DAG wiring.
 - [Configuration](configuration.md): every operator argument, the
   callback factory, log source and analyze hooks, thresholds, the

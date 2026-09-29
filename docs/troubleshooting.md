@@ -35,10 +35,6 @@ login shell printing a banner or message to stdout in non-interactive
 sessions (an `echo` in `~/.bashrc`, say); make it print only for
 interactive shells.
 
-If the message says `report schemaVersion ... is not supported`, the host
-runs a `sparkforensics-cli` older than 0.4.0. Upgrade it with
-`npm install -g "sparkforensics-cli@>=0.4.0"`.
-
 #### "sparkforensics-analyze exited with unexpected code {returncode}"
 
 The CLI exited with a code other than 0, 1, 2 or 3, for example after an
