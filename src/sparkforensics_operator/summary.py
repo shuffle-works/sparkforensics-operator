@@ -73,6 +73,7 @@ def build_summary(
         "breached_thresholds": [r.name for r in report.threshold_results if r.status == "violation"],
         "inconclusive_thresholds": [r.name for r in report.threshold_results if r.status == "inconclusive"],
         "exit_code": report.exit_code,
+        "cli_version": report.cli_version,
     }
     if report.comparison is not None:
         summary["comparison"] = _comparison_summary(

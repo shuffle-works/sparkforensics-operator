@@ -56,7 +56,17 @@ def test_the_summary_holds_the_verdict_and_leaves_return_value_to_the_destinatio
         "breached_thresholds": [],
         "inconclusive_thresholds": [],
         "exit_code": 0,
+        "cli_version": None,
     }
+
+
+def test_the_summary_names_the_cli_version_that_wrote_the_report(tmp_path):
+    report = _report()
+    report.cli_version = "0.10.1"
+
+    summary, _, _ = _run(tmp_path, report)
+
+    assert summary["cli_version"] == "0.10.1"
 
 
 def test_the_summary_is_pushed_before_notifying_and_before_a_breach_raises(tmp_path):
@@ -196,6 +206,7 @@ def test_a_baseline_run_adds_the_comparison_on_the_default_metric_and_keeps_ever
         "breached_thresholds": [],
         "inconclusive_thresholds": [],
         "exit_code": 0,
+        "cli_version": None,
     }
 
 

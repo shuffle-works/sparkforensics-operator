@@ -16,6 +16,7 @@ from sparkforensics_operator._compat import (
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.base import AnalyzeHook, DeferrableAnalyzeHook
 from sparkforensics_operator.links import ReportLink
+from sparkforensics_operator.report import cli_version_warning
 from sparkforensics_operator.log_ref import (
     LocalEventLog,
     RemoteEventLog,
@@ -196,6 +197,10 @@ def handle_report(
     for result in report.threshold_results:
         if result.status == "inconclusive":
             log.warning("SparkForensics threshold %s inconclusive: %s", result.name, result.detail)
+
+    version_warning = cli_version_warning(report.cli_version)
+    if version_warning is not None:
+        log.warning("SparkForensics: %s", version_warning)
 
     if not report.inconclusive and report.exit_code == 3:
         # The CLI's exit code contract says 3 means thresholds were

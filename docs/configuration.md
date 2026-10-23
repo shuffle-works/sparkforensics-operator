@@ -384,6 +384,19 @@ format. An option passed to a CLI older than the version below makes the
 CLI exit 2 with "Unknown option", which the operator reports as a usage
 error.
 
+The operator is tested against `sparkforensics-cli` 0.10.1
+(`sparkforensics_operator.report.TESTED_CLI_VERSION`). A run analyzed by
+an older CLI logs a warning, and a report that does not name its CLI
+(before 0.8.0) logs one too. The CLI version of each run is in the
+`cli_version` key of the [summary XCom](#summary-xcom).
+
+The operator reads report schema 5 (`sparkforensics_operator.report.MIN_SCHEMA_VERSION`
+and `MAX_SCHEMA_VERSION`). A report with an older schema, or with a newer
+one the operator does not know, fails the task with `CliConfigurationError`
+before anything is persisted. The CLI changes `schemaVersion` only for a
+change that can break a reader; new report fields leave it as it is, and
+the operator ignores fields it does not read.
+
 | operator feature | minimum `sparkforensics-cli` |
 |---|---|
 | the error messages for exit codes 2, 4, 5 and 6 | 0.5.0 |
@@ -597,6 +610,7 @@ reading the report. It is a dict:
 | `breached_thresholds` | names of violated thresholds |
 | `inconclusive_thresholds` | names of thresholds the CLI could not evaluate |
 | `exit_code` | the CLI's exit code |
+| `cli_version` | the `sparkforensics-cli` version that wrote the report (`generator.version`), or `None` for a CLI before 0.8.0 |
 | `comparison` | only when a baseline ran: see below |
 
 `comparison` describes the run against its baseline on one metric,

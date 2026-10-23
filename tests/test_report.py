@@ -4,9 +4,13 @@ from pathlib import Path
 import pytest
 
 from sparkforensics_operator.report import (
+    MAX_SCHEMA_VERSION,
+    TESTED_CLI_VERSION,
     THRESHOLD_CLI_FLAGS,
     Report,
     ThresholdResult,
+    UnsupportedReportSchema,
+    cli_version_warning,
     parse_report_text,
     parse_threshold_results,
 )
@@ -86,6 +90,65 @@ def test_parse_report_text_refuses_a_report_older_than_sparkforensics_cli_0_4_0(
 
     with pytest.raises(ValueError, match="requires sparkforensics-cli 0.4.0 or newer"):
         parse_report_text(json.dumps(data))
+
+
+@pytest.mark.parametrize("schema_version", [MAX_SCHEMA_VERSION + 1, MAX_SCHEMA_VERSION + 10])
+def test_parse_report_text_refuses_a_report_newer_than_the_schema_it_reads(schema_version):
+    data = dict(json.loads(_fixture_text("report.json")), schemaVersion=schema_version)
+
+    with pytest.raises(UnsupportedReportSchema) as raised:
+        parse_report_text(json.dumps(data))
+
+    message = str(raised.value)
+    assert f"schemaVersion {schema_version} is newer than this sparkforensics-operator reads" in message
+    assert f"up to {MAX_SCHEMA_VERSION}" in message
+    assert "upgrade sparkforensics-operator" in message
+
+
+def test_an_unsupported_schema_is_a_value_error():
+    assert issubclass(UnsupportedReportSchema, ValueError)
+
+
+def test_parse_report_text_reads_the_cli_version_from_the_generator():
+    data = dict(
+        json.loads(_fixture_text("report.json")),
+        generator={"name": "sparkforensics-cli", "version": "0.10.1", "buildId": "abc"},
+    )
+
+    assert parse_report_text(json.dumps(data)).cli_version == "0.10.1"
+
+
+@pytest.mark.parametrize("generator", [None, "0.10.1", {"name": "sparkforensics-cli"}, {"version": 10}])
+def test_parse_report_text_has_no_cli_version_without_a_usable_generator(generator):
+    data = json.loads(_fixture_text("report.json"))
+    if generator is not None:
+        data["generator"] = generator
+
+    assert parse_report_text(json.dumps(data)).cli_version is None
+
+
+@pytest.mark.parametrize("cli_version", [TESTED_CLI_VERSION, "0.10.2", "0.11.0", "1.0.0", "0.10.2-rc.1", "v0.10.1"])
+def test_no_warning_for_the_tested_cli_version_or_a_newer_one(cli_version):
+    assert cli_version_warning(cli_version) is None
+
+
+@pytest.mark.parametrize("cli_version", ["0.10.0", "0.9.0", "0.8.0", "0.4.0"])
+def test_a_cli_older_than_the_tested_version_gets_a_warning(cli_version):
+    warning = cli_version_warning(cli_version)
+
+    assert f"sparkforensics-cli {cli_version} is older than {TESTED_CLI_VERSION}" in warning
+    assert "npm install -g sparkforensics-cli" in warning
+
+
+def test_a_report_without_a_cli_version_gets_a_warning_naming_the_release_that_adds_it():
+    warning = cli_version_warning(None)
+
+    assert "does not name the sparkforensics-cli" in warning
+    assert "0.8.0" in warning
+
+
+def test_a_cli_version_that_cannot_be_read_gets_no_warning():
+    assert cli_version_warning("main") is None
 
 
 def test_threshold_cli_flags_cover_every_thresholds_key():

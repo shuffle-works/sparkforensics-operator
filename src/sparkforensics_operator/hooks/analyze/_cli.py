@@ -15,6 +15,7 @@ from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, Local
 from sparkforensics_operator.report import (
     THRESHOLD_CLI_FLAGS,
     Report,
+    UnsupportedReportSchema,
     parse_report_text,
     parse_threshold_results,
 )
@@ -191,6 +192,14 @@ def build_report(
 ) -> Report:
     try:
         report = parse_report_text(report_text)
+    except UnsupportedReportSchema as e:
+        # The installed CLI and this operator disagree on the report format,
+        # which every try would repeat.
+        raise CliConfigurationError(
+            f"sparkforensics-analyze{where} wrote a report this sparkforensics-operator cannot "
+            f"read: {e}",
+            returncode,
+        ) from e
     except (ValueError, KeyError, TypeError) as e:
         raise AirflowException(
             f"sparkforensics-analyze{where} exited {returncode} but its JSON report "

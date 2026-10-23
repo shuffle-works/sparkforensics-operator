@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from pathlib import Path
 
@@ -5,7 +6,7 @@ import pytest
 from airflow.exceptions import AirflowException, AirflowFailException
 
 from sparkforensics_operator.exceptions import CliConfigurationError, CliError, HistoryServerFetchError
-from sparkforensics_operator.hooks.analyze._cli import build_cli_args, check_exit_code
+from sparkforensics_operator.hooks.analyze._cli import build_cli_args, build_report, check_exit_code
 from sparkforensics_operator.log_ref import HistoryServerApp, LocalEventLog, RemoteEventLog
 
 # What the CLI writes to stderr after the message of a usage error.
@@ -231,3 +232,21 @@ def test_a_cli_error_keeps_its_exit_code_when_pickled():
 
     assert str(restored) == "bad arguments"
     assert restored.exit_code == 2
+
+
+def test_a_report_in_a_newer_schema_than_the_operator_reads_is_a_configuration_error():
+    report_text = json.dumps({"schemaVersion": 99})
+
+    with pytest.raises(CliConfigurationError) as raised:
+        build_report(report_text, {}, "", 0, where=" on the SSH host (ssh_conn_id='onprem_ssh')")
+
+    message = str(raised.value)
+    assert "on the SSH host (ssh_conn_id='onprem_ssh') wrote a report this sparkforensics-operator cannot read" in message
+    assert "schemaVersion 99 is newer than this sparkforensics-operator reads" in message
+    assert isinstance(raised.value, AirflowFailException)
+    assert raised.value.exit_code == 0
+
+
+def test_a_report_in_an_older_schema_than_the_operator_reads_is_a_configuration_error():
+    with pytest.raises(CliConfigurationError, match="requires sparkforensics-cli 0.4.0 or newer"):
+        build_report(json.dumps({"schemaVersion": 4}), {}, "", 0)

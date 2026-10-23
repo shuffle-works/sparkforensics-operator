@@ -547,3 +547,28 @@ def test_the_persisted_report_has_no_comparison_without_a_baseline(tmp_path):
     )
 
     assert "comparison" not in json.loads(dest.read_text())
+
+
+def _run_with_cli_version(tmp_path, cli_version):
+    report = _report()
+    report.cli_version = cli_version
+    log_source, backend = _fixtures(tmp_path, report)
+    log = MagicMock()
+    run_spark_forensics(
+        {}, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+        thresholds={}, on_threshold_breach="fail", notifier=None, log=log,
+    )
+    return log
+
+
+def test_a_run_by_a_cli_older_than_the_tested_version_logs_a_warning(tmp_path):
+    log = _run_with_cli_version(tmp_path, "0.9.0")
+
+    log.warning.assert_called_once()
+    assert "sparkforensics-cli 0.9.0 is older than 0.10.1" in log.warning.call_args.args[1]
+
+
+def test_a_run_by_the_tested_cli_version_logs_no_warning(tmp_path):
+    log = _run_with_cli_version(tmp_path, "0.10.1")
+
+    log.warning.assert_not_called()

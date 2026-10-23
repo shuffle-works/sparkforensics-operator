@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A report whose `schemaVersion` is newer than the operator reads (5) fails
+  the task with `CliConfigurationError` and a message naming the upgrade,
+  where only an older one was refused. An older one raises the same
+  exception, which Airflow does not retry, instead of a plain
+  `AirflowException`.
 - Each exit code of `sparkforensics-analyze` that carries no report has its
   own error message: 2 (usage error), 4 (unreadable event log or failed
   History Server fetch), 5 (unreadable baseline) and 6 (internal error).
@@ -29,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `sparkforensics_summary` XCom has a `cli_version` key: the
+  `sparkforensics-cli` version that wrote the report, from its
+  `generator.version` (`None` for a CLI before 0.8.0). A run analyzed by a
+  CLI older than the release the operator is tested against (0.10.1) logs a
+  warning.
 - `sparkforensics_operator.exceptions.CliError`, `HistoryServerFetchError`
   and `CliConfigurationError`. A Spark History Server failure that a retry
   can clear (unreachable, no such application yet, refused or errored,

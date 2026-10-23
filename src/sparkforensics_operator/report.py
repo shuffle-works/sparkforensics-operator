@@ -40,12 +40,24 @@ THRESHOLD_RESULT_NAMES = {
     "fail_on_introduced": "fail-on-introduced",
 }
 
-# The report schema sparkforensics-cli 0.4.0 introduced (each finding's text
-# figure moved from value to valueText). An older report is refused rather
-# than parsed into a partial one.
+# The report schemas this operator reads. 5 is the schema sparkforensics-cli
+# 0.4.0 introduced (each finding's text figure moved from value to
+# valueText). An older report is refused rather than parsed into a partial
+# one, and so is a newer one: the CLI raises schemaVersion on a change that
+# can break a reader, and only additive changes keep it.
 MIN_SCHEMA_VERSION = 5
+MAX_SCHEMA_VERSION = 5
+
+# The sparkforensics-cli release the operator is tested against: the
+# integration tests run it. A run analyzed by an older one logs a warning.
+TESTED_CLI_VERSION = "0.10.1"
 
 _THRESHOLD_LINE_RE = re.compile(r"^\[(violation|inconclusive)\] ([a-z-]+): (.*)$")
+
+
+class UnsupportedReportSchema(ValueError):
+    """The report's schemaVersion is outside MIN_SCHEMA_VERSION to
+    MAX_SCHEMA_VERSION."""
 
 
 @dataclass(frozen=True)
@@ -73,6 +85,9 @@ class Report:
     # The CLI's comparison section (confidence, reason, matchedCoverage,
     # metrics, findings), present only when it ran with --baseline.
     comparison: dict | None = None
+    # The version of the sparkforensics-cli that wrote the report
+    # (generator.version), None when it does not say.
+    cli_version: str | None = None
 
     @property
     def violated(self) -> bool:
@@ -94,10 +109,17 @@ def parse_report_text(text: str) -> Report:
         data = data["candidate"]
     schema_version = data["schemaVersion"]
     if not isinstance(schema_version, int) or schema_version < MIN_SCHEMA_VERSION:
-        raise ValueError(
+        raise UnsupportedReportSchema(
             f"report schemaVersion {schema_version!r} is not supported (need "
             f"{MIN_SCHEMA_VERSION} or newer): sparkforensics-operator requires "
             "sparkforensics-cli 0.4.0 or newer."
+        )
+    if schema_version > MAX_SCHEMA_VERSION:
+        raise UnsupportedReportSchema(
+            f"report schemaVersion {schema_version} is newer than this "
+            f"sparkforensics-operator reads (up to {MAX_SCHEMA_VERSION}): upgrade "
+            "sparkforensics-operator, or install a sparkforensics-cli release that "
+            f"writes schema {MAX_SCHEMA_VERSION}."
         )
     return Report(
         schema_version=schema_version,
@@ -110,7 +132,44 @@ def parse_report_text(text: str) -> Report:
         verdict=data["verdict"],
         not_run_checks=data["notRunChecks"],
         comparison=comparison,
+        cli_version=_generator_version(data),
     )
+
+
+def _generator_version(data: dict) -> str | None:
+    generator = data.get("generator")
+    version = generator.get("version") if isinstance(generator, dict) else None
+    return version if isinstance(version, str) else None
+
+
+def cli_version_warning(cli_version: str | None) -> str | None:
+    """Why a run analyzed by this sparkforensics-cli version is worth a
+    warning, or None. The CLI names itself in its report from 0.8.0 on, so
+    a report without a version comes from an older CLI; one whose version
+    cannot be read is not judged."""
+    if cli_version is None:
+        return (
+            "The report does not name the sparkforensics-cli that wrote it, which the CLI "
+            f"does from 0.8.0 on, and this sparkforensics-operator is tested against "
+            f"{TESTED_CLI_VERSION}. Upgrade it with `npm install -g sparkforensics-cli`."
+        )
+    installed, tested = _release(cli_version), _release(TESTED_CLI_VERSION)
+    if installed is None or installed >= tested:
+        return None
+    return (
+        f"sparkforensics-cli {cli_version} is older than {TESTED_CLI_VERSION}, the release "
+        "this sparkforensics-operator is tested against. Upgrade it with "
+        "`npm install -g sparkforensics-cli`."
+    )
+
+
+def _release(version: str) -> tuple[int, ...] | None:
+    """The numeric release of a version such as "0.10.1" or "0.10.2-rc.1"."""
+    match = re.match(r"^v?(\d+(?:\.\d+)*)", version.strip())
+    if match is None:
+        return None
+    parts = [int(part) for part in match.group(1).split(".")]
+    return tuple((parts + [0, 0, 0])[:3])
 
 
 def parse_threshold_results(thresholds: dict, stderr: str) -> list[ThresholdResult]:

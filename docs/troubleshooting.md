@@ -80,6 +80,23 @@ login shell printing a banner or message to stdout in non-interactive
 sessions (an `echo` in `~/.bashrc`, say); make it print only for
 interactive shells.
 
+#### "... wrote a report this sparkforensics-operator cannot read: report schemaVersion N ..."
+
+The CLI's report is in a schema the operator does not read: an older one
+than 5 (CLI before 0.4.0), or a newer one than the operator knows. For a
+newer one, upgrade `sparkforensics-operator`, or install a
+`sparkforensics-cli` release that writes schema 5 on the worker or SSH
+host. The task fails without retrying: every try reads the same report.
+
+#### Warning "sparkforensics-cli X is older than Y, the release this sparkforensics-operator is tested against"
+
+The CLI on the worker or SSH host is older than the release the operator's
+tests run. The run still completes, but an option the operator passes can
+be missing from that CLI (see the [minimum CLI version of each
+option](configuration.md#minimum-cli-version-per-option)). Upgrade it with
+`npm install -g sparkforensics-cli`. A report with no CLI version comes
+from a CLI before 0.8.0.
+
 #### "sparkforensics-analyze exited with unexpected code {returncode}"
 
 The CLI exited with a code other than 0 to 6, for example after an OOM

@@ -163,7 +163,12 @@ breach that raises still gets a notification out first.
   which reports the CLI's pid, and the command that stops it.
 - `report.py`, `Report`/`ThresholdResult` dataclasses, plus parsing of the
   CLI's JSON report (`--out` file or stdout) and its stderr threshold
-  lines. No
+  lines. It refuses a `schemaVersion` outside the range it reads
+  (`MIN_SCHEMA_VERSION` to `MAX_SCHEMA_VERSION`, an
+  `UnsupportedReportSchema` that `build_report()` turns into a
+  `CliConfigurationError`), reads the CLI's own version from the report's
+  `generator`, and decides whether it is older than the release the
+  operator is tested against (`TESTED_CLI_VERSION`). No
   threshold-evaluation *logic* lives here: sparkforensics's own CLI decides
   pass/violation/inconclusive, this module only parses what it printed, so
   it can never drift from what the CLI actually enforces.
@@ -384,7 +389,8 @@ Before notifying and before any threshold breach raises,
 `handle_report()` pushes a summary under the `sparkforensics_summary`
 XCom key: the schema version, the destination, the report URL, the
 impact-band counts, whether the run violated a threshold, the breached
-and inconclusive threshold names, and the CLI exit code. A run compared
+and inconclusive threshold names, the CLI exit code and the CLI version
+that wrote the report. A run compared
 against a baseline adds a `comparison` entry: the direction the CLI
 computed for one metric (`regression_metric`, wall-clock by default) as
 the verdict, the comparison's confidence and reason, and that metric's
