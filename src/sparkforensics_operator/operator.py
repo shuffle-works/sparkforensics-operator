@@ -157,6 +157,34 @@ def run_spark_forensics(
             log_source.cleanup(log_ref)
 
 
+def _report_json(report) -> dict:
+    """What is persisted: the CLI's whole report, then the operator's
+    thresholdResults and, for a run compared against a baseline, the CLI's
+    comparison section. A report built by hand, with no CLI report behind it,
+    carries the sections the operator reads."""
+    if report.raw is not None:
+        report_json = dict(report.raw)
+    else:
+        report_json = {
+            "schemaVersion": report.schema_version,
+            "summary": report.summary,
+            "verdict": report.verdict,
+            "evidenceAvailability": report.evidence_availability,
+            "detectors": report.detectors,
+            "findings": report.findings,
+            "recommendations": report.recommendations,
+            "cleanChecks": report.clean_checks,
+            "notRunChecks": report.not_run_checks,
+        }
+    report_json["thresholdResults"] = [
+        {"name": r.name, "status": r.status, "detail": r.detail}
+        for r in report.threshold_results
+    ]
+    if report.comparison is not None:
+        report_json["comparison"] = report.comparison
+    return report_json
+
+
 def handle_report(
     report,
     *,
@@ -175,24 +203,7 @@ def handle_report(
     operator's resume step, so a deferred run acts on its report exactly as
     a synchronous one does. regression_metric is the comparison metric the
     summary XCom reports on, for a report compared against a baseline."""
-    report_json = {
-        "schemaVersion": report.schema_version,
-        "summary": report.summary,
-        "verdict": report.verdict,
-        "evidenceAvailability": report.evidence_availability,
-        "detectors": report.detectors,
-        "findings": report.findings,
-        "recommendations": report.recommendations,
-        "cleanChecks": report.clean_checks,
-        "notRunChecks": report.not_run_checks,
-        "thresholdResults": [
-            {"name": r.name, "status": r.status, "detail": r.detail}
-            for r in report.threshold_results
-        ],
-    }
-    if report.comparison is not None:
-        report_json["comparison"] = report.comparison
-    destination = sinks.persist(report_json, report_dest, aws_conn_id=aws_conn_id)
+    destination = sinks.persist(_report_json(report), report_dest, aws_conn_id=aws_conn_id)
 
     for result in report.threshold_results:
         if result.status == "inconclusive":

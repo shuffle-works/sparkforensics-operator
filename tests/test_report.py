@@ -151,6 +151,52 @@ def test_a_cli_version_that_cannot_be_read_gets_no_warning():
     assert cli_version_warning("main") is None
 
 
+def test_report_reads_the_verdict_app_run_time_and_skipped_lines_from_the_cli_summary():
+    data = json.loads(_fixture_text("report.json"))
+    data["summary"]["skippedLines"] = 4
+
+    report = parse_report_text(json.dumps(data))
+
+    assert report.verdict_title == data["verdict"]["title"]
+    assert report.app_name == data["summary"]["app"]["name"]
+    assert report.run_time_ms == data["summary"]["runShape"]["wallClockMs"]
+    assert report.skipped_lines == 4
+
+
+def test_report_has_no_run_time_for_a_run_that_never_finished():
+    report = parse_report_text(_fixture_text("incomplete-run.json"))
+
+    assert report.run_time_ms is None
+    assert report.skipped_lines is None
+
+
+@pytest.mark.parametrize("summary", [{}, {"app": None, "runShape": None}, {"app": {"name": 3}, "runShape": {"wallClockMs": "1"}}])
+def test_report_properties_tolerate_a_summary_without_the_fields(summary):
+    report = Report(schema_version=5, summary=summary, findings=[], recommendations=[], clean_checks=[])
+
+    assert report.app_name is None
+    assert report.run_time_ms is None
+    assert report.skipped_lines is None
+    assert report.verdict_title is None
+
+
+def test_parse_report_text_keeps_the_whole_cli_report_in_raw():
+    data = dict(json.loads(_fixture_text("report.json")), metrics={"schemaVersion": 1}, extra="kept")
+
+    report = parse_report_text(json.dumps(data))
+
+    assert report.raw == data
+
+
+def test_parse_report_text_keeps_the_candidate_report_in_raw_when_comparing():
+    wrapped = json.loads(_fixture_text("comparison.json"))
+
+    report = parse_report_text(json.dumps(wrapped))
+
+    assert report.raw == wrapped["candidate"]
+    assert report.comparison == wrapped["comparison"]
+
+
 def test_threshold_cli_flags_cover_every_thresholds_key():
     assert set(THRESHOLD_CLI_FLAGS) == {
         "max_runtime_ms",

@@ -570,14 +570,31 @@ warning and never fails the task, whatever `_send()` raises.
 `summary`, `verdict`, `findings`, `recommendations`, `clean_checks`,
 `not_run_checks` and `threshold_results` (each a
 `ThresholdResult` with `name`, `status` and `detail`), its `exit_code`,
-and `violated`/`inconclusive` properties. The static helper
-`Notifier._default_message(report, report_destination)` builds a one-line
-plain-text summary ("SparkForensics report: N critical, M warning, K info
-findings. Report: {report_destination}") you can use as a message body.
+its `cli_version`, and `violated`/`inconclusive` properties. `raw` holds
+the CLI's whole report, including the sections the operator does not read
+by name (`metrics`, `effectiveConf`, `writeTargets`, `generator`).
+`verdict_title`, `app_name`, `run_time_ms` and `skipped_lines` read the
+fields the summary XCom reports, and are `None` when the report lacks them.
+
+The static helper `Notifier._default_message(report, report_destination)`
+builds a one-line plain-text summary you can use as a message body. It
+names the application, the CLI's verdict and the run time when the report
+has them, then the finding counts, the number of skipped event log lines
+when there are any, and the destination:
+
+```text
+SparkForensics report for daily_customer_etl: Start with Stage 7. Ran for 47.7 s. 1 critical, 2 warning, 0 info findings. 3 event log lines were skipped. Report: s3://reports/app-1.json
+```
 
 ## Report destinations
 
-`report_dest` is where the report JSON is written:
+`report_dest` is where the report JSON is written. It is the CLI's whole
+JSON report (every section it writes: `summary`, `verdict`, `findings`,
+`recommendations`, `metrics`, `effectiveConf`, `writeTargets`, `generator`
+and the rest), plus the operator's own `thresholdResults` and, for a run
+compared against a baseline, the CLI's `comparison` section. The sections
+the operator reads are a subset of it, so whatever a newer CLI adds to its
+report is persisted too. Where to write it:
 
 - a plain local path, or a mounted filesystem such as HDFS through an NFS
   gateway or FUSE mount;
@@ -611,6 +628,10 @@ reading the report. It is a dict:
 | `inconclusive_thresholds` | names of thresholds the CLI could not evaluate |
 | `exit_code` | the CLI's exit code |
 | `cli_version` | the `sparkforensics-cli` version that wrote the report (`generator.version`), or `None` for a CLI before 0.8.0 |
+| `verdict` | the title of the CLI's verdict for the run (for example "Start with Stage 7"), or `None` |
+| `app_name` | the Spark application's name (the CLI's pseudonym under `redact`), or `None` |
+| `run_time_ms` | the application's wall-clock time in milliseconds, or `None` when the log does not say (a run that never finished) |
+| `skipped_lines` | how many event log lines the CLI could not parse (`0` for a clean log), or `None` for a CLI before 0.10.2 |
 | `comparison` | only when a baseline ran: see below |
 
 `comparison` describes the run against its baseline on one metric,

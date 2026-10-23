@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The persisted report is the CLI's whole JSON report (`metrics`,
+  `effectiveConf`, `writeTargets`, `generator` and every other section),
+  plus `thresholdResults` and `comparison` as before, instead of a fixed
+  subset. Every key of the earlier file is still there. `Report.raw` holds
+  it.
+- `Notifier._default_message()` names the application, the CLI's verdict
+  and the run time, and mentions skipped event log lines when there are any.
+  A report that carries none of them gets the earlier one-line message.
 - A report whose `schemaVersion` is newer than the operator reads (5) fails
   the task with `CliConfigurationError` and a message naming the upgrade,
   where only an older one was refused. An older one raises the same
@@ -34,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `sparkforensics_summary` XCom has `verdict` (the title of the CLI's
+  verdict), `app_name`, `run_time_ms` and `skipped_lines`. `skipped_lines` is
+  `None` for a CLI that does not report it (before 0.10.2).
+  `Report.verdict_title`, `app_name`, `run_time_ms` and `skipped_lines`
+  expose the same fields.
 - The `sparkforensics_summary` XCom has a `cli_version` key: the
   `sparkforensics-cli` version that wrote the report, from its
   `generator.version` (`None` for a CLI before 0.8.0). A run analyzed by a

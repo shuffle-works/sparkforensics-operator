@@ -57,7 +57,40 @@ def test_the_summary_holds_the_verdict_and_leaves_return_value_to_the_destinatio
         "inconclusive_thresholds": [],
         "exit_code": 0,
         "cli_version": None,
+        "verdict": None,
+        "app_name": None,
+        "run_time_ms": None,
+        "skipped_lines": None,
     }
+
+
+def test_the_summary_reports_the_verdict_app_name_run_time_and_skipped_lines(tmp_path):
+    report = _report()
+    report.verdict = {"title": "Start with Stage 7", "summary": [], "steps": []}
+    report.summary = {
+        "impactBandCounts": {"critical": 1, "warning": 0, "info": 0},
+        "app": {"id": "app-1", "name": "daily_customer_etl", "sparkVersion": "3.5.1"},
+        "runShape": {"wallClockMs": 47688},
+        "skippedLines": 2,
+    }
+
+    summary, _, _ = _run(tmp_path, report)
+
+    assert summary["verdict"] == "Start with Stage 7"
+    assert summary["app_name"] == "daily_customer_etl"
+    assert summary["run_time_ms"] == 47688
+    assert summary["skipped_lines"] == 2
+
+
+def test_a_clean_log_reports_zero_skipped_lines_and_an_older_cli_reports_none(tmp_path):
+    clean = _report()
+    clean.summary = {"impactBandCounts": {}, "skippedLines": 0}
+
+    clean_summary, _, _ = _run(tmp_path, clean)
+    older_summary, _, _ = _run(tmp_path, _report())
+
+    assert clean_summary["skipped_lines"] == 0
+    assert older_summary["skipped_lines"] is None
 
 
 def test_the_summary_names_the_cli_version_that_wrote_the_report(tmp_path):
@@ -207,6 +240,10 @@ def test_a_baseline_run_adds_the_comparison_on_the_default_metric_and_keeps_ever
         "inconclusive_thresholds": [],
         "exit_code": 0,
         "cli_version": None,
+        "verdict": None,
+        "app_name": None,
+        "run_time_ms": None,
+        "skipped_lines": None,
     }
 
 

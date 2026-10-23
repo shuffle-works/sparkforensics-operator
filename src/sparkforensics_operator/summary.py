@@ -74,6 +74,10 @@ def build_summary(
         "inconclusive_thresholds": [r.name for r in report.threshold_results if r.status == "inconclusive"],
         "exit_code": report.exit_code,
         "cli_version": report.cli_version,
+        "verdict": report.verdict_title,
+        "app_name": report.app_name,
+        "run_time_ms": report.run_time_ms,
+        "skipped_lines": report.skipped_lines,
     }
     if report.comparison is not None:
         summary["comparison"] = _comparison_summary(

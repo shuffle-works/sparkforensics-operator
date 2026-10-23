@@ -178,9 +178,16 @@ breach that raises still gets a notification out first.
   `exit_code`), its `HistoryServerFetchError` (retried) and
   `CliConfigurationError` (an `AirflowFailException`, not retried).
 - `sinks.py`, persists the report JSON (local path, `file://`, `s3://`).
+  What it persists is the CLI's whole report, kept on `Report.raw`, with
+  the operator's `thresholdResults` and the comparison section added, so
+  a field the CLI adds reaches the file without a change here;
+  `operator._report_json()` builds it, and a `Report` built by hand
+  (no `raw`) persists the sections the operator reads.
 - `notify.py`, the `Notifier` base class: subclasses implement `_send()`
   for whatever messaging/paging system they target, and `notify()` makes
-  that best-effort, never raising. No concrete notifier ships in this
+  that best-effort, never raising. `_default_message()` writes the
+  one-line summary (application, verdict, run time, finding counts,
+  skipped lines, destination), leaving out what the report lacks. No concrete notifier ships in this
   package.
 - `summary.py`, the summary XCom (`SUMMARY_XCOM_KEY`,
   `build_summary()`) and the report URL (`render_report_url()`,
@@ -389,8 +396,10 @@ Before notifying and before any threshold breach raises,
 `handle_report()` pushes a summary under the `sparkforensics_summary`
 XCom key: the schema version, the destination, the report URL, the
 impact-band counts, whether the run violated a threshold, the breached
-and inconclusive threshold names, the CLI exit code and the CLI version
-that wrote the report. A run compared
+and inconclusive threshold names, the CLI exit code, the CLI version
+that wrote the report, and the run's verdict title, application name,
+wall-clock time and skipped line count (read from the CLI's summary by
+`Report`'s `verdict_title`, `app_name`, `run_time_ms` and `skipped_lines`). A run compared
 against a baseline adds a `comparison` entry: the direction the CLI
 computed for one metric (`regression_metric`, wall-clock by default) as
 the verdict, the comparison's confidence and reason, and that metric's

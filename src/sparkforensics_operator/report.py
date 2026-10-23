@@ -88,6 +88,36 @@ class Report:
     # The version of the sparkforensics-cli that wrote the report
     # (generator.version), None when it does not say.
     cli_version: str | None = None
+    # The CLI's whole report as it parsed (the run's own report, without the
+    # comparison section), so what the operator does not read by name is
+    # still persisted. None for a report built by hand.
+    raw: dict | None = None
+
+    @property
+    def verdict_title(self) -> str | None:
+        title = self.verdict.get("title") if isinstance(self.verdict, dict) else None
+        return title if isinstance(title, str) else None
+
+    @property
+    def app_name(self) -> str | None:
+        app = self.summary.get("app") if isinstance(self.summary, dict) else None
+        name = app.get("name") if isinstance(app, dict) else None
+        return name if isinstance(name, str) else None
+
+    @property
+    def run_time_ms(self) -> int | float | None:
+        """The application's wall-clock time, None when the log does not
+        say (a run that never finished, say)."""
+        shape = self.summary.get("runShape") if isinstance(self.summary, dict) else None
+        wall_clock = shape.get("wallClockMs") if isinstance(shape, dict) else None
+        return wall_clock if isinstance(wall_clock, (int, float)) and not isinstance(wall_clock, bool) else None
+
+    @property
+    def skipped_lines(self) -> int | None:
+        """How many event log lines the CLI could not parse, None when the
+        CLI does not say (before 0.10.2)."""
+        count = self.summary.get("skippedLines") if isinstance(self.summary, dict) else None
+        return count if isinstance(count, int) and not isinstance(count, bool) else None
 
     @property
     def violated(self) -> bool:
@@ -133,6 +163,7 @@ def parse_report_text(text: str) -> Report:
         not_run_checks=data["notRunChecks"],
         comparison=comparison,
         cli_version=_generator_version(data),
+        raw=data,
     )
 
 

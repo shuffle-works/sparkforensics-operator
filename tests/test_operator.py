@@ -572,3 +572,47 @@ def test_a_run_by_the_tested_cli_version_logs_no_warning(tmp_path):
     log = _run_with_cli_version(tmp_path, "0.10.1")
 
     log.warning.assert_not_called()
+
+
+def _persisted(tmp_path, report):
+    log_source, backend = _fixtures(tmp_path, report)
+    dest = tmp_path / "report.json"
+    run_spark_forensics(
+        {}, log_source=log_source, backend=backend, report_dest=str(dest),
+        thresholds={}, on_threshold_breach="ignore", notifier=None, log=MagicMock(),
+    )
+    return json.loads(dest.read_text())
+
+
+def test_the_persisted_report_is_the_whole_cli_report_plus_the_threshold_results(tmp_path):
+    cli_report = {
+        "schemaVersion": 5,
+        "summary": {"impactBandCounts": {"critical": 0, "warning": 0, "info": 0}},
+        "verdict": None, "evidenceAvailability": None, "detectors": [], "findings": [],
+        "recommendations": [], "cleanChecks": [], "notRunChecks": [],
+        "generator": {"name": "sparkforensics-cli", "version": "0.10.1"},
+        "app": {"id": "app-1", "attemptId": None},
+        "metrics": {"schemaVersion": 1}, "effectiveConf": {"keys": []}, "writeTargets": {"writes": []},
+    }
+    report = _report(ThresholdResult("max-runtime", "pass", ""))
+    report.raw = dict(cli_report)
+    report.comparison = {"confidence": "ok"}
+
+    persisted = _persisted(tmp_path, report)
+
+    assert persisted == {
+        **cli_report,
+        "thresholdResults": [{"name": "max-runtime", "status": "pass", "detail": ""}],
+        "comparison": {"confidence": "ok"},
+    }
+    assert report.raw == cli_report
+
+
+def test_a_report_built_by_hand_persists_the_sections_the_operator_reads(tmp_path):
+    persisted = _persisted(tmp_path, _report(ThresholdResult("max-runtime", "violation", "too slow")))
+
+    assert set(persisted) == {
+        "schemaVersion", "summary", "verdict", "evidenceAvailability", "detectors", "findings",
+        "recommendations", "cleanChecks", "notRunChecks", "thresholdResults",
+    }
+    assert persisted["thresholdResults"] == [{"name": "max-runtime", "status": "violation", "detail": "too slow"}]
