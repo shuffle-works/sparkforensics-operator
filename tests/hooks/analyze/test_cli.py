@@ -1,9 +1,14 @@
 from pathlib import Path
 
 import pytest
+from airflow.exceptions import AirflowException, AirflowFailException
 
-from sparkforensics_operator.hooks.analyze._cli import build_cli_args
+from sparkforensics_operator.exceptions import CliConfigurationError, CliError, HistoryServerFetchError
+from sparkforensics_operator.hooks.analyze._cli import build_cli_args, check_exit_code
 from sparkforensics_operator.log_ref import HistoryServerApp, LocalEventLog, RemoteEventLog
+
+# What the CLI writes to stderr after the message of a usage error.
+_USAGE = "Usage: sparkforensics-analyze <event-log-file|rolling-log-dir> [options]\n  --format md|json\n"
 
 
 def test_build_cli_args_writes_to_stdout_without_an_out_path():
@@ -47,3 +52,123 @@ def test_build_cli_args_never_passes_a_history_server_app_as_the_baseline():
             "sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {},
             baseline_ref=HistoryServerApp(base_url="http://shs:18080", app_id="app-1"),
         )
+
+
+@pytest.mark.parametrize("returncode", [0, 1, 3])
+def test_check_exit_code_accepts_the_codes_that_carry_a_report(returncode):
+    check_exit_code(returncode, "[violation] max-runtime: Runtime 1ms exceeds budget 0ms.\n")
+
+
+def test_exit_2_is_a_usage_error_that_airflow_does_not_retry():
+    stderr = '--max-spill needs a non-negative decimal number such as 90 or 1.5, got "-1".\n' + _USAGE
+
+    with pytest.raises(CliConfigurationError) as raised:
+        check_exit_code(2, stderr)
+
+    message = str(raised.value)
+    assert "rejected its arguments (exit 2, usage error)" in message
+    assert '--max-spill needs a non-negative decimal number such as 90 or 1.5, got "-1".' in message
+    assert "Usage: sparkforensics-analyze" not in message
+    assert raised.value.exit_code == 2
+    assert isinstance(raised.value, AirflowFailException)
+
+
+def test_exit_2_for_an_option_the_cli_does_not_know_names_the_upgrade():
+    stderr = "Unknown option '--ignore-conf'. To specify a positional argument starting with a '-', ..." + _USAGE
+
+    with pytest.raises(CliConfigurationError, match="does not know this option: upgrade it"):
+        check_exit_code(2, stderr, where=" on the SSH host (ssh_conn_id='onprem_ssh')")
+
+
+def test_exit_4_is_an_unreadable_event_log_that_airflow_retries():
+    with pytest.raises(CliError) as raised:
+        check_exit_code(4, "ENOENT: no such file or directory, stat '/logs/app-1'\n")
+
+    message = str(raised.value)
+    assert "could not read or parse the event log" in message
+    assert "(exit 4, event log)" in message
+    assert "ENOENT: no such file or directory" in message
+    assert raised.value.exit_code == 4
+    assert not isinstance(raised.value, (AirflowFailException, HistoryServerFetchError))
+
+
+@pytest.mark.parametrize(
+    "stderr, cause",
+    [
+        ("SHS fetch failed: upstream-unreachable\n", "is unreachable from where the CLI runs"),
+        ("SHS fetch failed: application-not-found\n", "has no such application or attempt"),
+        ("SHS fetch failed: access-or-upstream-failure\n", "refused the request or answered with an error"),
+        (
+            "SHS archive body stalled for 30000 ms (override with SPARKFORENSICS_SHS_TIMEOUT_MS).\n",
+            "stopped sending the event log mid-transfer",
+        ),
+    ],
+    ids=["unreachable", "not-found", "refused-or-errored", "stalled"],
+)
+def test_a_history_server_failure_a_retry_can_clear_is_a_fetch_error(stderr, cause):
+    with pytest.raises(HistoryServerFetchError) as raised:
+        check_exit_code(4, stderr)
+
+    assert cause in str(raised.value)
+    assert f"The CLI said: {stderr.strip()}" in str(raised.value)
+    assert not isinstance(raised.value, AirflowFailException)
+
+
+@pytest.mark.parametrize(
+    "stderr, cause",
+    [
+        (
+            "SHS archive exceeds the 1073741824-byte cap (override with SPARKFORENSICS_MAX_ARCHIVE_BYTES).\n",
+            "larger than the CLI's download cap",
+        ),
+        ("Invalid SHS request parameters.\n", "address, application id or attempt id is invalid"),
+    ],
+    ids=["archive-too-large", "invalid-request"],
+)
+def test_a_history_server_failure_a_retry_cannot_clear_is_a_configuration_error(stderr, cause):
+    with pytest.raises(CliConfigurationError) as raised:
+        check_exit_code(4, stderr)
+
+    assert cause in str(raised.value)
+    assert isinstance(raised.value, AirflowFailException)
+
+
+def test_exit_5_is_an_unreadable_baseline():
+    with pytest.raises(CliError) as raised:
+        check_exit_code(5, "ENOENT: no such file or directory, stat '/logs/app-0'\n")
+
+    assert "could not read or parse the baseline (exit 5, baseline)" in str(raised.value)
+    assert raised.value.exit_code == 5
+
+
+def test_exit_5_from_a_baseline_history_server_fetch_is_classified_like_exit_4():
+    with pytest.raises(HistoryServerFetchError, match="could not read or parse the baseline"):
+        check_exit_code(5, "SHS fetch failed: upstream-unreachable\n")
+
+
+def test_exit_6_is_an_internal_error_with_the_clis_stack():
+    with pytest.raises(CliError) as raised:
+        check_exit_code(6, "Internal error: Error: boom\n    at run (file:///cli.mjs:1:1)\n")
+
+    assert "failed with an internal error (exit 6, internal error)" in str(raised.value)
+    assert "Error: boom" in str(raised.value)
+    assert raised.value.exit_code == 6
+
+
+def test_an_exit_code_the_cli_does_not_define_is_unexpected():
+    with pytest.raises(CliError, match="exited with unexpected code 137: Killed"):
+        check_exit_code(137, "Killed\n")
+
+
+def test_every_cli_error_is_an_airflow_exception():
+    for error_type in (CliError, CliConfigurationError, HistoryServerFetchError):
+        assert issubclass(error_type, AirflowException)
+
+
+def test_a_cli_error_keeps_its_exit_code_when_pickled():
+    import pickle
+
+    restored = pickle.loads(pickle.dumps(CliConfigurationError("bad arguments", 2)))
+
+    assert str(restored) == "bad arguments"
+    assert restored.exit_code == 2

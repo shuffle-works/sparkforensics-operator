@@ -288,9 +288,9 @@ def test_analyze_raises_a_clear_error_when_the_binary_is_missing_on_the_ssh_host
 
 def test_analyze_raises_on_exit_code_2_naming_the_ssh_host():
     hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
-    channel = _FakeChannel(stderr=b"History Server returned 404\n", exit_status=2)
+    channel = _FakeChannel(stderr=b"--app-id must not be empty\n", exit_status=2)
 
-    with pytest.raises(AirflowException, match=r"on the SSH host .* \(exit 2\): History Server returned 404"):
+    with pytest.raises(AirflowException, match=r"on the SSH host .* \(exit 2, .*\): --app-id must not be empty"):
         _run(hook, HistoryServerApp(base_url="http://localhost:18080", app_id="app-1"), {}, channel)
 
 

@@ -126,9 +126,16 @@ breach that raises still gets a notification out first.
 - `hooks/analyze/_cli.py`, the CLI contract every backend shares: argument
   building for each reference kind (a positional path, or
   `--shs-base-url`/`--app-id`/`--attempt-id`), `--baseline`, threshold flags, exit-code
-  handling (0/1/3 usable, 2 and anything else raise), and building the
-  `Report` from the JSON report and stderr threshold lines. Backends only
-  differ in how they run the command and collect its output.
+  handling, and building the `Report` from the JSON report and stderr
+  threshold lines. Exit codes 0, 1 and 3 carry a report. Every other code
+  raises a `CliError` with a message of its own: 2 (usage error), 4
+  (unreadable event log or failed History Server fetch), 5 (unreadable
+  baseline), 6 (internal error), anything else "unexpected". The CLI's
+  stderr tells a History Server failure a retry can clear
+  (`HistoryServerFetchError`) from one it cannot (`CliConfigurationError`),
+  and `CliConfigurationError` is an `AirflowFailException` so Airflow does
+  not retry it. Backends only differ in how they run the command and
+  collect its output.
 - `hooks/analyze/subprocess.py`, `SubprocessAnalyzeHook`, runs the CLI on
   the worker with `--out <tmpfile>`.
 - `hooks/analyze/ssh.py`, `SSHAnalyzeHook`, runs the CLI on the SSH host
@@ -161,7 +168,10 @@ breach that raises still gets a notification out first.
   pass/violation/inconclusive, this module only parses what it printed, so
   it can never drift from what the CLI actually enforces.
 - `exceptions.py`, `ThresholdBreached`, an `AirflowFailException` so a
-  breach fails the task without consuming its retries.
+  breach fails the task without consuming its retries, and the CLI
+  errors: `CliError` (a CLI exit code with no report, carrying
+  `exit_code`), its `HistoryServerFetchError` (retried) and
+  `CliConfigurationError` (an `AirflowFailException`, not retried).
 - `sinks.py`, persists the report JSON (local path, `file://`, `s3://`).
 - `notify.py`, the `Notifier` base class: subclasses implement `_send()`
   for whatever messaging/paging system they target, and `notify()` makes

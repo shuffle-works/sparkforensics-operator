@@ -14,8 +14,9 @@ from sparkforensics_operator import (
 )
 ```
 
-A few names live in submodules: `SUMMARY_XCOM_KEY` in
-`sparkforensics_operator.summary`, `REMOTE_JOB_XCOM_KEY` in
+A few names live in submodules: `CliError`, `CliConfigurationError` and
+`HistoryServerFetchError` in `sparkforensics_operator.exceptions`,
+`SUMMARY_XCOM_KEY` in `sparkforensics_operator.summary`, `REMOTE_JOB_XCOM_KEY` in
 `sparkforensics_operator.operator`, `log_ref_to_dict`/`log_ref_from_dict`
 in `sparkforensics_operator.log_ref`, `Report`/`ThresholdResult` in
 `sparkforensics_operator.report`, and `ReportLink` in
@@ -307,7 +308,7 @@ an event log on a different SSH host ..." instead.
 - `RemotePathLogSourceHook(ssh_conn_id, path_template)` points at an event
   log that stays on the host behind `ssh_conn_id`, for `SSHAnalyzeHook`
   with the same `ssh_conn_id`. It does no I/O, so a missing path surfaces
-  as the CLI's exit-2 error.
+  as the CLI's exit-4 error.
 - `HistoryServerAppLogSourceHook(base_url, app_id, attempt_id=None)` passes
   a History Server application to the CLI as
   `--shs-base-url`/`--app-id`/`--attempt-id` instead of downloading it. It
@@ -356,10 +357,36 @@ hook. Don't define a `resolve` method: Airflow 3's templater calls
 
 Both backends build the same CLI arguments, parse the same report and
 threshold output, and treat exit codes the same way: 0, 1 and 3 produce a
-report; 2 and any other code raise `AirflowException` with the CLI's
-stderr. A missing binary and a timeout raise their own errors, and so do
-exit 124 (the SSH host's `timeout`) and 126/127 (binary missing or not
-executable on the SSH host). See [Troubleshooting](troubleshooting.md#error-messages).
+report. Every other code raises an exception with the CLI's stderr, and
+each code of the CLI has its own message:
+
+| CLI exit code | meaning | exception | Airflow retries |
+|---|---|---|---|
+| 2 | usage error: the CLI refused its arguments | `CliConfigurationError` | no |
+| 4 | the event log could not be read or parsed, or its History Server fetch failed | `CliError`; `HistoryServerFetchError` for a History Server failure a retry can clear; `CliConfigurationError` for one it cannot | yes, except `CliConfigurationError` |
+| 5 | the baseline could not be read or parsed | the same as 4 | the same as 4 |
+| 6 | internal error in the CLI | `CliError` | yes |
+| any other | for example an OOM kill (137) | `CliError` | yes |
+
+`CliError`, `CliConfigurationError` and `HistoryServerFetchError` live in
+`sparkforensics_operator.exceptions`. All three are `AirflowException`s
+and carry the CLI's exit code as `exit_code`; `CliConfigurationError` is
+an `AirflowFailException`, so Airflow fails the task without consuming its
+retries, as for `ThresholdBreached`. A missing binary and a timeout raise
+their own errors, and so do exit 124 (the SSH host's `timeout`) and
+126/127 (binary missing or not executable on the SSH host). See
+[Troubleshooting](troubleshooting.md#error-messages).
+
+### Minimum CLI version per option
+
+The operator needs `sparkforensics-cli` 0.4.0 or newer for the report
+format. An option passed to a CLI older than the version below makes the
+CLI exit 2 with "Unknown option", which the operator reports as a usage
+error.
+
+| operator feature | minimum `sparkforensics-cli` |
+|---|---|
+| the error messages for exit codes 2, 4, 5 and 6 | 0.5.0 |
 
 ### Job directories
 

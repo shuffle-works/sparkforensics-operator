@@ -14,18 +14,63 @@ Node.js or the npm package isn't installed on this worker, or
 sparkforensics-analyze` on the worker, and see [worker
 prerequisites](getting-started.md#worker-prerequisites-subprocessanalyzehook).
 
-#### "sparkforensics-analyze [on the SSH host (...)] failed to parse the event log, could not fetch it from the Spark History Server, or was given bad arguments (exit 2)"
+#### "sparkforensics-analyze [on the SSH host (...)] rejected its arguments (exit 2, usage error)"
 
-One of these:
+The CLI refused the command line the operator built, and the message
+quotes its reason. Typical causes are a threshold or budget value the CLI
+cannot read, a `regression_metric` it does not know, or a malformed
+`base_url`, `app_id` or `attempt_id`. "Unknown option" means the
+installed `sparkforensics-cli` is older than the option the operator
+passed: upgrade it (the [minimum CLI version of each
+option](configuration.md#minimum-cli-version-per-option) is listed
+there).
+
+This raises `CliConfigurationError`, an `AirflowFailException`, so
+Airflow does not retry it: the same arguments fail the same way. A CLI
+older than 0.5.0 also exits 2 for an unreadable event log.
+
+#### "sparkforensics-analyze [on the SSH host (...)] could not read or parse the event log, or fetch it from the Spark History Server (exit 4, event log)"
+
+The CLI could not get the run it was asked to analyze. One of these:
 
 - the log isn't a valid Spark event log or rolling-log directory;
 - the path doesn't exist on the host running the analysis
   (`RemotePathLogSourceHook` does not check it beforehand);
-- the CLI's `--shs-base-url` fetch failed: wrong `base_url`, `app_id`
-  or `attempt_id`, or the History Server is unreachable from that host;
-- an unsupported CLI argument was passed.
+- the CLI's `--shs-base-url` fetch failed.
 
-The raised `AirflowException`'s message includes the CLI's stderr.
+For a History Server fetch the message says which failure the CLI
+reported, after "The CLI said:" quoting its own text:
+
+| cause | what to check | retried |
+|---|---|---|
+| the History Server is unreachable from where the CLI runs | `base_url` as seen from the worker or SSH host, DNS, firewall, whether the server is up | yes |
+| the History Server has no such application or attempt, or has not listed a run that just finished yet | `app_id` and `attempt_id`; a retry covers the delay before the server lists a finished run | yes |
+| the History Server refused the request or answered with an error | access (proxy, authentication: the CLI sends none), then the server's own log | yes |
+| the History Server stopped sending the event log mid-transfer | the server's load and the network; `SPARKFORENSICS_SHS_TIMEOUT_MS` on the CLI's host sets the idle timeout | yes |
+| the event log is larger than the CLI's download cap | raise `SPARKFORENSICS_MAX_ARCHIVE_BYTES` on the CLI's host, or analyze the log from a file | no |
+| the address, application id or attempt id is invalid | `base_url`, `app_id`, `attempt_id` | no |
+
+A retried failure raises `HistoryServerFetchError`; a failure no retry
+can fix raises `CliConfigurationError`, an `AirflowFailException`. Both
+extend `CliError`, whose `exit_code` attribute holds the CLI's exit code.
+An event log that cannot be read or parsed (a missing file, a corrupt
+log) raises a plain `CliError`, which Airflow retries like any task
+failure.
+
+#### "sparkforensics-analyze [on the SSH host (...)] could not read or parse the baseline (exit 5, baseline)"
+
+The same as exit 4, for the run `baseline_log_source` resolved to: the
+path is missing on the host running the analysis, the log is not a valid
+event log, or the baseline's History Server fetch failed (classified as
+above). When both the run and its baseline are unreadable the CLI
+reports the baseline.
+
+#### "sparkforensics-analyze [on the SSH host (...)] failed with an internal error (exit 6, internal error)"
+
+The CLI hit a bug, or a write after its checks failed. The message
+carries the CLI's stack trace. Report it to the sparkforensics project
+with that trace; a retry rarely helps. `CliError` is raised and Airflow
+retries it like any task failure.
 
 #### "sparkforensics-analyze exited ... but its JSON report could not be parsed"
 
@@ -37,9 +82,9 @@ interactive shells.
 
 #### "sparkforensics-analyze exited with unexpected code {returncode}"
 
-The CLI exited with a code other than 0, 1, 2 or 3, for example after an
-OOM kill or a wrapper-script failure. No report is read for these codes;
-the exception's stderr fragment shows the underlying cause.
+The CLI exited with a code other than 0 to 6, for example after an OOM
+kill or a wrapper-script failure. No report is read for these codes; the
+exception's stderr fragment shows the underlying cause.
 
 #### "sparkforensics-analyze timed out after {timeout}s"
 

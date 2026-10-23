@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Each exit code of `sparkforensics-analyze` that carries no report has its
+  own error message: 2 (usage error), 4 (unreadable event log or failed
+  History Server fetch), 5 (unreadable baseline) and 6 (internal error).
+  Exit 2 is no longer described as a log parse failure, and 4, 5 and 6 are
+  no longer reported as "unexpected code". The task still fails on all of
+  them. The errors are `CliError` and its subclasses (see Added); a CLI
+  older than 0.5.0 exits 2 for an unreadable log, which the message now
+  calls a usage error.
+- A usage error (exit 2) raises `CliConfigurationError`, an
+  `AirflowFailException`, so Airflow no longer retries it: the same
+  arguments fail the same way on every try.
+
+### Added
+
+- `sparkforensics_operator.exceptions.CliError`, `HistoryServerFetchError`
+  and `CliConfigurationError`. A Spark History Server failure that a retry
+  can clear (unreachable, no such application yet, refused or errored,
+  transfer stalled) raises `HistoryServerFetchError`, which Airflow
+  retries. One it cannot (an event log over the CLI's download cap, an
+  invalid History Server address or application id) raises
+  `CliConfigurationError`. Both carry the CLI's exit code as `exit_code`.
+
 ## [0.3.0] - 2026-09-28
 
 ### Added

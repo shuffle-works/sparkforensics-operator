@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 from airflow.exceptions import AirflowException
 
+from sparkforensics_operator.exceptions import CliConfigurationError, HistoryServerFetchError
 from sparkforensics_operator.hooks.analyze.subprocess import SubprocessAnalyzeHook
 from sparkforensics_operator.log_ref import HistoryServerApp, LocalEventLog, RemoteEventLog
 
@@ -78,6 +79,25 @@ def test_analyze_raises_on_exit_code_2(tmp_path):
 
     with patch("subprocess.run", side_effect=_fake_run(returncode=2, stderr="Unrecognized event log format")):
         with pytest.raises(AirflowException, match="Unrecognized event log format"):
+            hook.analyze(LocalEventLog(log_path), {})
+
+
+def test_analyze_raises_a_fetch_error_when_the_history_server_is_unreachable():
+    hook = SubprocessAnalyzeHook()
+    log_ref = HistoryServerApp(base_url="http://shs:18080", app_id="app-1")
+
+    with patch("subprocess.run", side_effect=_fake_run(returncode=4, stderr="SHS fetch failed: upstream-unreachable")):
+        with pytest.raises(HistoryServerFetchError, match=r"\(exit 4, event log\): the Spark History Server is unreachable"):
+            hook.analyze(log_ref, {})
+
+
+def test_analyze_raises_a_configuration_error_on_a_usage_error(tmp_path):
+    hook = SubprocessAnalyzeHook()
+    log_path = tmp_path / "app.log"
+    log_path.write_text("{}")
+
+    with patch("subprocess.run", side_effect=_fake_run(returncode=2, stderr="--max-skew needs a number")):
+        with pytest.raises(CliConfigurationError, match=r"rejected its arguments \(exit 2, usage error\)"):
             hook.analyze(LocalEventLog(log_path), {})
 
 
