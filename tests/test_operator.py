@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from airflow import DAG
+from airflow.exceptions import AirflowException
 
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze._cli import build_report
@@ -513,6 +514,48 @@ def test_run_spark_forensics_accepts_a_sibling_baseline_with_a_shared_name_prefi
     )
 
     backend.analyze.assert_called_once()
+
+
+def test_run_spark_forensics_hands_a_history_server_baseline_to_the_backend(tmp_path):
+    log_source, backend, baseline_log_source = _baseline_fixtures(tmp_path, _report())
+    baseline = HistoryServerApp(base_url="http://shs:18080", app_id="app-0")
+    baseline_log_source.locate.return_value = baseline
+
+    run_spark_forensics(
+        {}, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+        thresholds={}, on_threshold_breach="fail", notifier=None,
+        log=logging.getLogger("test"), baseline_log_source=baseline_log_source,
+    )
+
+    backend.analyze.assert_called_once_with(LocalEventLog(tmp_path / "app.log"), {}, baseline_ref=baseline)
+    baseline_log_source.cleanup.assert_called_once_with(baseline)
+
+
+@pytest.mark.parametrize("baseline, overlaps", [
+    (HistoryServerApp(base_url="http://shs:18080", app_id="app-1"), True),
+    (HistoryServerApp(base_url="http://shs:18080", app_id="app-1", attempt_id="2"), False),
+    (HistoryServerApp(base_url="http://shs:18080", app_id="app-0"), False),
+    (HistoryServerApp(base_url="http://other-shs:18080", app_id="app-1"), False),
+])
+def test_a_history_server_baseline_is_refused_only_when_it_is_the_run_under_analysis(tmp_path, baseline, overlaps):
+    log_source, backend, baseline_log_source = _baseline_fixtures(tmp_path, _report())
+    log_source.locate.return_value = HistoryServerApp(base_url="http://shs:18080", app_id="app-1")
+    baseline_log_source.locate.return_value = baseline
+
+    def run():
+        run_spark_forensics(
+            {}, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+            thresholds={}, on_threshold_breach="fail", notifier=None,
+            log=logging.getLogger("test"), baseline_log_source=baseline_log_source,
+        )
+
+    if overlaps:
+        with pytest.raises(AirflowException, match="compared against itself"):
+            run()
+        backend.analyze.assert_not_called()
+    else:
+        run()
+        backend.analyze.assert_called_once()
 
 
 def test_operator_fails_on_a_regression_breach_and_persists_the_comparison(tmp_path):

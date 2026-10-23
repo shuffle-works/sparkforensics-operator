@@ -34,11 +34,14 @@ downloaded) fails fast instead of analyzing the wrong file.
 
 A run can also be compared against an earlier one: `baseline_log_source`
 is a second `LogSourceHook`, located and cleaned up next to `log_source`,
-and the backend passes its reference to the CLI as `--baseline`. The CLI
-reads a baseline only from a path, never from a History Server, so each
-backend declares the kinds it can pass that way
-(`AnalyzeHook.supported_baseline_refs`: `LocalEventLog` on the worker,
-`RemoteEventLog` on the SSH host) and `analyze()` or the deferrable
+and the backend passes its reference to the CLI as `--baseline` (an event log
+path) or `--baseline-shs-base-url`/`--baseline-app-id`/
+`--baseline-attempt-id` (a History Server application, which the CLI
+fetches itself, like the run under analysis). Each backend declares the
+kinds it can pass
+(`AnalyzeHook.supported_baseline_refs`: `LocalEventLog` and
+`HistoryServerApp` on the worker, `RemoteEventLog` on its own host and
+`HistoryServerApp` on the SSH host) and `analyze()` or the deferrable
 submit step rejects any other before running anything. The comparison
 itself, and the budgets on it, are the CLI's. Which run is the baseline
 is the DAG author's choice, made through that log source: the operator

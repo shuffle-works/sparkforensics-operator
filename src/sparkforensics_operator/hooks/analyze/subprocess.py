@@ -17,13 +17,14 @@ class SubprocessAnalyzeHook(AnalyzeHook):
     <tmpfile> [threshold flags]` on the Airflow worker, or, for a
     HistoryServerApp, `--shs-base-url <url> --app-id <id>` so the CLI
     fetches the run itself. A baseline, when given, is a LocalEventLog
-    passed as --baseline. Requires Node.js 18+ and the sparkforensics-cli
-    npm package (`npm install -g sparkforensics-cli`) installed on the
+    passed as --baseline, or a HistoryServerApp passed as
+    `--baseline-shs-base-url <url> --baseline-app-id <id>`. Requires
+    Node.js 18+ and the sparkforensics-cli npm package (`npm install -g sparkforensics-cli`) installed on the
     worker, with sparkforensics-analyze resolvable on PATH (or pass
     analyze_bin=<full path>)."""
 
     supported_log_refs = (LocalEventLog, HistoryServerApp)
-    supported_baseline_refs = (LocalEventLog,)
+    supported_baseline_refs = (LocalEventLog, HistoryServerApp)
 
     template_fields = ("analyze_bin",)
 

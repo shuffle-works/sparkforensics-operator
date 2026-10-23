@@ -87,11 +87,12 @@ def build_cli_args(
     baseline_ref: EventLogRef | None = None,
 ) -> list[str]:
     """Without out_path the CLI writes the JSON report to stdout. baseline_ref,
-    if given, is the run to compare against (--baseline), a file path the
+    if given, is the run to compare against (--baseline, or the
+    --baseline-shs-* flags for a History Server application) that the
     backend has already checked it can read."""
     args = [analyze_bin, *_log_ref_args(log_ref), "--format", "json"]
     if baseline_ref is not None:
-        args.extend(["--baseline", _baseline_path(baseline_ref)])
+        args.extend(_baseline_args(baseline_ref))
     if out_path is not None:
         args.extend(["--out", str(out_path)])
     args.extend(_threshold_args(thresholds))
@@ -109,12 +110,17 @@ def _log_ref_args(log_ref: EventLogRef) -> list[str]:
     raise TypeError(f"Not an event log reference: {log_ref!r}")
 
 
-def _baseline_path(baseline_ref: EventLogRef) -> str:
-    # --baseline takes only a local event-log file or rolling-log directory;
-    # the CLI cannot fetch a baseline from a History Server.
+def _baseline_args(baseline_ref: EventLogRef) -> list[str]:
+    # --baseline takes an event-log file or rolling-log directory; the
+    # --baseline-shs-* flags mirror --shs-base-url/--app-id/--attempt-id.
+    if isinstance(baseline_ref, HistoryServerApp):
+        args = ["--baseline-shs-base-url", baseline_ref.base_url, "--baseline-app-id", baseline_ref.app_id]
+        if baseline_ref.attempt_id:
+            args.extend(["--baseline-attempt-id", baseline_ref.attempt_id])
+        return args
     if isinstance(baseline_ref, (LocalEventLog, RemoteEventLog)):
-        return str(baseline_ref.path)
-    raise TypeError(f"Not a baseline event log path: {baseline_ref!r}")
+        return ["--baseline", str(baseline_ref.path)]
+    raise TypeError(f"Not a baseline event log reference: {baseline_ref!r}")
 
 
 def _threshold_args(thresholds: dict) -> list[str]:

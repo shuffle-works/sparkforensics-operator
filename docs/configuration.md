@@ -144,22 +144,36 @@ check_spark_job = SparkForensicsOperator(
 )
 ```
 
-Most log sources work as a baseline. With `SubprocessAnalyzeHook`, any
-hook that resolves to a `LocalEventLog` does: `FilesystemLogSourceHook`,
+A baseline can come from any log source whose reference the backend can
+read. With `SubprocessAnalyzeHook`, any hook that resolves to a `LocalEventLog` does: `FilesystemLogSourceHook`,
 `XComLogSourceHook`, `SFTPLogSourceHook`, and
-`HistoryServerLogSourceHook`, which fetches the baseline's log from a
+`HistoryServerLogSourceHook`, which downloads the baseline's log from a
 Spark History Server. With `SSHAnalyzeHook`, `RemotePathLogSourceHook`
-does, as a `RemoteEventLog` on the backend's own `ssh_conn_id`. The one
-exception is `HistoryServerAppLogSourceHook`: the backend passes the
-baseline to `sparkforensics-analyze --baseline`, which reads an event log
-file or rolling-log directory and cannot fetch from a History Server, so
-its unfetched `HistoryServerApp` reference fails with `AirflowException`
-before the CLI runs, naming the hook to use instead. The log under
-analysis has no such limit: a `HistoryServerApp` candidate with a path
-baseline works. A baseline that is the log under analysis, or whose
-path contains or sits inside it (on the same host), also fails with
-`AirflowException` before the CLI runs, since the run would be compared
-against itself. That is what happens when two `FilesystemLogSourceHook`s
+does, as a `RemoteEventLog` on the backend's own `ssh_conn_id`. Both
+backends also take `HistoryServerAppLogSourceHook`: the CLI fetches the
+baseline run from the History Server itself
+(`--baseline-shs-base-url`, `--baseline-app-id` and
+`--baseline-attempt-id`), from wherever the backend runs, so its
+`base_url` must be reachable from there. It can be another History Server
+than the one the log under analysis comes from, and the log under analysis
+can be a path while the baseline is a History Server application, or the
+other way round.
+
+```python
+check_spark_job = SparkForensicsOperator(
+    task_id="check_spark_job",
+    log_source=HistoryServerAppLogSourceHook(base_url="http://shs:18080", app_id="{{ params.app_id }}"),
+    baseline_log_source=HistoryServerAppLogSourceHook(base_url="http://shs:18080", app_id="{{ params.baseline_app_id }}"),
+    backend=SubprocessAnalyzeHook(),
+    report_dest="s3://reports/{{ run_id }}/report.json",
+    max_regression_pct=20,
+)
+```
+
+A baseline that is the log under analysis (the same History Server
+application and attempt), or whose path contains or sits inside it (on the
+same host), fails with `AirflowException` before the CLI runs, since the run
+would be compared against itself. That is what happens when two `FilesystemLogSourceHook`s
 or `SFTPLogSourceHook`s share one `dest_dir` for same-named logs, so give
 each its own. `deferrable=True` works too; the resolved baseline crosses
 the deferral with the rest of the resume kwargs.
@@ -332,14 +346,14 @@ hook. Don't define a `resolve` method: Airflow 3's templater calls
 
 - `SubprocessAnalyzeHook(analyze_bin="sparkforensics-analyze", timeout=900)`
   runs the CLI on the Airflow worker. Reads `LocalEventLog` and
-  `HistoryServerApp`, and a `LocalEventLog` baseline. `timeout` is in
-  seconds.
+  `HistoryServerApp`, and a `LocalEventLog` or `HistoryServerApp` baseline.
+  `timeout` is in seconds.
 - `SSHAnalyzeHook(ssh_conn_id, analyze_bin="sparkforensics-analyze", timeout=900, remote_base_dir=None, poll_interval=5)`
   runs the CLI on the host behind `ssh_conn_id` (the same Airflow SSH
   connection `SSHOperator` uses) and reads the JSON report from its
   stdout. Reads `RemoteEventLog` on the same `ssh_conn_id` and
   `HistoryServerApp`, and a `RemoteEventLog` baseline on the same
-  `ssh_conn_id`. `timeout` bounds the whole remote run in seconds,
+  `ssh_conn_id` or a `HistoryServerApp` baseline. `timeout` bounds the whole remote run in seconds,
   on the worker and on the SSH host through coreutils `timeout`. Every
   argument is shell-quoted. Requires the `ssh` extra on the worker, and
   coreutils `timeout`, Node.js 18+ and `sparkforensics-cli` on the SSH
@@ -400,6 +414,7 @@ the operator ignores fields it does not read.
 | operator feature | minimum `sparkforensics-cli` |
 |---|---|
 | the error messages for exit codes 2, 4, 5 and 6 | 0.5.0 |
+| a History Server application as the baseline (`--baseline-shs-base-url`, `--baseline-app-id`, `--baseline-attempt-id`) | 0.10.0 |
 
 ### Job directories
 

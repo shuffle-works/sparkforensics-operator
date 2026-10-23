@@ -125,14 +125,13 @@ backend](configuration.md#which-log-source-works-with-which-backend).
 
 #### "... cannot use ... as the baseline"
 
-`baseline_log_source` resolved to something the backend cannot pass to
-`sparkforensics-analyze --baseline`, which reads only an event log path
-where the analysis runs. "A Spark History Server application cannot be a
-baseline" means it is a `HistoryServerAppLogSourceHook`: fetch the
-baseline with `HistoryServerLogSourceHook` (for `SubprocessAnalyzeHook`)
-or point `RemotePathLogSourceHook` at its log on the SSH host (for
-`SSHAnalyzeHook`). "cannot compare against a baseline on a different SSH
-host" means the baseline's `ssh_conn_id` differs from the backend's. See
+`baseline_log_source` resolved to something the backend cannot hand to
+the CLI as the baseline. The message names what the backend reads: an
+event log path where the analysis runs (a `LocalEventLog` for
+`SubprocessAnalyzeHook`, a `RemoteEventLog` for `SSHAnalyzeHook`) or a
+Spark History Server application. "cannot compare against a baseline on a
+different SSH host" means the baseline's `ssh_conn_id` differs from the
+backend's. See
 [comparing against a baseline
 run](configuration.md#comparing-against-a-baseline-run).
 

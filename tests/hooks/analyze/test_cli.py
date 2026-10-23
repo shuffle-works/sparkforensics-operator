@@ -106,11 +106,38 @@ def test_build_cli_args_passes_a_local_baseline_path():
     assert args[args.index("--baseline") + 1] == "/tmp/app-1.log"
 
 
-def test_build_cli_args_never_passes_a_history_server_app_as_the_baseline():
-    with pytest.raises(TypeError, match="Not a baseline event log path"):
+def test_build_cli_args_passes_a_history_server_app_as_the_baseline():
+    args = build_cli_args(
+        "sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {"max_regression_pct": 10},
+        baseline_ref=HistoryServerApp(base_url="http://shs:18080", app_id="app-1"),
+    )
+
+    assert args == [
+        "sparkforensics-analyze", "/tmp/app.log", "--format", "json",
+        "--baseline-shs-base-url", "http://shs:18080", "--baseline-app-id", "app-1",
+        "--max-regression-pct", "10",
+    ]
+    assert "--baseline" not in args
+
+
+def test_build_cli_args_passes_the_baseline_attempt_id_when_there_is_one():
+    args = build_cli_args(
+        "sparkforensics-analyze", HistoryServerApp(base_url="http://shs:18080", app_id="app-2", attempt_id="2"), {},
+        baseline_ref=HistoryServerApp(base_url="http://other-shs:18080", app_id="app-1", attempt_id="3"),
+    )
+
+    assert args == [
+        "sparkforensics-analyze", "--shs-base-url", "http://shs:18080", "--app-id", "app-2",
+        "--attempt-id", "2", "--format", "json",
+        "--baseline-shs-base-url", "http://other-shs:18080", "--baseline-app-id", "app-1",
+        "--baseline-attempt-id", "3",
+    ]
+
+
+def test_build_cli_args_rejects_a_baseline_that_is_not_an_event_log_reference():
+    with pytest.raises(TypeError, match="Not a baseline event log reference"):
         build_cli_args(
-            "sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {},
-            baseline_ref=HistoryServerApp(base_url="http://shs:18080", app_id="app-1"),
+            "sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {}, baseline_ref=Path("/tmp/app-1.log"),
         )
 
 

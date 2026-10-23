@@ -49,7 +49,8 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
     HistoryServerApp (HistoryServerAppLogSourceHook), whose base_url is
     resolved on that host, e.g. http://localhost:18080. A baseline, when
     given, is a RemoteEventLog on the same ssh_conn_id, passed as
-    --baseline. Requires the `ssh` extra.
+    --baseline, or a HistoryServerApp, passed as `--baseline-shs-base-url
+    <url> --baseline-app-id <id>`. Requires the `ssh` extra.
 
     With SparkForensicsOperator(deferrable=True) the CLI instead runs as a
     detached job on that host (the SSH provider's remote-job wrapper, under
@@ -59,7 +60,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
     $HOME/.sparkforensics/jobs of the SSH user."""
 
     supported_log_refs = (RemoteEventLog, HistoryServerApp)
-    supported_baseline_refs = (RemoteEventLog,)
+    supported_baseline_refs = (RemoteEventLog, HistoryServerApp)
     template_fields = ("ssh_conn_id", "analyze_bin", "remote_base_dir")
 
     def __init__(
@@ -116,7 +117,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
 
     def check_baseline_ref(self, baseline_ref: EventLogRef) -> None:
         super().check_baseline_ref(baseline_ref)
-        if baseline_ref.ssh_conn_id != self.ssh_conn_id:
+        if isinstance(baseline_ref, RemoteEventLog) and baseline_ref.ssh_conn_id != self.ssh_conn_id:
             raise AirflowException(
                 f"SSHAnalyzeHook(ssh_conn_id={self.ssh_conn_id!r}) cannot compare against a "
                 f"baseline on a different SSH host ({baseline_ref.describe()}). Use the same "

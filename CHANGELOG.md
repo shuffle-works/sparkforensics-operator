@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A `HistoryServerApp` baseline is no longer rejected with the message that
+  the CLI cannot fetch a baseline from a History Server, which was wrong
+  for `sparkforensics-cli` 0.10.0 and newer. `AnalyzeHook.check_baseline_ref()`
+  rejects only a reference kind the backend does not declare in
+  `supported_baseline_refs`.
 - The persisted report is the CLI's whole JSON report (`metrics`,
   `effectiveConf`, `writeTargets`, `generator` and every other section),
   plus `thresholdResults` and `comparison` as before, instead of a fixed
@@ -42,6 +47,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A Spark History Server application can be the baseline: a
+  `baseline_log_source` that resolves to a `HistoryServerApp`
+  (`HistoryServerAppLogSourceHook`) is passed to the CLI as
+  `--baseline-shs-base-url`, `--baseline-app-id` and
+  `--baseline-attempt-id`, on `SubprocessAnalyzeHook` and
+  `SSHAnalyzeHook`, with `deferrable=True` too. It needs
+  `sparkforensics-cli` 0.10.0 or newer. The baseline can come from another
+  History Server than the run under analysis. A baseline that is the same
+  application and attempt as the run still fails before the CLI runs.
 - The `sparkforensics_summary` XCom has `verdict` (the title of the CLI's
   verdict), `app_name`, `run_time_ms` and `skipped_lines`. `skipped_lines` is
   `None` for a CLI that does not report it (before 0.10.2).

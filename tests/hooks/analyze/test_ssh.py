@@ -480,10 +480,28 @@ def test_analyze_passes_a_baseline_path_on_the_same_host_and_reads_the_compariso
     assert report.comparison == comparison
 
 
+@needs_posix_host
+def test_analyze_passes_a_history_server_baseline_as_the_baseline_flags(host):
+    comparison = {"confidence": "ok", "reason": None, "metrics": [], "findings": {}}
+    wrapped = json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison})
+    host.fake_cli(f"printf '%s' '{wrapped}' | emit\n")
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=60)
+
+    report = hook.analyze(
+        RemoteEventLog("onprem_ssh", "/logs/app-2"), {"max_regression_pct": 20},
+        baseline_ref=HistoryServerApp(base_url="http://localhost:18080", app_id="app-1", attempt_id="2"),
+    )
+
+    assert host.argv() == [
+        "/logs/app-2", "--format", "json", "--baseline-shs-base-url", "http://localhost:18080",
+        "--baseline-app-id", "app-1", "--baseline-attempt-id", "2", "--max-regression-pct", "20",
+    ]
+    assert report.comparison == comparison
+
+
 @pytest.mark.parametrize("baseline, error", [
     (RemoteEventLog("other_ssh", "/logs/app-1"), "baseline on a different SSH host"),
     (LocalEventLog("/tmp/app-1.log"), "cannot use LocalEventLog.*reads a baseline only as RemoteEventLog"),
-    (HistoryServerApp(base_url="http://localhost:18080", app_id="app-1"), "History Server application cannot be a baseline"),
 ])
 def test_analyze_rejects_a_baseline_the_ssh_host_cannot_read_before_connecting(baseline, error):
     hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")

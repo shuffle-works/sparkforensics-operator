@@ -540,6 +540,24 @@ def test_a_timeout_while_on_the_ssh_host_is_not_rewrapped(host):
 
 
 
+def test_deferred_run_passes_a_history_server_baseline_as_the_baseline_flags(host):
+    comparison = {"confidence": "ok", "reason": None, "metrics": [], "findings": {}}
+    wrapped = json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison})
+    host.fake_cli(f"printf '%s' '{wrapped}' | emit\n")
+    hook = _hook()
+    baseline = HistoryServerApp(base_url="http://localhost:18080", app_id="app-0")
+
+    job = hook.submit(LOG, {}, ti_context(), baseline_ref=baseline)
+    event = run_trigger(hook.trigger_for(job))
+    report = hook.collect(job, event, LOG, {})
+
+    assert host.argv()[:7] == [
+        "/logs/app-1", "--format", "json", "--baseline-shs-base-url", "http://localhost:18080",
+        "--baseline-app-id", "app-0",
+    ]
+    assert report.comparison == comparison
+
+
 def test_deferred_run_passes_the_baseline_path_and_reads_the_comparison(host):
     comparison = {"confidence": "ok", "reason": None, "metrics": [], "findings": {}}
     wrapped = json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison})

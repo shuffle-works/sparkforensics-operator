@@ -255,12 +255,34 @@ def test_analyze_passes_a_local_baseline_and_reads_the_comparison(tmp_path):
     assert [r.name for r in report.threshold_results] == ["max-regression"]
 
 
-@pytest.mark.parametrize("baseline", [
-    HistoryServerApp(base_url="http://shs:18080", app_id="app-1"),
-    RemoteEventLog("onprem_ssh", "/logs/app-1"),
-])
-def test_analyze_rejects_a_baseline_that_is_not_a_worker_local_path_before_running(tmp_path, baseline):
+def test_analyze_passes_a_history_server_baseline_and_reads_the_comparison(tmp_path):
+    hook = SubprocessAnalyzeHook()
+    comparison = {"confidence": "ok", "reason": None, "metrics": [], "findings": {}}
+    captured = {}
+
+    def run(args, capture_output, text, timeout):
+        captured["args"] = args
+        _out_path_from_args(args).write_text(json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison}))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    with patch("subprocess.run", side_effect=run):
+        report = hook.analyze(
+            HistoryServerApp(base_url="http://shs:18080", app_id="app-2"), {"max_regression_pct": 20},
+            baseline_ref=HistoryServerApp(base_url="http://shs:18080", app_id="app-1", attempt_id="1"),
+        )
+
+    args = captured["args"]
+    assert args[args.index("--baseline-shs-base-url") + 1] == "http://shs:18080"
+    assert args[args.index("--baseline-app-id") + 1] == "app-1"
+    assert args[args.index("--baseline-attempt-id") + 1] == "1"
+    assert "--baseline" not in args
+    assert report.comparison == comparison
+
+
+def test_analyze_rejects_a_baseline_on_an_ssh_host_before_running(tmp_path):
     with patch("subprocess.run") as run:
         with pytest.raises(AirflowException, match="SubprocessAnalyzeHook cannot use"):
-            SubprocessAnalyzeHook().analyze(LocalEventLog(tmp_path / "app-2.log"), {}, baseline_ref=baseline)
+            SubprocessAnalyzeHook().analyze(
+                LocalEventLog(tmp_path / "app-2.log"), {}, baseline_ref=RemoteEventLog("onprem_ssh", "/logs/app-1"),
+            )
     run.assert_not_called()

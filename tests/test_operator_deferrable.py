@@ -532,6 +532,10 @@ class FakeComparingHook(FakeDeferrableHook):
         return {"job_id": "job-1", "timeout": 900}
 
 
+class FakeHistoryServerComparingHook(FakeComparingHook):
+    supported_baseline_refs = (RemoteEventLog, HistoryServerApp)
+
+
 def _comparing_operator(backend, tmp_path, baseline=BASELINE, **kwargs):
     baseline_log_source = MagicMock()
     baseline_log_source.locate.return_value = baseline
@@ -549,11 +553,24 @@ def test_deferrable_execute_submits_the_baseline_and_carries_it_across_the_defer
     assert deferred.kwargs["thresholds"]["max_regression_pct"] == 20
 
 
+def test_a_history_server_baseline_crosses_the_deferral_with_the_resume_kwargs(tmp_path):
+    baseline = HistoryServerApp(base_url="http://localhost:18080", app_id="app-0", attempt_id="1")
+    backend = FakeHistoryServerComparingHook()
+    op = _comparing_operator(backend, tmp_path, baseline=baseline, max_regression_pct=20)
+
+    deferred = _defer(op)
+
+    assert backend.submitted == [(LOG, op.thresholds, baseline)]
+    assert deferred.kwargs["baseline_log_ref"] == {
+        "kind": "history_server_app", "base_url": "http://localhost:18080", "app_id": "app-0", "attempt_id": "1",
+    }
+
+
 def test_a_baseline_the_backend_cannot_read_fails_before_submitting_and_cleans_up(tmp_path):
     backend = FakeComparingHook()
     op = _comparing_operator(backend, tmp_path, baseline=HistoryServerApp(base_url="http://localhost:18080", app_id="app-0"))
 
-    with pytest.raises(AirflowException, match="History Server application cannot be a baseline"):
+    with pytest.raises(AirflowException, match="reads a baseline only as RemoteEventLog"):
         op.execute({})
 
     assert backend.submitted == []
