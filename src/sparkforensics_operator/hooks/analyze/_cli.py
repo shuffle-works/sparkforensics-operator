@@ -6,6 +6,7 @@ the JSON report plus stderr threshold lines into a Report.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from pathlib import PurePath
 
 from sparkforensics_operator._compat import AirflowException
@@ -120,8 +121,17 @@ def _threshold_args(thresholds: dict) -> list[str]:
     for key, flag in THRESHOLD_CLI_FLAGS.items():
         value = thresholds.get(key)
         if value is not None:
-            args.extend([flag, str(value)])
+            args.extend([flag, _flag_value(value)])
     return args
+
+
+def _flag_value(value) -> str:
+    """A number as the plain decimal the CLI reads: str() writes some floats
+    in exponent form (1e-05, 1e+16), which the CLI rejects as a usage error.
+    A string, such as a metric name, is passed as it is."""
+    if isinstance(value, str):
+        return value
+    return format(Decimal(str(value)), "f")
 
 
 def check_exit_code(returncode: int, stderr: str, where: str = "") -> None:

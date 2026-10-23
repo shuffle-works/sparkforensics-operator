@@ -523,6 +523,11 @@ volume metrics `inputBytes`, `outputBytes`, `taskCount`,
 regression direction). A breach raises `ThresholdBreached` like any
 other threshold.
 
+The operator passes every number to the CLI as a plain decimal:
+`max_spill_gb=0.00001` becomes `--max-spill 0.00001` and
+`max_runtime_ms=1e16` becomes `--max-runtime 10000000000000000`, never
+`1e-05` or `1e+16`, which a current CLI rejects as a usage error.
+
 Each configured threshold comes back as a pass, a violation or
 inconclusive. Inconclusive means the event log lacked the evidence the
 threshold needs; it is logged as a warning whatever

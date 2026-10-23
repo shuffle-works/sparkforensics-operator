@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,64 @@ def test_build_cli_args_writes_to_stdout_without_an_out_path():
     args = build_cli_args("sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {"max_spill_gb": 2})
 
     assert args == ["sparkforensics-analyze", "/tmp/app.log", "--format", "json", "--max-spill", "2"]
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (0.00001, "0.00001"),
+        (1e-07, "0.0000001"),
+        (1.5e-05, "0.000015"),
+        (1e16, "10000000000000000"),
+        (2.5e20, "250000000000000000000"),
+        (90, "90"),
+        (3.0, "3.0"),
+        (1.5, "1.5"),
+        (0, "0"),
+        (Decimal("1E-5"), "0.00001"),
+    ],
+)
+def test_build_cli_args_writes_a_threshold_as_a_plain_decimal(value, expected):
+    args = build_cli_args(
+        "sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {"max_spill_gb": value}
+    )
+
+    assert args[args.index("--max-spill") + 1] == expected
+    assert "e" not in expected.lower()
+
+
+def test_build_cli_args_writes_every_numeric_threshold_as_a_plain_decimal():
+    args = build_cli_args(
+        "sparkforensics-analyze",
+        LocalEventLog(Path("/tmp/app.log")),
+        {
+            "max_runtime_ms": 10**16,
+            "max_spill_gb": 0.00001,
+            "max_skew_ratio": 0.00002,
+            "max_failed_task_rate_pct": 0.00003,
+            "min_efficiency_pct": 1e-06,
+            "max_regression_pct": 0.0000004,
+            "regression_metric": "gcTime",
+            "fail_on_introduced": "critical",
+        },
+        baseline_ref=LocalEventLog(Path("/tmp/app-0.log")),
+    )
+
+    flags = dict(zip(args[args.index("--format") + 2 :: 2], args[args.index("--format") + 3 :: 2]))
+    assert flags["--max-runtime"] == "10000000000000000"
+    assert flags["--max-spill"] == "0.00001"
+    assert flags["--max-skew"] == "0.00002"
+    assert flags["--max-failed-task-rate"] == "0.00003"
+    assert flags["--min-efficiency"] == "0.000001"
+    assert flags["--max-regression-pct"] == "0.0000004"
+    assert flags["--regression-metric"] == "gcTime"
+    assert flags["--fail-on-introduced"] == "critical"
+
+
+def test_build_cli_args_passes_a_string_threshold_as_it_is():
+    args = build_cli_args("sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {"max_spill_gb": "2"})
+
+    assert args[args.index("--max-spill") + 1] == "2"
 
 
 def test_build_cli_args_rejects_something_that_is_not_an_event_log_reference():

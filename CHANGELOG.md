@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Thresholds are passed to the CLI as plain decimals. A float such as
+  `0.00001` or `1e16` was formatted with `str()` as `1e-05` or `1e+16`, which
+  the CLI rejects (exit 2) as it does any exponent notation.
+
 ### Changed
 
 - Each exit code of `sparkforensics-analyze` that carries no report has its
