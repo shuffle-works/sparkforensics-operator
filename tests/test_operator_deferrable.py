@@ -667,4 +667,3 @@ def test_resume_persists_the_markdown_report_the_backend_collected(tmp_path):
 
     assert (tmp_path / "report.md").read_text() == "# Report"
     assert not (tmp_path / "other.md").exists()
-    assert ti.xcoms["sparkforensics_summary"]["markdown_destination"] == str(tmp_path / "report.md")

@@ -59,7 +59,6 @@ def build_summary(
     report_url: str | None,
     violated: bool,
     regression_metric: str | None = None,
-    markdown_destination: str | None = None,
 ) -> dict:
     """regression_metric is the comparison metric the summary reports on
     (DEFAULT_REGRESSION_METRIC when None); it matters only for a report
@@ -80,8 +79,6 @@ def build_summary(
         "run_time_ms": report.run_time_ms,
         "skipped_lines": report.skipped_lines,
     }
-    if markdown_destination is not None:
-        summary["markdown_destination"] = markdown_destination
     if report.comparison is not None:
         summary["comparison"] = _comparison_summary(
             report.comparison, regression_metric or DEFAULT_REGRESSION_METRIC

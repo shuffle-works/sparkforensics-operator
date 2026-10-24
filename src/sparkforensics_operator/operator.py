@@ -292,14 +292,13 @@ def handle_report(
     a synchronous one does. regression_metric is the comparison metric the
     summary XCom reports on, for a report compared against a baseline."""
     destination = sinks.persist(_report_json(report), report_dest, aws_conn_id=aws_conn_id)
-    markdown_destination = None
     if markdown_dest is not None:
         if report.markdown is None:
             raise AirflowException(
                 "markdown_dest is set, but the backend returned no Markdown report; use a backend "
                 "that writes one (SubprocessAnalyzeHook or SSHAnalyzeHook)."
             )
-        markdown_destination = sinks.persist_text(report.markdown, markdown_dest, aws_conn_id=aws_conn_id)
+        sinks.persist_text(report.markdown, markdown_dest, aws_conn_id=aws_conn_id)
 
     for result in report.threshold_results:
         if result.status == "inconclusive":
@@ -349,7 +348,6 @@ def handle_report(
                 report_url=render_report_url(destination, report_url_template),
                 violated=violated,
                 regression_metric=regression_metric,
-                markdown_destination=markdown_destination,
             ),
         )
 

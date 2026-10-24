@@ -198,8 +198,7 @@ Markdown report is produced.
 With `markdown_dest`, the backend runs the CLI a second time with
 `--format md`, so the analysis takes about twice as long and `timeout`
 bounds each run. The JSON run decides the thresholds and exit code. The
-Markdown text is `Report.markdown`, and its destination is
-`markdown_destination` in the [summary XCom](#summary-xcom). The backend
+Markdown text is `Report.markdown`. The backend
 needs `supports_markdown = True` (`SubprocessAnalyzeHook` and
 `SSHAnalyzeHook`).
 
@@ -693,7 +692,6 @@ reading the report. It is a dict:
 | `verdict` | the title of the CLI's verdict for the run (for example "Start with Stage 7"), or `None` |
 | `app_name` | the Spark application's name (the CLI's pseudonym under `redact`), or `None` |
 | `run_time_ms` | the application's wall-clock time in milliseconds, or `None` when the log does not say (a run that never finished) |
-| `markdown_destination` | where the Markdown report was persisted; present only with `markdown_dest` |
 | `skipped_lines` | how many event log lines the CLI could not parse (`0` for a clean log), or `None` for a CLI before 0.10.2 |
 | `comparison` | only when a baseline ran: see below |
 

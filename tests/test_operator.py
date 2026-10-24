@@ -828,11 +828,9 @@ def test_markdown_dest_persists_the_markdown_report_next_to_the_json_one(tmp_pat
     assert (tmp_path / "report.md").read_text() == "# Report\n"
     assert json.loads((tmp_path / "report.json").read_text())["schemaVersion"] == 3
     assert backend.analyze.call_args.args[1]["markdown"] is True
-    summary = {c.kwargs["key"]: c.kwargs["value"] for c in ti.xcom_push.call_args_list}["sparkforensics_summary"]
-    assert summary["markdown_destination"] == str(tmp_path / "report.md")
 
 
-def test_without_markdown_dest_the_backend_is_not_asked_for_markdown_and_the_summary_has_no_markdown_key(tmp_path):
+def test_without_markdown_dest_the_backend_is_not_asked_for_markdown(tmp_path):
     log_source, backend = _fixtures(tmp_path, _report())
     op = SparkForensicsOperator(
         task_id="forensics", log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
@@ -842,8 +840,6 @@ def test_without_markdown_dest_the_backend_is_not_asked_for_markdown_and_the_sum
     op.execute({"ti": ti})
 
     assert backend.analyze.call_args.args[1]["markdown"] is False
-    summary = {c.kwargs["key"]: c.kwargs["value"] for c in ti.xcom_push.call_args_list}["sparkforensics_summary"]
-    assert "markdown_destination" not in summary
     assert list(tmp_path.glob("*.md")) == []
 
 

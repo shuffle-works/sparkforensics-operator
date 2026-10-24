@@ -65,8 +65,9 @@ Upgrade with `npm install -g sparkforensics-cli`.
 #### "sparkforensics-analyze (Markdown report) exited with unexpected code ..." or "... did not report how its Markdown report run ended" or "... wrote no Markdown report"
 
 `markdown_dest` runs the CLI a second time with `--format md`, and that
-run failed (an OOM kill or a timeout, say). The JSON report was read.
-Check the host's memory and `timeout`.
+run failed (an OOM kill or a timeout, say). The task fails before the
+JSON report is saved and before any summary XCom or notification. A retry
+runs both CLI runs again. Check the host's memory and `timeout`.
 
 #### "sparkforensics-analyze exited with unexpected code {returncode}"
 
