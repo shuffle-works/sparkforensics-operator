@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- `sparkforensics-cli` 0.10.2 counts every failed task attempt in `max_failed_task_rate_pct`, so a job with retried tasks can fail where it passed.
+- With 0.10.2, a log with skipped lines gives exit 3 and an inconclusive `parse-incomplete` result. The task does not fail; see `skipped_lines` in the summary XCom.
+- The operator is tested against `sparkforensics-cli` 0.10.1.
+
+### Added
+
+- `markdown_dest` saves the CLI's Markdown report (`--format md`) next to the JSON report. The analysis runs twice.
+- `redact=True` passes `--redact`.
+- `normalize_path`, `ignore_conf` and `noise_band_pct` tune the baseline comparison.
+- `regression_budgets`, `stage_regression_budgets` and `stage_qualities` set several regression budgets at once.
+- A Spark History Server application can be the baseline on `SubprocessAnalyzeHook` and `SSHAnalyzeHook`.
+- The summary XCom has `verdict`, `app_name`, `run_time_ms`, `skipped_lines` and `cli_version`. The default notification names the application, the verdict and the run time.
+- A warning is logged when the CLI is older than the tested version.
+- `CliError`, `CliConfigurationError` and `HistoryServerFetchError` in `sparkforensics_operator.exceptions`.
+
+### Changed
+
+- Each CLI exit code without a report (2, 4, 5, 6) has its own error message. The task still fails.
+- Airflow does not retry usage errors, and retries History Server failures that can clear.
+- A report with a newer `schemaVersion` than the operator reads fails the task.
+- The saved report is the CLI's whole JSON report. `Report.raw` holds it. It includes `effectiveConf`, where the CLI masks secret-looking keys and values; see [Report destinations](docs/configuration.md#report-destinations).
+- `Report.threshold_results` keeps every result of a threshold the CLI reports on several lines.
+
+### Fixed
+
+- Thresholds such as `0.00001` or `1e16` reach the CLI as plain decimals, not exponent form, which the CLI rejects.
+
 ## [0.3.0] - 2026-09-28
 
 ### Added

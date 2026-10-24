@@ -38,6 +38,7 @@ def _report(*threshold_results, exit_code=0):
 
 class FakeDeferrableHook(DeferrableAnalyzeHook):
     supported_log_refs = (RemoteEventLog, HistoryServerApp)
+    supports_markdown = True
 
     def __init__(self, report=None):
         super().__init__()
@@ -532,6 +533,10 @@ class FakeComparingHook(FakeDeferrableHook):
         return {"job_id": "job-1", "timeout": 900}
 
 
+class FakeHistoryServerComparingHook(FakeComparingHook):
+    supported_baseline_refs = (RemoteEventLog, HistoryServerApp)
+
+
 def _comparing_operator(backend, tmp_path, baseline=BASELINE, **kwargs):
     baseline_log_source = MagicMock()
     baseline_log_source.locate.return_value = baseline
@@ -549,11 +554,24 @@ def test_deferrable_execute_submits_the_baseline_and_carries_it_across_the_defer
     assert deferred.kwargs["thresholds"]["max_regression_pct"] == 20
 
 
+def test_a_history_server_baseline_crosses_the_deferral_with_the_resume_kwargs(tmp_path):
+    baseline = HistoryServerApp(base_url="http://localhost:18080", app_id="app-0", attempt_id="1")
+    backend = FakeHistoryServerComparingHook()
+    op = _comparing_operator(backend, tmp_path, baseline=baseline, max_regression_pct=20)
+
+    deferred = _defer(op)
+
+    assert backend.submitted == [(LOG, op.thresholds, baseline)]
+    assert deferred.kwargs["baseline_log_ref"] == {
+        "kind": "history_server_app", "base_url": "http://localhost:18080", "app_id": "app-0", "attempt_id": "1",
+    }
+
+
 def test_a_baseline_the_backend_cannot_read_fails_before_submitting_and_cleans_up(tmp_path):
     backend = FakeComparingHook()
     op = _comparing_operator(backend, tmp_path, baseline=HistoryServerApp(base_url="http://localhost:18080", app_id="app-0"))
 
-    with pytest.raises(AirflowException, match="History Server application cannot be a baseline"):
+    with pytest.raises(AirflowException, match="reads a baseline only as RemoteEventLog"):
         op.execute({})
 
     assert backend.submitted == []
@@ -609,3 +627,43 @@ def test_resume_reports_the_comparison_and_cleans_up_the_baseline(tmp_path):
     assert json.loads((tmp_path / "report.json").read_text())["comparison"] == report.comparison
     fresh.baseline_log_source.cleanup.assert_called_once_with(BASELINE)
     fresh.log_source.cleanup.assert_called_once_with(LOG)
+
+
+@needs_resume_execution
+def test_regression_budgets_cross_the_deferral(tmp_path):
+    budgets = {"regression_budgets": {"gcTime": 10}, "stage_regression_budgets": {"executorRunTime": 30}}
+    first = _comparing_operator(FakeComparingHook(), tmp_path, stage_qualities=["exact"], **budgets)
+    kwargs = _serialize_round_trip(_defer(first).kwargs)
+    fresh = _comparing_operator(FakeComparingHook(_report()), tmp_path, stage_qualities=["exact"], **budgets)
+    ti = _TI()
+
+    fresh.resume_execution("execute_complete", {"event": _event(), **kwargs}, {"ti": ti})
+
+    assert kwargs["thresholds"]["regression_budgets"] == {"gcTime": 10}
+    assert kwargs["thresholds"]["stage_regression_budgets"] == {"executorRunTime": 30}
+    assert kwargs["thresholds"]["stage_qualities"] == ["exact"]
+    assert ti.xcoms["sparkforensics_summary"]["exit_code"] == 0
+
+
+def test_markdown_dest_crosses_the_deferral_with_the_resume_kwargs_only_when_set(tmp_path):
+    without = _defer(_operator(FakeDeferrableHook(), tmp_path))
+    with_markdown = _defer(_operator(FakeDeferrableHook(), tmp_path, markdown_dest=str(tmp_path / "report.md")))
+
+    assert "markdown_dest" not in without.kwargs
+    assert with_markdown.kwargs["markdown_dest"] == str(tmp_path / "report.md")
+    assert with_markdown.kwargs["thresholds"]["markdown"] is True
+
+
+@needs_resume_execution
+def test_resume_persists_the_markdown_report_the_backend_collected(tmp_path):
+    report = _report()
+    report.markdown = "# Report"
+    first = _operator(FakeDeferrableHook(), tmp_path, markdown_dest=str(tmp_path / "report.md"))
+    kwargs = _serialize_round_trip(_defer(first).kwargs)
+    fresh = _operator(FakeDeferrableHook(report), tmp_path, markdown_dest=str(tmp_path / "other.md"))
+    ti = _TI()
+
+    fresh.resume_execution("execute_complete", {"event": _event(), **kwargs}, {"ti": ti})
+
+    assert (tmp_path / "report.md").read_text() == "# Report"
+    assert not (tmp_path / "other.md").exists()

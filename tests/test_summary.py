@@ -56,7 +56,50 @@ def test_the_summary_holds_the_verdict_and_leaves_return_value_to_the_destinatio
         "breached_thresholds": [],
         "inconclusive_thresholds": [],
         "exit_code": 0,
+        "cli_version": None,
+        "verdict": None,
+        "app_name": None,
+        "run_time_ms": None,
+        "skipped_lines": None,
     }
+
+
+def test_the_summary_reports_the_verdict_app_name_run_time_and_skipped_lines(tmp_path):
+    report = _report()
+    report.verdict = {"title": "Start with Stage 7", "summary": [], "steps": []}
+    report.summary = {
+        "impactBandCounts": {"critical": 1, "warning": 0, "info": 0},
+        "app": {"id": "app-1", "name": "daily_customer_etl", "sparkVersion": "3.5.1"},
+        "runShape": {"wallClockMs": 47688},
+        "skippedLines": 2,
+    }
+
+    summary, _, _ = _run(tmp_path, report)
+
+    assert summary["verdict"] == "Start with Stage 7"
+    assert summary["app_name"] == "daily_customer_etl"
+    assert summary["run_time_ms"] == 47688
+    assert summary["skipped_lines"] == 2
+
+
+def test_a_clean_log_reports_zero_skipped_lines_and_an_older_cli_reports_none(tmp_path):
+    clean = _report()
+    clean.summary = {"impactBandCounts": {}, "skippedLines": 0}
+
+    clean_summary, _, _ = _run(tmp_path, clean)
+    older_summary, _, _ = _run(tmp_path, _report())
+
+    assert clean_summary["skipped_lines"] == 0
+    assert older_summary["skipped_lines"] is None
+
+
+def test_the_summary_names_the_cli_version_that_wrote_the_report(tmp_path):
+    report = _report()
+    report.cli_version = "0.10.1"
+
+    summary, _, _ = _run(tmp_path, report)
+
+    assert summary["cli_version"] == "0.10.1"
 
 
 def test_the_summary_is_pushed_before_notifying_and_before_a_breach_raises(tmp_path):
@@ -196,6 +239,11 @@ def test_a_baseline_run_adds_the_comparison_on_the_default_metric_and_keeps_ever
         "breached_thresholds": [],
         "inconclusive_thresholds": [],
         "exit_code": 0,
+        "cli_version": None,
+        "verdict": None,
+        "app_name": None,
+        "run_time_ms": None,
+        "skipped_lines": None,
     }
 
 
@@ -210,6 +258,37 @@ def test_the_comparison_reports_on_the_configured_regression_metric(tmp_path):
     assert summary["comparison"]["metric"] == "gcTime"
     assert summary["comparison"]["verdict"] == "improvement"
     assert summary["comparison"]["regression_pct"] == -50.0
+
+
+def test_regression_budgets_leave_the_comparison_on_the_default_metric_only(tmp_path):
+    comparison = {
+        "confidence": "ok", "reason": None,
+        "metrics": [_metric("wallClock", 1000, 1250, "regression"), _metric("gcTime", 10, 5, "improvement")],
+    }
+
+    summary = _run_compared(tmp_path, comparison, regression_budgets={"gcTime": 10})
+
+    assert summary["comparison"] == {
+        "verdict": "regression", "confidence": "ok", "reason": None, "metric": "wallClock",
+        "baseline": 1000, "candidate": 1250, "regression_pct": 25.0,
+    }
+
+
+def test_several_violated_regression_budgets_are_listed_once_in_the_summary(tmp_path):
+    report = _report(
+        ThresholdResult("max-regression", "violation", 'Metric "gcTime" regressed 12.0%, exceeding budget 10%.'),
+        ThresholdResult("max-regression", "violation", 'Metric "diskSpill" regressed 9.0%, exceeding budget 5%.'),
+        ThresholdResult("max-stage-regression", "inconclusive", "No stages were paired between the two runs."),
+        ThresholdResult("max-stage-regression", "inconclusive", "Metric is unavailable."),
+        exit_code=1,
+    )
+
+    summary, error, _ = _run(tmp_path, report)
+
+    assert isinstance(error, ThresholdBreached)
+    assert summary["breached_thresholds"] == ["max-regression"]
+    assert summary["inconclusive_thresholds"] == ["max-stage-regression"]
+    assert str(error).count("max-regression:") == 2
 
 
 @pytest.mark.parametrize("metrics, verdict", [

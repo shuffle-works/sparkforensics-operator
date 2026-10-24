@@ -70,15 +70,25 @@ def build_summary(
         "report_url": report_url,
         "impact_band_counts": {band: counts.get(band, 0) for band in ("critical", "warning", "info")},
         "violated": violated,
-        "breached_thresholds": [r.name for r in report.threshold_results if r.status == "violation"],
-        "inconclusive_thresholds": [r.name for r in report.threshold_results if r.status == "inconclusive"],
+        "breached_thresholds": _names(report, "violation"),
+        "inconclusive_thresholds": _names(report, "inconclusive"),
         "exit_code": report.exit_code,
+        "cli_version": report.cli_version,
+        "verdict": report.verdict_title,
+        "app_name": report.app_name,
+        "run_time_ms": report.run_time_ms,
+        "skipped_lines": report.skipped_lines,
     }
     if report.comparison is not None:
         summary["comparison"] = _comparison_summary(
             report.comparison, regression_metric or DEFAULT_REGRESSION_METRIC
         )
     return summary
+
+
+def _names(report, status: str) -> list[str]:
+    """Names with this status, each once: regression budgets share a name."""
+    return list(dict.fromkeys(r.name for r in report.threshold_results if r.status == status))
 
 
 def _comparison_summary(comparison: dict, metric: str) -> dict:

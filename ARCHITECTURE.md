@@ -34,11 +34,13 @@ downloaded) fails fast instead of analyzing the wrong file.
 
 A run can also be compared against an earlier one: `baseline_log_source`
 is a second `LogSourceHook`, located and cleaned up next to `log_source`,
-and the backend passes its reference to the CLI as `--baseline`. The CLI
-reads a baseline only from a path, never from a History Server, so each
-backend declares the kinds it can pass that way
-(`AnalyzeHook.supported_baseline_refs`: `LocalEventLog` on the worker,
-`RemoteEventLog` on the SSH host) and `analyze()` or the deferrable
+and the backend passes its reference to the CLI as `--baseline` (an event
+log path) or `--baseline-shs-base-url`/`--baseline-app-id`/
+`--baseline-attempt-id` (a History Server application, which the CLI
+fetches itself, like the run under analysis). Each backend declares the
+kinds it can pass (`AnalyzeHook.supported_baseline_refs`: `LocalEventLog`
+and `HistoryServerApp` on the worker, `RemoteEventLog` on its own host and
+`HistoryServerApp` on the SSH host), and `analyze()` or the deferrable
 submit step rejects any other before running anything. The comparison
 itself, and the budgets on it, are the CLI's. Which run is the baseline
 is the DAG author's choice, made through that log source: the operator
@@ -125,12 +127,31 @@ breach that raises still gets a notification out first.
   execution" below.
 - `hooks/analyze/_cli.py`, the CLI contract every backend shares: argument
   building for each reference kind (a positional path, or
-  `--shs-base-url`/`--app-id`/`--attempt-id`), `--baseline`, threshold flags, exit-code
-  handling (0/1/3 usable, 2 and anything else raise), and building the
-  `Report` from the JSON report and stderr threshold lines. Backends only
-  differ in how they run the command and collect its output.
+  `--shs-base-url`/`--app-id`/`--attempt-id`), `--baseline`, threshold flags
+  (a dict of per-metric budgets becomes one `--regression-budget` or
+  `--stage-regression-budget <metric>:<pct>` each), the comparison tuning
+  flags (`--normalize-path` and `--ignore-conf` once per pattern,
+  `--noise-band-pct`), the `--redact` switch, the Markdown run (below),
+  exit-code handling, and building the `Report` from the JSON report and
+  stderr threshold lines. Exit codes 0, 1 and 3 carry a report. Every other
+  code raises a `CliError` with its own message: 2 (usage error), 4
+  (unreadable event log or failed History Server fetch), 5 (unreadable
+  baseline), 6 (internal error), anything else "unexpected". The CLI's
+  stderr separates a History Server failure a retry can clear
+  (`HistoryServerFetchError`) from one it cannot (`CliConfigurationError`,
+  an `AirflowFailException`, so Airflow does not retry it). Backends differ
+  only in how they run the command and collect its output.
 - `hooks/analyze/subprocess.py`, `SubprocessAnalyzeHook`, runs the CLI on
-  the worker with `--out <tmpfile>`.
+  the worker with `--out <tmpfile>`. The CLI writes one report format per
+  run, so for the Markdown report (`thresholds["markdown"]`, set by
+  `markdown_dest`) the backend runs it a second time with `--format md` and
+  no budget flags, and sets `Report.markdown`
+  (`AnalyzeHook.supports_markdown`). The first run's report and thresholds
+  decide the outcome; the second run only adds the text. `SSHAnalyzeHook`
+  does the same on the host: a second synchronous run or, in a deferred
+  job, a second command in the same remote job. Its outputs (report, stderr,
+  exit code) go to their own files, and the job's exit code stays the
+  first run's.
 - `hooks/analyze/ssh.py`, `SSHAnalyzeHook`, runs the CLI on the SSH host
   over `SSHHook` (imported lazily, `ssh` extra) and reads the report from
   stdout, so nothing is written on that host (see "Killing a task" below
@@ -156,17 +177,35 @@ breach that raises still gets a notification out first.
   which reports the CLI's pid, and the command that stops it.
 - `report.py`, `Report`/`ThresholdResult` dataclasses, plus parsing of the
   CLI's JSON report (`--out` file or stdout) and its stderr threshold
-  lines. No
+  lines. Several regression budgets print as `max-regression` lines
+  (`max-stage-regression` for the stage budgets), and
+  `parse_threshold_results()` keeps every line it reads, so a name can have
+  several results. It refuses a `schemaVersion` outside
+  `MIN_SCHEMA_VERSION` to `MAX_SCHEMA_VERSION` (an
+  `UnsupportedReportSchema` that `build_report()` turns into a
+  `CliConfigurationError`), reads the CLI's version from the report's
+  `generator`, and checks it against the release the operator is tested
+  against (`TESTED_CLI_VERSION`). No
   threshold-evaluation *logic* lives here: sparkforensics's own CLI decides
   pass/violation/inconclusive, this module only parses what it printed, so
   it can never drift from what the CLI actually enforces.
 - `exceptions.py`, `ThresholdBreached`, an `AirflowFailException` so a
-  breach fails the task without consuming its retries.
-- `sinks.py`, persists the report JSON (local path, `file://`, `s3://`).
+  breach fails the task without consuming its retries, and the CLI
+  errors: `CliError` (a CLI exit code with no report, carrying
+  `exit_code`), its `HistoryServerFetchError` (retried) and
+  `CliConfigurationError` (an `AirflowFailException`, not retried).
+- `sinks.py`, persists the report JSON (local path, `file://`, `s3://`),
+  and, through `persist_text()`, the Markdown report. The JSON is the
+  CLI's whole report (`Report.raw`) plus the operator's `thresholdResults`
+  and the comparison section, so a field the CLI adds reaches the file
+  without a change here. `operator._report_json()` builds it; a `Report`
+  built by hand (no `raw`) persists the sections the operator reads.
 - `notify.py`, the `Notifier` base class: subclasses implement `_send()`
   for whatever messaging/paging system they target, and `notify()` makes
-  that best-effort, never raising. No concrete notifier ships in this
-  package.
+  that best-effort, never raising. `_default_message()` writes the
+  one-line summary (application, verdict, run time, finding counts,
+  skipped lines, destination), leaving out what the report lacks. No
+  concrete notifier ships in this package.
 - `summary.py`, the summary XCom (`SUMMARY_XCOM_KEY`,
   `build_summary()`) and the report URL (`render_report_url()`,
   `validate_report_url_template()`). See "Summary XCom and report URL"
@@ -271,9 +310,9 @@ reboot is left alone.
 
 Failure paths. A trigger error event without an exit code makes
 `collect()` stop and remove the job before raising. A deferral that times
-out (the backend's `defer_timeout`, `timeout` plus 120 seconds counted
-from submission, or the task's
-`execution_timeout`) resumes with `next_method="__fail__"`, which never
+out (the backend's `defer_timeout`, `timeout` per CLI run in the job, so
+twice with `markdown_dest`, plus 120 seconds counted from submission, or
+the task's `execution_timeout`) resumes with `next_method="__fail__"`, which never
 reaches `execute_complete()`; `resume_execution()` is overridden to call
 `backend.abandon(context, job)` first, with the job from XCom. Airflow 2
 takes a different path when `execution_timeout` ran out during the
@@ -374,8 +413,11 @@ Before notifying and before any threshold breach raises,
 `handle_report()` pushes a summary under the `sparkforensics_summary`
 XCom key: the schema version, the destination, the report URL, the
 impact-band counts, whether the run violated a threshold, the breached
-and inconclusive threshold names, and the CLI exit code. A run compared
-against a baseline adds a `comparison` entry: the direction the CLI
+and inconclusive threshold names, the CLI exit code, the CLI version
+that wrote the report, and the run's verdict title, application name,
+wall-clock time and skipped line count (`Report.verdict_title`,
+`app_name`, `run_time_ms` and `skipped_lines`, read from the CLI's
+summary). A run compared against a baseline adds a `comparison` entry: the direction the CLI
 computed for one metric (`regression_metric`, wall-clock by default) as
 the verdict, the comparison's confidence and reason, and that metric's
 values and change in percent, taken from the CLI's comparison section.

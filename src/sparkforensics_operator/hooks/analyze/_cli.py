@@ -5,13 +5,19 @@ the JSON report plus stderr threshold lines into a Report.
 """
 from __future__ import annotations
 
+import re
+from decimal import Decimal
 from pathlib import PurePath
 
 from sparkforensics_operator._compat import AirflowException
+from sparkforensics_operator.exceptions import CliConfigurationError, CliError, HistoryServerFetchError
 from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, LocalEventLog, RemoteEventLog
 from sparkforensics_operator.report import (
     THRESHOLD_CLI_FLAGS,
+    THRESHOLD_CLI_REPEATED_FLAGS,
+    THRESHOLD_CLI_SWITCHES,
     Report,
+    UnsupportedReportSchema,
     parse_report_text,
     parse_threshold_results,
 )
@@ -21,6 +27,60 @@ from sparkforensics_operator.report import (
 # (OOM-kill, wrapper failure, etc.) means the report is not trustworthy.
 USABLE_REPORT_EXIT_CODES = {0, 1, 3}
 
+# The exit codes that carry no report: what the CLI did, and a short label.
+_EXIT_CODE_MEANINGS = {
+    2: ("rejected its arguments", "usage error"),
+    4: ("could not read or parse the event log, or fetch it from the Spark History Server", "event log"),
+    5: ("could not read or parse the baseline", "baseline"),
+    6: ("failed with an internal error", "internal error"),
+}
+# The candidate (4) and the baseline (5) can fail on a History Server fetch.
+_HISTORY_SERVER_EXIT_CODES = {4, 5}
+# The CLI appends its usage text to a usage error.
+_USAGE_START = "Usage: sparkforensics-analyze"
+# The History Server failures the CLI names in stderr: what each means, and
+# whether a retry can clear it. "Refused or errored" covers both an access
+# problem and a server error, so it is retried.
+_HISTORY_SERVER_FAILURES = (
+    (
+        re.compile(r"SHS fetch failed: upstream-unreachable"),
+        "the Spark History Server is unreachable from where the CLI runs",
+        True,
+    ),
+    (
+        re.compile(r"SHS fetch failed: application-not-found"),
+        "the Spark History Server has no such application or attempt, or has not listed a "
+        "run that just finished yet",
+        True,
+    ),
+    (
+        re.compile(r"SHS fetch failed: access-or-upstream-failure"),
+        "the Spark History Server refused the request or answered with an error "
+        "(access, proxy or server error)",
+        True,
+    ),
+    (
+        re.compile(r"SHS archive body stalled"),
+        "the Spark History Server stopped sending the event log mid-transfer",
+        True,
+    ),
+    (
+        re.compile(r"SHS archive exceeds"),
+        "the event log is larger than the CLI's download cap "
+        "(SPARKFORENSICS_MAX_ARCHIVE_BYTES raises it)",
+        False,
+    ),
+    (
+        re.compile(r"Invalid SHS request"),
+        "the Spark History Server address, application id or attempt id is invalid",
+        False,
+    ),
+)
+
+
+# The settings the Markdown run takes: it has no budget flags.
+_REPORT_SHAPING_KEYS = ("normalize_path", "ignore_conf", "noise_band_pct", "redact")
+
 
 def build_cli_args(
     analyze_bin: str,
@@ -28,15 +88,18 @@ def build_cli_args(
     thresholds: dict,
     out_path: PurePath | None = None,
     baseline_ref: EventLogRef | None = None,
+    markdown: bool = False,
 ) -> list[str]:
-    """Without out_path the CLI writes the JSON report to stdout. baseline_ref,
-    if given, is the run to compare against (--baseline), a file path the
-    backend has already checked it can read."""
-    args = [analyze_bin, *_log_ref_args(log_ref), "--format", "json"]
+    """The CLI's arguments for the JSON report, or with markdown=True the
+    Markdown one (the CLI writes one format per run). Without out_path the CLI
+    writes to stdout."""
+    args = [analyze_bin, *_log_ref_args(log_ref), "--format", "md" if markdown else "json"]
     if baseline_ref is not None:
-        args.extend(["--baseline", _baseline_path(baseline_ref)])
+        args.extend(_baseline_args(baseline_ref))
     if out_path is not None:
         args.extend(["--out", str(out_path)])
+    if markdown:
+        thresholds = {key: thresholds.get(key) for key in _REPORT_SHAPING_KEYS}
     args.extend(_threshold_args(thresholds))
     return args
 
@@ -52,38 +115,86 @@ def _log_ref_args(log_ref: EventLogRef) -> list[str]:
     raise TypeError(f"Not an event log reference: {log_ref!r}")
 
 
-def _baseline_path(baseline_ref: EventLogRef) -> str:
-    # --baseline takes only a local event-log file or rolling-log directory;
-    # the CLI cannot fetch a baseline from a History Server.
+def _baseline_args(baseline_ref: EventLogRef) -> list[str]:
+    if isinstance(baseline_ref, HistoryServerApp):
+        args = ["--baseline-shs-base-url", baseline_ref.base_url, "--baseline-app-id", baseline_ref.app_id]
+        if baseline_ref.attempt_id:
+            args.extend(["--baseline-attempt-id", baseline_ref.attempt_id])
+        return args
     if isinstance(baseline_ref, (LocalEventLog, RemoteEventLog)):
-        return str(baseline_ref.path)
-    raise TypeError(f"Not a baseline event log path: {baseline_ref!r}")
+        return ["--baseline", str(baseline_ref.path)]
+    raise TypeError(f"Not a baseline event log reference: {baseline_ref!r}")
 
 
 def _threshold_args(thresholds: dict) -> list[str]:
     args = []
     for key, flag in THRESHOLD_CLI_FLAGS.items():
         value = thresholds.get(key)
-        if value is not None:
-            args.extend([flag, str(value)])
+        if value is not None and not (isinstance(value, (list, tuple, dict)) and not value):
+            args.extend([flag, _flag_value(value)])
+    for key, flag in THRESHOLD_CLI_REPEATED_FLAGS.items():
+        for item in _repeated_values(thresholds.get(key)):
+            args.extend([flag, item])
+    for key, flag in THRESHOLD_CLI_SWITCHES.items():
+        if thresholds.get(key):
+            args.append(flag)
     return args
+
+
+def _flag_value(value) -> str:
+    """A number as a plain decimal: the CLI rejects the exponent form (1e-05)
+    that str() writes for some floats. A string passes as it is, a list is
+    comma-joined."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return ",".join(_flag_value(item) for item in value)
+    return format(Decimal(str(value)), "f")
+
+
+def _repeated_values(value: dict | list | None) -> list[str]:
+    """The items of a repeated flag: "<metric>:<percentage>" for a budget dict."""
+    if isinstance(value, dict):
+        return [f"{metric}:{_flag_value(pct)}" for metric, pct in value.items()]
+    return [str(item) for item in value or []]
 
 
 def check_exit_code(returncode: int, stderr: str, where: str = "") -> None:
     """Raise unless returncode means the report can be trusted. where names
     the host the CLI ran on, for backends that run it off the worker, e.g.
     " on the SSH host (ssh_conn_id='onprem_ssh')"."""
-    if returncode == 2:
-        raise AirflowException(
-            f"sparkforensics-analyze{where} failed to parse the event log, could not "
-            f"fetch it from the Spark History Server, or was given bad arguments "
-            f"(exit 2): {stderr.strip()}"
-        )
     if returncode not in USABLE_REPORT_EXIT_CODES:
-        raise AirflowException(
-            f"sparkforensics-analyze{where} exited with unexpected code {returncode}: "
-            f"{stderr.strip()}"
+        raise cli_error_for_exit_code(returncode, stderr, where)
+
+
+def cli_error_for_exit_code(returncode: int, stderr: str, where: str = "") -> CliError:
+    """The error for an exit code that carries no report. A History Server
+    failure is told apart by the CLI's message: a retry can clear
+    HistoryServerFetchError, not CliConfigurationError (nor a usage error)."""
+    detail = _cli_message(stderr)
+    if returncode not in _EXIT_CODE_MEANINGS:
+        return CliError(
+            f"sparkforensics-analyze{where} exited with unexpected code {returncode}: {detail}",
+            returncode,
         )
+    meaning, label = _EXIT_CODE_MEANINGS[returncode]
+    problem = f"sparkforensics-analyze{where} {meaning} (exit {returncode}, {label})"
+    if returncode in _HISTORY_SERVER_EXIT_CODES:
+        for pattern, cause, retryable in _HISTORY_SERVER_FAILURES:
+            if pattern.search(detail):
+                error_type = HistoryServerFetchError if retryable else CliConfigurationError
+                return error_type(f"{problem}: {cause}. The CLI said: {detail}", returncode)
+    message = f"{problem}: {detail}"
+    if returncode == 2:
+        if "Unknown option" in detail:
+            message += " The installed sparkforensics-cli is older than this option: upgrade it."
+        return CliConfigurationError(message, returncode)
+    return CliError(message, returncode)
+
+
+def _cli_message(stderr: str) -> str:
+    """The stderr without the usage text, unless that is all there is."""
+    return stderr.partition(_USAGE_START)[0].strip() or stderr.strip()
 
 
 def build_report(
@@ -91,6 +202,14 @@ def build_report(
 ) -> Report:
     try:
         report = parse_report_text(report_text)
+    except UnsupportedReportSchema as e:
+        # The installed CLI and this operator disagree on the report format,
+        # which every try would repeat.
+        raise CliConfigurationError(
+            f"sparkforensics-analyze{where} wrote a report this sparkforensics-operator cannot "
+            f"read: {e}",
+            returncode,
+        ) from e
     except (ValueError, KeyError, TypeError) as e:
         raise AirflowException(
             f"sparkforensics-analyze{where} exited {returncode} but its JSON report "

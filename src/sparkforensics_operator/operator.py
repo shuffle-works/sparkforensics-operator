@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Sequence
@@ -22,6 +23,7 @@ from sparkforensics_operator.log_ref import (
     log_ref_from_dict,
     log_ref_to_dict,
 )
+from sparkforensics_operator.report import DEFAULT_REGRESSION_METRIC, cli_version_warning
 from sparkforensics_operator.summary import (
     SUMMARY_XCOM_KEY,
     build_summary,
@@ -31,9 +33,20 @@ from sparkforensics_operator.summary import (
 
 _THRESHOLD_BREACH_ACTIONS = ("fail", "warn", "ignore")
 # The thresholds the CLI evaluates only against a baseline (--baseline).
-COMPARISON_THRESHOLDS = ("max_regression_pct", "regression_metric", "fail_on_introduced")
+COMPARISON_THRESHOLDS = (
+    "max_regression_pct",
+    "regression_metric",
+    "fail_on_introduced",
+    "regression_budgets",
+    "stage_regression_budgets",
+    "stage_qualities",
+    "normalize_path",
+    "ignore_conf",
+    "noise_band_pct",
+)
 # fail_on_introduced's values: an impact band, or any introduced finding.
 _INTRODUCED_BANDS = ("critical", "warning", "info", "all")
+_STAGE_QUALITIES = ("exact", "structural", "aligned")
 # The XCom a deferrable run keeps its submitted job under, until the task
 # instance's next try clears it.
 REMOTE_JOB_XCOM_KEY = "sparkforensics_remote_job"
@@ -46,14 +59,85 @@ def _validate_on_threshold_breach(value: str) -> None:
         )
 
 
+def as_list(value):
+    """A sequence as a list, so it survives a deferral as JSON. A string stays
+    a string, for the validation to refuse."""
+    return list(value) if value is not None and not isinstance(value, str) else value
+
+
+def _is_set(value) -> bool:
+    """An empty dict or list is the same as no threshold."""
+    return value is not None and value != {} and value != [] and value != ()
+
+
+def _validate_budgets(name: str, budgets) -> None:
+    if not _is_set(budgets):
+        return
+    if not isinstance(budgets, dict):
+        raise ValueError(f"{name} must be a dict of metric name to percentage, got {budgets!r}")
+    for metric, pct in budgets.items():
+        if not isinstance(metric, str) or not metric or ":" in metric:
+            raise ValueError(f"{name} metric names must be non-empty strings without ':', got {metric!r}")
+        if isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 <= pct < math.inf:
+            raise ValueError(f"{name}[{metric!r}] must be a non-negative number, got {pct!r}")
+
+
+def _validate_budget_thresholds(thresholds: dict) -> None:
+    """The per-metric regression budgets: well formed, one budget per metric,
+    and stage_qualities only with stage_regression_budgets."""
+    for name in ("regression_budgets", "stage_regression_budgets"):
+        _validate_budgets(name, thresholds.get(name))
+    regression_budgets = thresholds.get("regression_budgets")
+    if _is_set(regression_budgets) and thresholds.get("max_regression_pct") is not None:
+        paired = thresholds.get("regression_metric") or DEFAULT_REGRESSION_METRIC
+        if paired in regression_budgets:
+            raise ValueError(
+                f"{paired} is budgeted twice, by max_regression_pct and by regression_budgets; "
+                "the CLI allows one budget per metric."
+            )
+    qualities = thresholds.get("stage_qualities")
+    if _is_set(qualities):
+        if isinstance(qualities, str) or not all(q in _STAGE_QUALITIES for q in qualities):
+            raise ValueError(
+                f"stage_qualities must be a list drawn from {_STAGE_QUALITIES}, got {qualities!r}"
+            )
+        if not _is_set(thresholds.get("stage_regression_budgets")):
+            raise ValueError(
+                "stage_qualities needs stage_regression_budgets: it picks which paired "
+                "stages those budgets read."
+            )
+
+
+def _validate_comparison_tuning(thresholds: dict) -> None:
+    for name in ("normalize_path", "ignore_conf"):
+        patterns = thresholds.get(name)
+        if _is_set(patterns) and (
+            isinstance(patterns, str) or not all(isinstance(p, str) and p for p in patterns)
+        ):
+            raise ValueError(
+                f"{name} must be a list of non-empty regular expression strings, got {patterns!r}"
+            )
+    noise_band = thresholds.get("noise_band_pct")
+    if noise_band is not None and (
+        isinstance(noise_band, bool)
+        or not isinstance(noise_band, (int, float))
+        or not 0 <= noise_band <= 100
+    ):
+        raise ValueError(f"noise_band_pct must be a number from 0 to 100, got {noise_band!r}")
+
+
 def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dict) -> None:
-    """Raise ValueError for the comparison settings the CLI would reject
-    or could never evaluate: a comparison threshold without a baseline,
-    regression_metric without max_regression_pct, an unknown
-    fail_on_introduced band, or a baseline for a backend that cannot pass
-    one to the CLI."""
+    """Raise ValueError for a setting the CLI would reject or could never
+    evaluate, or that the backend cannot pass to it."""
+    if not isinstance(thresholds.get("redact", False), bool):
+        raise ValueError(f"redact must be True or False, got {thresholds['redact']!r}")
+    if thresholds.get("markdown") and isinstance(backend, AnalyzeHook) and not backend.supports_markdown:
+        raise ValueError(
+            f"{type(backend).__name__} cannot write a Markdown report; drop markdown_dest, or "
+            "use SubprocessAnalyzeHook or SSHAnalyzeHook."
+        )
     if baseline_log_source is None:
-        orphans = [name for name in COMPARISON_THRESHOLDS if thresholds.get(name) is not None]
+        orphans = [name for name in COMPARISON_THRESHOLDS if _is_set(thresholds.get(name))]
         if orphans:
             raise ValueError(
                 f"{', '.join(orphans)} compare the run against a baseline, so they need "
@@ -67,6 +151,8 @@ def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dic
     band = thresholds.get("fail_on_introduced")
     if band is not None and band not in _INTRODUCED_BANDS:
         raise ValueError(f"fail_on_introduced must be one of {_INTRODUCED_BANDS}, got {band!r}")
+    _validate_budget_thresholds(thresholds)
+    _validate_comparison_tuning(thresholds)
     if (
         baseline_log_source is not None
         and isinstance(backend, AnalyzeHook)
@@ -79,8 +165,7 @@ def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dic
 
 
 def _baseline_kwargs(baseline_ref) -> dict:
-    # Passed only when there is one, so a backend without baseline support
-    # is called exactly as before.
+    # A backend without baseline support is never handed the argument.
     return {} if baseline_ref is None else {"baseline_ref": baseline_ref}
 
 
@@ -121,11 +206,13 @@ def run_spark_forensics(
     aws_conn_id: str | None = None,
     report_url_template: str | None = None,
     baseline_log_source=None,
+    markdown_dest: str | None = None,
 ) -> str:
     """The one code path shared by SparkForensicsOperator.execute() and the
     spark_forensics_callback() factory. baseline_log_source, if given,
     resolves the run to compare against, the same way log_source resolves
-    the run under analysis."""
+    the run under analysis. markdown_dest, if given, is where the Markdown
+    report goes, and thresholds["markdown"] asks the backend for it."""
     _validate_on_threshold_breach(on_threshold_breach)
     # Where the log is (log_source) and where it is analyzed (backend) are
     # independent: the reference may point at a file the worker fetched, a
@@ -147,6 +234,7 @@ def run_spark_forensics(
             ti=context.get("ti"),
             report_url_template=report_url_template,
             regression_metric=thresholds.get("regression_metric"),
+            markdown_dest=markdown_dest,
         )
     finally:
         try:
@@ -154,6 +242,34 @@ def run_spark_forensics(
                 baseline_log_source.cleanup(baseline_ref)
         finally:
             log_source.cleanup(log_ref)
+
+
+def _report_json(report) -> dict:
+    """What is persisted: the CLI's whole report, then the operator's
+    thresholdResults and, for a run compared against a baseline, the CLI's
+    comparison section. A report built by hand, with no CLI report behind it,
+    carries the sections the operator reads."""
+    if report.raw is not None:
+        report_json = dict(report.raw)
+    else:
+        report_json = {
+            "schemaVersion": report.schema_version,
+            "summary": report.summary,
+            "verdict": report.verdict,
+            "evidenceAvailability": report.evidence_availability,
+            "detectors": report.detectors,
+            "findings": report.findings,
+            "recommendations": report.recommendations,
+            "cleanChecks": report.clean_checks,
+            "notRunChecks": report.not_run_checks,
+        }
+    report_json["thresholdResults"] = [
+        {"name": r.name, "status": r.status, "detail": r.detail}
+        for r in report.threshold_results
+    ]
+    if report.comparison is not None:
+        report_json["comparison"] = report.comparison
+    return report_json
 
 
 def handle_report(
@@ -167,35 +283,30 @@ def handle_report(
     ti=None,
     report_url_template: str | None = None,
     regression_metric: str | None = None,
+    markdown_dest: str | None = None,
 ) -> str:
-    """Persists the report, logs inconclusive thresholds, pushes the summary
-    XCom (to ti, when there is one), notifies, and applies
-    on_threshold_breach. Shared by run_spark_forensics and the deferrable
+    """Persists the report (and, with markdown_dest, its Markdown report),
+    logs inconclusive thresholds, pushes the summary XCom (to ti, when there
+    is one), notifies, and applies on_threshold_breach. Shared by run_spark_forensics and the deferrable
     operator's resume step, so a deferred run acts on its report exactly as
     a synchronous one does. regression_metric is the comparison metric the
     summary XCom reports on, for a report compared against a baseline."""
-    report_json = {
-        "schemaVersion": report.schema_version,
-        "summary": report.summary,
-        "verdict": report.verdict,
-        "evidenceAvailability": report.evidence_availability,
-        "detectors": report.detectors,
-        "findings": report.findings,
-        "recommendations": report.recommendations,
-        "cleanChecks": report.clean_checks,
-        "notRunChecks": report.not_run_checks,
-        "thresholdResults": [
-            {"name": r.name, "status": r.status, "detail": r.detail}
-            for r in report.threshold_results
-        ],
-    }
-    if report.comparison is not None:
-        report_json["comparison"] = report.comparison
-    destination = sinks.persist(report_json, report_dest, aws_conn_id=aws_conn_id)
+    destination = sinks.persist(_report_json(report), report_dest, aws_conn_id=aws_conn_id)
+    if markdown_dest is not None:
+        if report.markdown is None:
+            raise AirflowException(
+                "markdown_dest is set, but the backend returned no Markdown report; use a backend "
+                "that writes one (SubprocessAnalyzeHook or SSHAnalyzeHook)."
+            )
+        sinks.persist_text(report.markdown, markdown_dest, aws_conn_id=aws_conn_id)
 
     for result in report.threshold_results:
         if result.status == "inconclusive":
             log.warning("SparkForensics threshold %s inconclusive: %s", result.name, result.detail)
+
+    version_warning = cli_version_warning(report.cli_version)
+    if version_warning is not None:
+        log.warning("SparkForensics: %s", version_warning)
 
     if not report.inconclusive and report.exit_code == 3:
         # The CLI's exit code contract says 3 means thresholds were
@@ -279,8 +390,12 @@ class SparkForensicsOperator(BaseOperator):
     compare against (a path template on prev_ds, an XCom pull, ...); the
     backend passes it to the CLI as --baseline, which reads a file path
     only, so it must resolve to one the backend can read where the analysis
-    runs. max_regression_pct, regression_metric and fail_on_introduced
-    budget that comparison and need it.
+    runs. max_regression_pct, regression_metric, fail_on_introduced,
+    regression_budgets (a regression budget per metric, {metric:
+    percentage}), stage_regression_budgets (the same per paired stage's
+    metric) and stage_qualities (which paired stages those read) budget
+    that comparison, and normalize_path, ignore_conf and noise_band_pct
+    tune it; all of them need it.
 
     report_dest, and each hook's own template_fields, are Jinja templates
     Airflow renders before execute(). report_url_template, if set, turns the
@@ -288,7 +403,9 @@ class SparkForensicsOperator(BaseOperator):
     also pushes a summary XCom (summary.SUMMARY_XCOM_KEY)."""
 
     operator_extra_links = (ReportLink(),)
-    template_fields: Sequence[str] = ("report_dest", "log_source", "backend", "baseline_log_source")
+    template_fields: Sequence[str] = (
+        "report_dest", "markdown_dest", "log_source", "backend", "baseline_log_source",
+    )
 
     def __init__(
         self,
@@ -310,6 +427,14 @@ class SparkForensicsOperator(BaseOperator):
         max_regression_pct: float | None = None,
         regression_metric: str | None = None,
         fail_on_introduced: str | None = None,
+        regression_budgets: dict[str, float] | None = None,
+        stage_regression_budgets: dict[str, float] | None = None,
+        stage_qualities: Sequence[str] | None = None,
+        normalize_path: Sequence[str] | None = None,
+        ignore_conf: Sequence[str] | None = None,
+        noise_band_pct: float | None = None,
+        redact: bool = False,
+        markdown_dest: str | None = None,
         **kwargs,
     ):
         thresholds = {
@@ -321,6 +446,14 @@ class SparkForensicsOperator(BaseOperator):
             "max_regression_pct": max_regression_pct,
             "regression_metric": regression_metric,
             "fail_on_introduced": fail_on_introduced,
+            "regression_budgets": regression_budgets,
+            "stage_regression_budgets": stage_regression_budgets,
+            "stage_qualities": as_list(stage_qualities),
+            "normalize_path": as_list(normalize_path),
+            "ignore_conf": as_list(ignore_conf),
+            "noise_band_pct": noise_band_pct,
+            "redact": redact,
+            "markdown": markdown_dest is not None,
         }
         # Validate before super().__init__() to avoid DAG registration side effects if construction will fail.
         _validate_on_threshold_breach(on_threshold_breach)
@@ -349,6 +482,7 @@ class SparkForensicsOperator(BaseOperator):
         self.log_source = log_source
         self.backend = backend
         self.report_dest = report_dest
+        self.markdown_dest = markdown_dest
         self.baseline_log_source = baseline_log_source
         self.thresholds = thresholds
         self.on_threshold_breach = on_threshold_breach
@@ -389,6 +523,7 @@ class SparkForensicsOperator(BaseOperator):
                 log_source=self.log_source,
                 backend=self.backend,
                 report_dest=self.report_dest,
+                markdown_dest=self.markdown_dest,
                 thresholds=self.thresholds,
                 on_threshold_breach=self.on_threshold_breach,
                 notifier=self.notifier,
@@ -436,6 +571,8 @@ class SparkForensicsOperator(BaseOperator):
                 "report_dest": self.report_dest,
                 "thresholds": dict(self.thresholds),
             }
+            if self.markdown_dest is not None:
+                resume_kwargs["markdown_dest"] = self.markdown_dest
             if baseline_ref is not None:
                 resume_kwargs["baseline_log_ref"] = log_ref_to_dict(baseline_ref)
             self.defer(
@@ -479,6 +616,7 @@ class SparkForensicsOperator(BaseOperator):
         report_dest: str,
         thresholds: dict,
         baseline_log_ref: dict | None = None,
+        markdown_dest: str | None = None,
     ) -> str:
         """Resumes a deferred run on a worker once the trigger fires: reads
         the report back and acts on it exactly as execute() does."""
@@ -503,6 +641,7 @@ class SparkForensicsOperator(BaseOperator):
                 ti=context.get("ti"),
                 report_url_template=self.report_url_template,
                 regression_metric=thresholds.get("regression_metric"),
+                    markdown_dest=markdown_dest,
             )
         except ThresholdBreached as breach:
             self._record_persisted(breach.destination)

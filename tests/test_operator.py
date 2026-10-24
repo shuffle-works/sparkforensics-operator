@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from airflow import DAG
+from airflow.exceptions import AirflowException
 
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze._cli import build_report
@@ -391,6 +392,153 @@ def test_operator_rejects_an_unknown_fail_on_introduced_band():
         )
 
 
+def _operator_with(**kwargs):
+    return SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+        baseline_log_source=kwargs.pop("baseline_log_source", MagicMock()), **kwargs,
+    )
+
+
+@pytest.mark.parametrize("threshold", [
+    {"regression_budgets": {"gcTime": 10}},
+    {"stage_regression_budgets": {"executorRunTime": 30}},
+    {"stage_regression_budgets": {"executorRunTime": 30}, "stage_qualities": ["exact"]},
+])
+def test_operator_rejects_a_regression_budget_without_a_baseline_log_source(threshold):
+    with pytest.raises(ValueError, match="need baseline_log_source"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json", **threshold,
+        )
+
+
+@pytest.mark.parametrize("empty", [{}, [], None])
+def test_operator_treats_an_empty_budget_as_none_so_it_needs_no_baseline(empty):
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+        regression_budgets=empty, stage_regression_budgets=empty,
+    )
+
+    assert not op.thresholds["regression_budgets"]
+
+
+def test_operator_keeps_the_regression_budgets_in_its_thresholds_with_the_qualities_as_a_list():
+    op = _operator_with(
+        regression_budgets={"gcTime": 10}, stage_regression_budgets={"executorRunTime": 30},
+        stage_qualities=("exact", "aligned"),
+    )
+
+    assert op.thresholds["regression_budgets"] == {"gcTime": 10}
+    assert op.thresholds["stage_regression_budgets"] == {"executorRunTime": 30}
+    assert op.thresholds["stage_qualities"] == ["exact", "aligned"]
+
+
+def test_operator_accepts_budgets_for_several_metrics_next_to_the_single_metric_pair():
+    _operator_with(max_regression_pct=20, regression_metric="gcTime", regression_budgets={"wallClock": 10})
+    _operator_with(max_regression_pct=20, regression_budgets={"gcTime": 10})
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"max_regression_pct": 20, "regression_budgets": {"wallClock": 10}},
+    {"max_regression_pct": 20, "regression_metric": "gcTime", "regression_budgets": {"gcTime": 10}},
+])
+def test_operator_rejects_a_metric_budgeted_twice(kwargs):
+    with pytest.raises(ValueError, match="is budgeted twice"):
+        _operator_with(**kwargs)
+
+
+@pytest.mark.parametrize("budgets", [
+    ["gcTime"],
+    {"gcTime": -1},
+    {"gcTime": "10"},
+    {"gcTime": True},
+    {"gcTime": float("inf")},
+    {"gcTime": float("nan")},
+    {"": 10},
+    {"gc:Time": 10},
+    {3: 10},
+])
+def test_operator_rejects_a_malformed_regression_budget(budgets):
+    with pytest.raises(ValueError, match="regression_budgets"):
+        _operator_with(regression_budgets=budgets)
+    with pytest.raises(ValueError, match="stage_regression_budgets"):
+        _operator_with(stage_regression_budgets=budgets)
+
+
+@pytest.mark.parametrize("threshold", [
+    {"normalize_path": ["/out/\\d+"]},
+    {"ignore_conf": ["output"]},
+    {"noise_band_pct": 5},
+    {"noise_band_pct": 0},
+])
+def test_operator_rejects_comparison_tuning_without_a_baseline_log_source(threshold):
+    with pytest.raises(ValueError, match="need baseline_log_source"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json", **threshold,
+        )
+
+
+def test_operator_keeps_the_comparison_tuning_in_its_thresholds_with_the_patterns_as_lists():
+    op = _operator_with(normalize_path=("/out/\\d+",), ignore_conf=["output"], noise_band_pct=2.5)
+
+    assert op.thresholds["normalize_path"] == ["/out/\\d+"]
+    assert op.thresholds["ignore_conf"] == ["output"]
+    assert op.thresholds["noise_band_pct"] == 2.5
+
+
+@pytest.mark.parametrize("empty", [[], (), None])
+def test_operator_treats_empty_comparison_patterns_as_none_so_they_need_no_baseline(empty):
+    SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+        normalize_path=empty, ignore_conf=empty,
+    )
+
+
+@pytest.mark.parametrize("patterns", ["output", [""], [3], ["ok", None]])
+def test_operator_rejects_malformed_comparison_patterns(patterns):
+    with pytest.raises(ValueError, match="normalize_path must be a list of non-empty"):
+        _operator_with(normalize_path=patterns)
+    with pytest.raises(ValueError, match="ignore_conf must be a list of non-empty"):
+        _operator_with(ignore_conf=patterns)
+
+
+@pytest.mark.parametrize("noise_band", [-1, 100.5, "2", True, float("nan")])
+def test_operator_rejects_a_noise_band_outside_0_to_100(noise_band):
+    with pytest.raises(ValueError, match="noise_band_pct must be a number from 0 to 100"):
+        _operator_with(noise_band_pct=noise_band)
+
+
+def test_operator_redact_defaults_to_off_and_needs_no_baseline():
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+    )
+    redacting = SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json", redact=True,
+    )
+
+    assert op.thresholds["redact"] is False
+    assert redacting.thresholds["redact"] is True
+
+
+@pytest.mark.parametrize("redact", ["yes", 1, None])
+def test_operator_rejects_a_redact_that_is_not_a_bool(redact):
+    with pytest.raises(ValueError, match="redact must be True or False"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+            redact=redact,
+        )
+
+
+def test_operator_rejects_stage_qualities_without_stage_regression_budgets():
+    with pytest.raises(ValueError, match="stage_qualities needs stage_regression_budgets"):
+        _operator_with(stage_qualities=["exact"])
+
+
+@pytest.mark.parametrize("qualities", ["exact", ["exact", "fuzzy"], ("loose",)])
+def test_operator_rejects_an_unknown_stage_quality(qualities):
+    with pytest.raises(ValueError, match="stage_qualities must be a list drawn from"):
+        _operator_with(stage_regression_budgets={"executorRunTime": 30}, stage_qualities=qualities)
+
+
 def test_operator_rejects_a_baseline_for_a_backend_that_cannot_compare_runs():
     from sparkforensics_operator.hooks.analyze.base import AnalyzeHook
 
@@ -515,6 +663,48 @@ def test_run_spark_forensics_accepts_a_sibling_baseline_with_a_shared_name_prefi
     backend.analyze.assert_called_once()
 
 
+def test_run_spark_forensics_hands_a_history_server_baseline_to_the_backend(tmp_path):
+    log_source, backend, baseline_log_source = _baseline_fixtures(tmp_path, _report())
+    baseline = HistoryServerApp(base_url="http://shs:18080", app_id="app-0")
+    baseline_log_source.locate.return_value = baseline
+
+    run_spark_forensics(
+        {}, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+        thresholds={}, on_threshold_breach="fail", notifier=None,
+        log=logging.getLogger("test"), baseline_log_source=baseline_log_source,
+    )
+
+    backend.analyze.assert_called_once_with(LocalEventLog(tmp_path / "app.log"), {}, baseline_ref=baseline)
+    baseline_log_source.cleanup.assert_called_once_with(baseline)
+
+
+@pytest.mark.parametrize("baseline, overlaps", [
+    (HistoryServerApp(base_url="http://shs:18080", app_id="app-1"), True),
+    (HistoryServerApp(base_url="http://shs:18080", app_id="app-1", attempt_id="2"), False),
+    (HistoryServerApp(base_url="http://shs:18080", app_id="app-0"), False),
+    (HistoryServerApp(base_url="http://other-shs:18080", app_id="app-1"), False),
+])
+def test_a_history_server_baseline_is_refused_only_when_it_is_the_run_under_analysis(tmp_path, baseline, overlaps):
+    log_source, backend, baseline_log_source = _baseline_fixtures(tmp_path, _report())
+    log_source.locate.return_value = HistoryServerApp(base_url="http://shs:18080", app_id="app-1")
+    baseline_log_source.locate.return_value = baseline
+
+    def run():
+        run_spark_forensics(
+            {}, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+            thresholds={}, on_threshold_breach="fail", notifier=None,
+            log=logging.getLogger("test"), baseline_log_source=baseline_log_source,
+        )
+
+    if overlaps:
+        with pytest.raises(AirflowException, match="compared against itself"):
+            run()
+        backend.analyze.assert_not_called()
+    else:
+        run()
+        backend.analyze.assert_called_once()
+
+
 def test_operator_fails_on_a_regression_breach_and_persists_the_comparison(tmp_path):
     report = _report(
         ThresholdResult("max-regression", "violation", 'Metric "wallClock" regressed 30.0%, exceeding budget 20%.'),
@@ -547,3 +737,159 @@ def test_the_persisted_report_has_no_comparison_without_a_baseline(tmp_path):
     )
 
     assert "comparison" not in json.loads(dest.read_text())
+
+
+def _run_with_cli_version(tmp_path, cli_version):
+    report = _report()
+    report.cli_version = cli_version
+    log_source, backend = _fixtures(tmp_path, report)
+    log = MagicMock()
+    run_spark_forensics(
+        {}, log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+        thresholds={}, on_threshold_breach="fail", notifier=None, log=log,
+    )
+    return log
+
+
+def test_a_run_by_a_cli_older_than_the_tested_version_logs_a_warning(tmp_path):
+    log = _run_with_cli_version(tmp_path, "0.9.0")
+
+    log.warning.assert_called_once()
+    assert "sparkforensics-cli 0.9.0 is older than 0.10.1" in log.warning.call_args.args[1]
+
+
+def test_a_run_by_the_tested_cli_version_logs_no_warning(tmp_path):
+    log = _run_with_cli_version(tmp_path, "0.10.1")
+
+    log.warning.assert_not_called()
+
+
+def _persisted(tmp_path, report):
+    log_source, backend = _fixtures(tmp_path, report)
+    dest = tmp_path / "report.json"
+    run_spark_forensics(
+        {}, log_source=log_source, backend=backend, report_dest=str(dest),
+        thresholds={}, on_threshold_breach="ignore", notifier=None, log=MagicMock(),
+    )
+    return json.loads(dest.read_text())
+
+
+def test_the_persisted_report_is_the_whole_cli_report_plus_the_threshold_results(tmp_path):
+    cli_report = {
+        "schemaVersion": 5,
+        "summary": {"impactBandCounts": {"critical": 0, "warning": 0, "info": 0}},
+        "verdict": None, "evidenceAvailability": None, "detectors": [], "findings": [],
+        "recommendations": [], "cleanChecks": [], "notRunChecks": [],
+        "generator": {"name": "sparkforensics-cli", "version": "0.10.1"},
+        "app": {"id": "app-1", "attemptId": None},
+        "metrics": {"schemaVersion": 1}, "effectiveConf": {"keys": []}, "writeTargets": {"writes": []},
+    }
+    report = _report(ThresholdResult("max-runtime", "pass", ""))
+    report.raw = dict(cli_report)
+    report.comparison = {"confidence": "ok"}
+
+    persisted = _persisted(tmp_path, report)
+
+    assert persisted == {
+        **cli_report,
+        "thresholdResults": [{"name": "max-runtime", "status": "pass", "detail": ""}],
+        "comparison": {"confidence": "ok"},
+    }
+    assert report.raw == cli_report
+
+
+def test_a_report_built_by_hand_persists_the_sections_the_operator_reads(tmp_path):
+    persisted = _persisted(tmp_path, _report(ThresholdResult("max-runtime", "violation", "too slow")))
+
+    assert set(persisted) == {
+        "schemaVersion", "summary", "verdict", "evidenceAvailability", "detectors", "findings",
+        "recommendations", "cleanChecks", "notRunChecks", "thresholdResults",
+    }
+    assert persisted["thresholdResults"] == [{"name": "max-runtime", "status": "violation", "detail": "too slow"}]
+
+
+def _markdown_report(markdown="# Report\n"):
+    report = _report()
+    report.markdown = markdown
+    return report
+
+
+def test_markdown_dest_persists_the_markdown_report_next_to_the_json_one(tmp_path):
+    log_source, backend = _fixtures(tmp_path, _markdown_report())
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=log_source, backend=backend,
+        report_dest=str(tmp_path / "report.json"), markdown_dest=str(tmp_path / "report.md"),
+    )
+    ti = MagicMock()
+
+    destination = op.execute({"ti": ti})
+
+    assert destination == str(tmp_path / "report.json")
+    assert (tmp_path / "report.md").read_text() == "# Report\n"
+    assert json.loads((tmp_path / "report.json").read_text())["schemaVersion"] == 3
+    assert backend.analyze.call_args.args[1]["markdown"] is True
+
+
+def test_without_markdown_dest_the_backend_is_not_asked_for_markdown(tmp_path):
+    log_source, backend = _fixtures(tmp_path, _report())
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+    )
+    ti = MagicMock()
+
+    op.execute({"ti": ti})
+
+    assert backend.analyze.call_args.args[1]["markdown"] is False
+    assert list(tmp_path.glob("*.md")) == []
+
+
+def test_markdown_dest_with_a_backend_that_returned_no_markdown_fails_after_the_json_report(tmp_path):
+    log_source, backend = _fixtures(tmp_path, _report())
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=log_source, backend=backend,
+        report_dest=str(tmp_path / "report.json"), markdown_dest=str(tmp_path / "report.md"),
+    )
+
+    with pytest.raises(AirflowException, match="markdown_dest is set, but the backend returned no Markdown report"):
+        op.execute({})
+
+    assert (tmp_path / "report.json").exists()
+    assert not (tmp_path / "report.md").exists()
+
+
+def test_markdown_dest_is_a_template_field():
+    assert "markdown_dest" in SparkForensicsOperator.template_fields
+
+
+def test_operator_rejects_markdown_dest_for_a_backend_that_cannot_write_markdown():
+    from sparkforensics_operator.hooks.analyze.base import AnalyzeHook
+
+    class _NoMarkdown(AnalyzeHook):
+        supported_log_refs = (LocalEventLog,)
+
+        def _analyze(self, log_ref, thresholds):
+            return None
+
+    with pytest.raises(ValueError, match="_NoMarkdown cannot write a Markdown report"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=_NoMarkdown(), report_dest="/tmp/r.json",
+            markdown_dest="/tmp/r.md",
+        )
+    SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=_NoMarkdown(), report_dest="/tmp/r.json",
+    )
+
+
+def test_a_breach_still_persists_the_markdown_report(tmp_path):
+    report = _markdown_report()
+    report.threshold_results = [ThresholdResult("max-runtime", "violation", "too slow")]
+    log_source, backend = _fixtures(tmp_path, report)
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=log_source, backend=backend,
+        report_dest=str(tmp_path / "report.json"), markdown_dest=str(tmp_path / "report.md"),
+    )
+
+    with pytest.raises(ThresholdBreached):
+        op.execute({})
+
+    assert (tmp_path / "report.md").read_text() == "# Report\n"

@@ -288,9 +288,9 @@ def test_analyze_raises_a_clear_error_when_the_binary_is_missing_on_the_ssh_host
 
 def test_analyze_raises_on_exit_code_2_naming_the_ssh_host():
     hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")
-    channel = _FakeChannel(stderr=b"History Server returned 404\n", exit_status=2)
+    channel = _FakeChannel(stderr=b"--app-id must not be empty\n", exit_status=2)
 
-    with pytest.raises(AirflowException, match=r"on the SSH host .* \(exit 2\): History Server returned 404"):
+    with pytest.raises(AirflowException, match=r"on the SSH host .* \(exit 2, .*\): --app-id must not be empty"):
         _run(hook, HistoryServerApp(base_url="http://localhost:18080", app_id="app-1"), {}, channel)
 
 
@@ -480,10 +480,73 @@ def test_analyze_passes_a_baseline_path_on_the_same_host_and_reads_the_compariso
     assert report.comparison == comparison
 
 
+@needs_posix_host
+def test_analyze_passes_a_history_server_baseline_as_the_baseline_flags(host):
+    comparison = {"confidence": "ok", "reason": None, "metrics": [], "findings": {}}
+    wrapped = json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison})
+    host.fake_cli(f"printf '%s' '{wrapped}' | emit\n")
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=60)
+
+    report = hook.analyze(
+        RemoteEventLog("onprem_ssh", "/logs/app-2"), {"max_regression_pct": 20},
+        baseline_ref=HistoryServerApp(base_url="http://localhost:18080", app_id="app-1", attempt_id="2"),
+    )
+
+    assert host.argv() == [
+        "/logs/app-2", "--format", "json", "--baseline-shs-base-url", "http://localhost:18080",
+        "--baseline-app-id", "app-1", "--baseline-attempt-id", "2", "--max-regression-pct", "20",
+    ]
+    assert report.comparison == comparison
+
+
+@needs_posix_host
+def test_analyze_runs_the_cli_a_second_time_on_the_host_for_the_markdown_report(host):
+    host.fake_cli(f"""\
+        printf '%s\\n' "$*" >> "$HOME/argv.log"
+        case " $* " in
+          *" --format md "*) printf '%s' '# Report'; exit 3 ;;
+        esac
+        printf '%s' '{json.dumps(SAMPLE_JSON)}'
+        echo '[violation] max-runtime: Runtime 2ms exceeds budget 1ms.' >&2
+        exit 1
+    """)
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=60)
+
+    report = hook.analyze(
+        RemoteEventLog("onprem_ssh", "/logs/app-1"), {"max_runtime_ms": 1, "markdown": True, "redact": True}
+    )
+
+    assert report.markdown == "# Report"
+    assert report.exit_code == 1
+    assert [(r.name, r.status) for r in report.threshold_results] == [("max-runtime", "violation")]
+    json_call, markdown_call = (host.home / "argv.log").read_text().splitlines()
+    assert "--format json" in json_call and "--max-runtime 1" in json_call
+    assert "--format md" in markdown_call and "--max-runtime" not in markdown_call
+    assert "--redact" in markdown_call
+
+
+@needs_posix_host
+def test_analyze_does_not_run_the_markdown_cli_when_markdown_is_not_wanted(host):
+    host.fake_cli(f"""\
+        printf '%s\\n' "$*" >> "$HOME/argv.log"
+        printf '%s' '{json.dumps(SAMPLE_JSON)}'
+    """)
+
+    report = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=60).analyze(
+        RemoteEventLog("onprem_ssh", "/logs/app-1"), {"markdown": False}
+    )
+
+    assert report.markdown is None
+    assert len((host.home / "argv.log").read_text().splitlines()) == 1
+
+
+def test_the_ssh_backend_writes_markdown():
+    assert SSHAnalyzeHook.supports_markdown is True
+
+
 @pytest.mark.parametrize("baseline, error", [
     (RemoteEventLog("other_ssh", "/logs/app-1"), "baseline on a different SSH host"),
     (LocalEventLog("/tmp/app-1.log"), "cannot use LocalEventLog.*reads a baseline only as RemoteEventLog"),
-    (HistoryServerApp(base_url="http://localhost:18080", app_id="app-1"), "History Server application cannot be a baseline"),
 ])
 def test_analyze_rejects_a_baseline_the_ssh_host_cannot_read_before_connecting(baseline, error):
     hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh")

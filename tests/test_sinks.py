@@ -154,3 +154,28 @@ def test_persist_wraps_a_broken_aws_connection_lookup_with_explicit_conn_id():
     mock_hook.get_connection.assert_called_once_with("my_aws_conn")
     mock_hook.load_string.assert_not_called()
     assert exc_info.value.__cause__ is not None
+
+
+def test_persist_text_writes_the_text_as_it_is(tmp_path):
+    dest = tmp_path / "reports" / "app-1.md"
+
+    result = sinks.persist_text("# Report\n\nbody\n", str(dest))
+
+    assert result == str(dest)
+    assert dest.read_text() == "# Report\n\nbody\n"
+
+
+def test_persist_text_uploads_to_s3_with_the_given_connection():
+    mock_hook = MagicMock()
+    with patch("airflow.providers.amazon.aws.hooks.s3.S3Hook", return_value=mock_hook) as mock_cls:
+        result = sinks.persist_text("# Report", "s3://my-bucket/reports/app-1.md", aws_conn_id="my_aws_conn")
+
+    assert result == "s3://my-bucket/reports/app-1.md"
+    mock_cls.assert_called_once_with(aws_conn_id="my_aws_conn")
+    assert mock_hook.load_string.call_args.args == ("# Report",)
+    assert mock_hook.load_string.call_args.kwargs["key"] == "reports/app-1.md"
+
+
+def test_persist_text_rejects_an_unsupported_scheme():
+    with pytest.raises(ValueError, match="Unsupported report_dest scheme"):
+        sinks.persist_text("# Report", "ftp://example.com/app-1.md")

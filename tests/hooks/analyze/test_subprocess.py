@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 from airflow.exceptions import AirflowException
 
+from sparkforensics_operator.exceptions import CliConfigurationError, HistoryServerFetchError
 from sparkforensics_operator.hooks.analyze.subprocess import SubprocessAnalyzeHook
 from sparkforensics_operator.log_ref import HistoryServerApp, LocalEventLog, RemoteEventLog
 
@@ -78,6 +79,25 @@ def test_analyze_raises_on_exit_code_2(tmp_path):
 
     with patch("subprocess.run", side_effect=_fake_run(returncode=2, stderr="Unrecognized event log format")):
         with pytest.raises(AirflowException, match="Unrecognized event log format"):
+            hook.analyze(LocalEventLog(log_path), {})
+
+
+def test_analyze_raises_a_fetch_error_when_the_history_server_is_unreachable():
+    hook = SubprocessAnalyzeHook()
+    log_ref = HistoryServerApp(base_url="http://shs:18080", app_id="app-1")
+
+    with patch("subprocess.run", side_effect=_fake_run(returncode=4, stderr="SHS fetch failed: upstream-unreachable")):
+        with pytest.raises(HistoryServerFetchError, match=r"\(exit 4, event log\): the Spark History Server is unreachable"):
+            hook.analyze(log_ref, {})
+
+
+def test_analyze_raises_a_configuration_error_on_a_usage_error(tmp_path):
+    hook = SubprocessAnalyzeHook()
+    log_path = tmp_path / "app.log"
+    log_path.write_text("{}")
+
+    with patch("subprocess.run", side_effect=_fake_run(returncode=2, stderr="--max-skew needs a number")):
+        with pytest.raises(CliConfigurationError, match=r"rejected its arguments \(exit 2, usage error\)"):
             hook.analyze(LocalEventLog(log_path), {})
 
 
@@ -235,12 +255,117 @@ def test_analyze_passes_a_local_baseline_and_reads_the_comparison(tmp_path):
     assert [r.name for r in report.threshold_results] == ["max-regression"]
 
 
-@pytest.mark.parametrize("baseline", [
-    HistoryServerApp(base_url="http://shs:18080", app_id="app-1"),
-    RemoteEventLog("onprem_ssh", "/logs/app-1"),
-])
-def test_analyze_rejects_a_baseline_that_is_not_a_worker_local_path_before_running(tmp_path, baseline):
+def test_analyze_passes_a_history_server_baseline_and_reads_the_comparison(tmp_path):
+    hook = SubprocessAnalyzeHook()
+    comparison = {"confidence": "ok", "reason": None, "metrics": [], "findings": {}}
+    captured = {}
+
+    def run(args, capture_output, text, timeout):
+        captured["args"] = args
+        _out_path_from_args(args).write_text(json.dumps({"candidate": SAMPLE_JSON, "comparison": comparison}))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    with patch("subprocess.run", side_effect=run):
+        report = hook.analyze(
+            HistoryServerApp(base_url="http://shs:18080", app_id="app-2"), {"max_regression_pct": 20},
+            baseline_ref=HistoryServerApp(base_url="http://shs:18080", app_id="app-1", attempt_id="1"),
+        )
+
+    args = captured["args"]
+    assert args[args.index("--baseline-shs-base-url") + 1] == "http://shs:18080"
+    assert args[args.index("--baseline-app-id") + 1] == "app-1"
+    assert args[args.index("--baseline-attempt-id") + 1] == "1"
+    assert "--baseline" not in args
+    assert report.comparison == comparison
+
+
+def test_analyze_rejects_a_baseline_on_an_ssh_host_before_running(tmp_path):
     with patch("subprocess.run") as run:
         with pytest.raises(AirflowException, match="SubprocessAnalyzeHook cannot use"):
-            SubprocessAnalyzeHook().analyze(LocalEventLog(tmp_path / "app-2.log"), {}, baseline_ref=baseline)
+            SubprocessAnalyzeHook().analyze(
+                LocalEventLog(tmp_path / "app-2.log"), {}, baseline_ref=RemoteEventLog("onprem_ssh", "/logs/app-1"),
+            )
     run.assert_not_called()
+
+
+def _markdown_run(markdown_returncode=0, markdown_stderr=""):
+    """A fake subprocess.run that writes the JSON report for a --format json
+    run and a Markdown report for a --format md one, and records both."""
+    calls = []
+
+    def run(args, capture_output, text, timeout):
+        calls.append(args)
+        markdown = args[args.index("--format") + 1] == "md"
+        _out_path_from_args(args).write_text("# Report\n" if markdown else json.dumps(SAMPLE_JSON))
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=markdown_returncode if markdown else 1,
+            stdout="",
+            stderr=markdown_stderr if markdown else "[violation] max-runtime: Runtime 2ms exceeds budget 1ms.\n",
+        )
+
+    return run, calls
+
+
+def test_analyze_runs_the_cli_a_second_time_for_the_markdown_report(tmp_path):
+    run, calls = _markdown_run()
+
+    with patch("subprocess.run", side_effect=run):
+        report = SubprocessAnalyzeHook().analyze(
+            LocalEventLog(tmp_path / "app.log"), {"max_runtime_ms": 1, "redact": True, "markdown": True}
+        )
+
+    assert report.markdown == "# Report\n"
+    assert report.schema_version == 5
+    assert [a[a.index("--format") + 1] for a in calls] == ["json", "md"]
+    assert "--max-runtime" in calls[0] and "--max-runtime" not in calls[1]
+    assert "--redact" in calls[0] and "--redact" in calls[1]
+    assert calls[0][calls[0].index("--out") + 1] != calls[1][calls[1].index("--out") + 1]
+
+
+def test_the_markdown_run_adds_no_threshold_result_and_keeps_the_first_runs_exit_code(tmp_path):
+    run, _ = _markdown_run(markdown_returncode=3, markdown_stderr="[inconclusive] parse-incomplete: 1 line skipped\n")
+
+    with patch("subprocess.run", side_effect=run):
+        report = SubprocessAnalyzeHook().analyze(
+            LocalEventLog(tmp_path / "app.log"), {"max_runtime_ms": 1, "markdown": True}
+        )
+
+    assert report.exit_code == 1
+    assert [(r.name, r.status) for r in report.threshold_results] == [("max-runtime", "violation")]
+
+
+def test_analyze_without_markdown_runs_the_cli_once_and_leaves_markdown_unset(tmp_path):
+    run, calls = _markdown_run()
+
+    with patch("subprocess.run", side_effect=run):
+        report = SubprocessAnalyzeHook().analyze(LocalEventLog(tmp_path / "app.log"), {"markdown": False})
+
+    assert len(calls) == 1
+    assert report.markdown is None
+
+
+def test_analyze_raises_when_the_markdown_run_fails_and_cleans_up_both_out_files(tmp_path):
+    run, calls = _markdown_run(markdown_returncode=137, markdown_stderr="Killed")
+
+    with patch("subprocess.run", side_effect=run):
+        with pytest.raises(AirflowException, match=r"\(Markdown report\) exited with unexpected code 137: Killed"):
+            SubprocessAnalyzeHook().analyze(LocalEventLog(tmp_path / "app.log"), {"markdown": True})
+
+    assert all(not _out_path_from_args(args).exists() for args in calls)
+
+
+def test_analyze_times_out_the_markdown_run_like_the_json_run(tmp_path):
+    def run(args, capture_output, text, timeout):
+        if args[args.index("--format") + 1] == "md":
+            raise subprocess.TimeoutExpired(cmd=args, timeout=timeout)
+        _out_path_from_args(args).write_text(json.dumps(SAMPLE_JSON))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    with patch("subprocess.run", side_effect=run):
+        with pytest.raises(AirflowException, match="timed out after 5s analyzing"):
+            SubprocessAnalyzeHook(timeout=5).analyze(LocalEventLog(tmp_path / "app.log"), {"markdown": True})
+
+
+def test_the_subprocess_backend_writes_markdown():
+    assert SubprocessAnalyzeHook.supports_markdown is True

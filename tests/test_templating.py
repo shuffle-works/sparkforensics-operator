@@ -253,3 +253,50 @@ def test_the_callback_renders_the_baseline_log_source_with_the_upstream_tasks_co
     assert backend.analyze.call_args.kwargs["baseline_ref"] == RemoteEventLog("onprem_ssh", "/logs/2025-12-31")
     assert backend.analyze.call_args.args[1]["fail_on_introduced"] == "critical"
     assert baseline.path_template == "/logs/{{ prev_ds }}"
+
+
+def test_the_operator_renders_markdown_dest_with_the_task_context(tmp_path):
+    op = SparkForensicsOperator(
+        task_id="t",
+        log_source=RemotePathLogSourceHook(ssh_conn_id="onprem_ssh", path_template="/logs/{{ run_id }}"),
+        backend=SSHAnalyzeHook(ssh_conn_id="onprem_ssh"),
+        report_dest=str(tmp_path / "{{ run_id }}.json"),
+        markdown_dest=str(tmp_path / "{{ run_id }}.md"),
+    )
+
+    op.render_template_fields({"run_id": "run_1"})
+
+    assert op.markdown_dest == str(tmp_path / "run_1.md")
+
+
+def test_the_callback_renders_markdown_dest_and_writes_the_markdown_report(tmp_path):
+    log_source = RemotePathLogSourceHook(ssh_conn_id="onprem_ssh", path_template="/logs/{{ run_id }}")
+    backend = MagicMock(spec=["analyze"])
+    report = _report()
+    report.markdown = "# Report"
+    backend.analyze.return_value = report
+    callback = spark_forensics_callback(
+        log_source=log_source, backend=backend, report_dest=str(tmp_path / "{{ run_id }}.json"),
+        markdown_dest=str(tmp_path / "{{ run_id }}.md"),
+    )
+    upstream = SparkForensicsOperator(task_id="spark", log_source=log_source, backend=backend, report_dest="x")
+
+    callback({"run_id": "run_1", "task": upstream, "ti": MagicMock()})
+
+    assert (tmp_path / "run_1.md").read_text() == "# Report"
+    assert backend.analyze.call_args.args[1]["markdown"] is True
+
+
+def test_the_callback_rejects_markdown_dest_for_a_backend_that_cannot_write_markdown():
+    from sparkforensics_operator.hooks.analyze.base import AnalyzeHook
+
+    class _NoMarkdown(AnalyzeHook):
+        supported_log_refs = ()
+
+        def _analyze(self, log_ref, thresholds):
+            return None
+
+    with pytest.raises(ValueError, match="cannot write a Markdown report"):
+        spark_forensics_callback(
+            log_source=MagicMock(), backend=_NoMarkdown(), report_dest="/tmp/r.json", markdown_dest="/tmp/r.md",
+        )

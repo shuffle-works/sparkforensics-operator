@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Callable
+from typing import Callable, Sequence
 
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks._templating import task_renderer
-from sparkforensics_operator.operator import run_spark_forensics, validate_comparison_thresholds
+from sparkforensics_operator.operator import as_list, run_spark_forensics, validate_comparison_thresholds
 from sparkforensics_operator.summary import validate_report_url_template
 
 log = logging.getLogger("airflow.task")
@@ -31,6 +31,14 @@ def spark_forensics_callback(
     max_regression_pct: float | None = None,
     regression_metric: str | None = None,
     fail_on_introduced: str | None = None,
+    regression_budgets: dict[str, float] | None = None,
+    stage_regression_budgets: dict[str, float] | None = None,
+    stage_qualities: Sequence[str] | None = None,
+    normalize_path: Sequence[str] | None = None,
+    ignore_conf: Sequence[str] | None = None,
+    noise_band_pct: float | None = None,
+    redact: bool = False,
+    markdown_dest: str | None = None,
 ) -> Callable[[dict], None]:
     """Builds an on_success_callback for the upstream Spark task, sharing
     SparkForensicsOperator's exact execute() logic via run_spark_forensics.
@@ -48,11 +56,12 @@ def spark_forensics_callback(
     SparkForensicsOperator.
 
     Airflow renders no callback arguments, so the callback renders
-    report_dest and the hooks' template_fields itself, with the upstream
-    task's Jinja environment and the callback's context, the same values
-    the operator would see. Strings are rendered as templates, never read as
-    template files by the upstream task's template_ext. It renders copies:
-    the hooks passed here are shared by every run of the upstream task.
+    report_dest, markdown_dest and the hooks' template_fields itself, with
+    the upstream task's Jinja environment and the callback's context, the
+    same values the operator would see. Strings are rendered as templates,
+    never read as template files by the upstream task's template_ext. It
+    renders copies: the hooks passed here are shared by every run of the
+    upstream task.
     """
     if deferrable:
         raise ValueError(
@@ -71,6 +80,14 @@ def spark_forensics_callback(
         "max_regression_pct": max_regression_pct,
         "regression_metric": regression_metric,
         "fail_on_introduced": fail_on_introduced,
+        "regression_budgets": regression_budgets,
+        "stage_regression_budgets": stage_regression_budgets,
+        "stage_qualities": as_list(stage_qualities),
+        "normalize_path": as_list(normalize_path),
+        "ignore_conf": as_list(ignore_conf),
+        "noise_band_pct": noise_band_pct,
+        "redact": redact,
+        "markdown": markdown_dest is not None,
     }
     validate_comparison_thresholds(baseline_log_source, backend, thresholds)
 
@@ -78,12 +95,15 @@ def spark_forensics_callback(
         ti = context.get("ti")
         run_log_source, run_backend, run_report_dest = copy.copy(log_source), copy.copy(backend), report_dest
         run_baseline_log_source = copy.copy(baseline_log_source)
+        run_markdown_dest = markdown_dest
         task = context.get("task")
         if task is not None:
             renderer = task_renderer(task)
             run_log_source = renderer.render_template(run_log_source, context)
             run_backend = renderer.render_template(run_backend, context)
             run_report_dest = renderer.render_template(run_report_dest, context)
+            if run_markdown_dest is not None:
+                run_markdown_dest = renderer.render_template(run_markdown_dest, context)
             if run_baseline_log_source is not None:
                 run_baseline_log_source = renderer.render_template(run_baseline_log_source, context)
         try:
@@ -92,6 +112,7 @@ def spark_forensics_callback(
                 log_source=run_log_source,
                 backend=run_backend,
                 report_dest=run_report_dest,
+                markdown_dest=run_markdown_dest,
                 thresholds=thresholds,
                 on_threshold_breach=on_threshold_breach,
                 notifier=notifier,

@@ -6,19 +6,8 @@ from typing import Any, Sequence
 
 from sparkforensics_operator._compat import AirflowException, BaseHook
 from sparkforensics_operator.hooks._templating import TemplatedHookMixin
-from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, LocalEventLog, RemoteEventLog
+from sparkforensics_operator.log_ref import EventLogRef
 from sparkforensics_operator.report import Report
-
-
-# The log source to use for a History Server run's baseline instead of a
-# HistoryServerApp, per reference kind a backend can pass as --baseline.
-_HISTORY_SERVER_BASELINE_ALTERNATIVES = {
-    LocalEventLog: "fetch its log with HistoryServerLogSourceHook, which resolves to LocalEventLog",
-    RemoteEventLog: (
-        "point RemotePathLogSourceHook at its event log on the analysis host, which "
-        "resolves to RemoteEventLog"
-    ),
-}
 
 
 class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
@@ -31,10 +20,14 @@ class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
     backend is not shipped."""
 
     supported_log_refs: tuple[type, ...] = ()
-    # The EventLogRef kinds this backend can pass the CLI as --baseline,
-    # which reads only a file path from where the CLI runs. Empty: this
-    # backend cannot compare runs.
+    # The EventLogRef kinds this backend can pass the CLI as the baseline: a
+    # file path readable where the CLI runs (--baseline), or a History Server
+    # application (--baseline-shs-base-url). Empty: this backend cannot
+    # compare runs.
     supported_baseline_refs: tuple[type, ...] = ()
+    # Whether this backend sets Report.markdown when thresholds["markdown"] is
+    # true. markdown_dest on the operator needs a backend that does.
+    supports_markdown: bool = False
     # Constructor arguments Airflow renders as Jinja when the hook is
     # SparkForensicsOperator's backend (see hooks/_templating.py).
     template_fields: Sequence[str] = ()
@@ -43,10 +36,11 @@ class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
         self, log_ref: EventLogRef, thresholds: dict, baseline_ref: EventLogRef | None = None
     ) -> Report:
         """thresholds keys: max_runtime_ms, max_spill_gb, max_skew_ratio,
-        max_failed_task_rate_pct, min_efficiency_pct, and, with a
-        baseline_ref, max_regression_pct, regression_metric,
-        fail_on_introduced (all optional). baseline_ref is the run to
-        compare against."""
+        max_failed_task_rate_pct, min_efficiency_pct, redact, markdown, and,
+        with a baseline_ref, max_regression_pct, regression_metric,
+        fail_on_introduced, regression_budgets, stage_regression_budgets,
+        stage_qualities, normalize_path, ignore_conf, noise_band_pct (all
+        optional). baseline_ref is the run to compare against."""
         self.check_log_ref(log_ref)
         if baseline_ref is None:
             return self._analyze(log_ref, thresholds)
@@ -65,28 +59,14 @@ class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
             )
 
     def check_baseline_ref(self, baseline_ref: EventLogRef) -> None:
-        """Raise unless this backend can pass baseline_ref to the CLI as
-        --baseline: a file path readable where the analysis runs."""
+        """Raise unless this backend can pass baseline_ref to the CLI as the
+        baseline: an event log path or a History Server application readable
+        where the analysis runs."""
         if isinstance(baseline_ref, self.supported_baseline_refs):
             return
         name = type(self).__name__
         if not self.supported_baseline_refs:
             raise AirflowException(f"{name} cannot compare a run against a baseline.")
-        if isinstance(baseline_ref, HistoryServerApp):
-            alternatives = [
-                _HISTORY_SERVER_BASELINE_ALTERNATIVES[kind]
-                for kind in self.supported_baseline_refs
-                if kind in _HISTORY_SERVER_BASELINE_ALTERNATIVES
-            ]
-            instead = " or ".join(alternatives) or (
-                f"use a log source that resolves to {self._baseline_ref_names()}"
-            )
-            raise AirflowException(
-                f"{name} cannot use {baseline_ref!r} as the baseline; a Spark History "
-                "Server application cannot be a baseline: sparkforensics-analyze "
-                "--baseline reads only an event log file or rolling-log directory, "
-                f"never a History Server. Instead, {instead}."
-            )
         problem = f"it reads a baseline only as {self._baseline_ref_names()}"
         raise AirflowException(
             f"{name} cannot use {baseline_ref!r} as the baseline; {problem}. Point "

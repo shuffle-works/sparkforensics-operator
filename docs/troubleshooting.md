@@ -14,18 +14,35 @@ Node.js or the npm package isn't installed on this worker, or
 sparkforensics-analyze` on the worker, and see [worker
 prerequisites](getting-started.md#worker-prerequisites-subprocessanalyzehook).
 
-#### "sparkforensics-analyze [on the SSH host (...)] failed to parse the event log, could not fetch it from the Spark History Server, or was given bad arguments (exit 2)"
+#### "sparkforensics-analyze [on the SSH host (...)] rejected its arguments (exit 2, usage error)"
 
-One of these:
+The CLI refused its command line; the message quotes the reason. Check
+the threshold and budget values, `regression_metric`, `base_url`, `app_id`
+and `attempt_id`. "Unknown option" means the CLI is too old for an option
+the operator passed: [upgrade
+it](configuration.md#minimum-cli-version-per-option). Airflow does not retry.
 
-- the log isn't a valid Spark event log or rolling-log directory;
-- the path doesn't exist on the host running the analysis
-  (`RemotePathLogSourceHook` does not check it beforehand);
-- the CLI's `--shs-base-url` fetch failed: wrong `base_url`, `app_id`
-  or `attempt_id`, or the History Server is unreachable from that host;
-- an unsupported CLI argument was passed.
+#### "sparkforensics-analyze [on the SSH host (...)] could not read or parse the event log, or fetch it from the Spark History Server (exit 4, event log)"
 
-The raised `AirflowException`'s message includes the CLI's stderr.
+Check that the path exists on the host running the analysis and that the
+log is a valid event log or rolling-log directory. For a History Server
+fetch, the text after "The CLI said:" names the cause. Check these:
+
+- unreachable, refused or errored: `base_url` from that host, firewall,
+  proxy (the CLI sends no authentication), the server's log;
+- no such application or attempt: `app_id` and `attempt_id`;
+- transfer cut off: server load, network, `SPARKFORENSICS_SHS_TIMEOUT_MS`;
+- log over the download cap: raise `SPARKFORENSICS_MAX_ARCHIVE_BYTES`, or
+  analyze a file.
+
+#### "sparkforensics-analyze [on the SSH host (...)] could not read or parse the baseline (exit 5, baseline)"
+
+Same causes and fixes as exit 4, for the `baseline_log_source` run.
+
+#### "sparkforensics-analyze [on the SSH host (...)] failed with an internal error (exit 6, internal error)"
+
+The CLI hit a bug. Report the stack trace in the message to the
+sparkforensics project.
 
 #### "sparkforensics-analyze exited ... but its JSON report could not be parsed"
 
@@ -35,11 +52,28 @@ login shell printing a banner or message to stdout in non-interactive
 sessions (an `echo` in `~/.bashrc`, say); make it print only for
 interactive shells.
 
+#### "... wrote a report this sparkforensics-operator cannot read: report schemaVersion N ..."
+
+The report schema is older than 5 or newer than the operator knows.
+Upgrade `sparkforensics-operator`, or install a CLI that writes schema 5.
+
+#### Warning "sparkforensics-cli X is older than Y, the release this sparkforensics-operator is tested against"
+
+The run completes, but the CLI can lack an option the operator passes.
+Upgrade with `npm install -g sparkforensics-cli`.
+
+#### "sparkforensics-analyze (Markdown report) exited with unexpected code ..." or "... did not report how its Markdown report run ended" or "... wrote no Markdown report"
+
+`markdown_dest` runs the CLI a second time with `--format md`, and that
+run failed (an OOM kill or a timeout, say). The task fails before the
+JSON report is saved and before any summary XCom or notification. A retry
+runs both CLI runs again. Check the host's memory and `timeout`.
+
 #### "sparkforensics-analyze exited with unexpected code {returncode}"
 
-The CLI exited with a code other than 0, 1, 2 or 3, for example after an
-OOM kill or a wrapper-script failure. No report is read for these codes;
-the exception's stderr fragment shows the underlying cause.
+The CLI exited with a code other than 0 to 6, for example after an OOM
+kill or a wrapper-script failure. No report is read for these codes; the
+exception's stderr fragment shows the underlying cause.
 
 #### "sparkforensics-analyze timed out after {timeout}s"
 
@@ -64,13 +98,8 @@ backend](configuration.md#which-log-source-works-with-which-backend).
 #### "... cannot use ... as the baseline"
 
 `baseline_log_source` resolved to something the backend cannot pass to
-`sparkforensics-analyze --baseline`, which reads only an event log path
-where the analysis runs. "A Spark History Server application cannot be a
-baseline" means it is a `HistoryServerAppLogSourceHook`: fetch the
-baseline with `HistoryServerLogSourceHook` (for `SubprocessAnalyzeHook`)
-or point `RemotePathLogSourceHook` at its log on the SSH host (for
-`SSHAnalyzeHook`). "cannot compare against a baseline on a different SSH
-host" means the baseline's `ssh_conn_id` differs from the backend's. See
+the CLI; the message names what the backend reads. "cannot compare against
+a baseline on a different SSH host" means the `ssh_conn_id`s differ. See
 [comparing against a baseline
 run](configuration.md#comparing-against-a-baseline-run).
 
@@ -267,11 +296,43 @@ runs, or it is a volume metric (`inputBytes`, `outputBytes`,
 `taskCount`, `executorsAdded`) with no regression direction. The
 summary's `comparison.verdict` says which (`unavailable` or `neutral`).
 
+#### A threshold passes on one `sparkforensics-cli` version and fails on another
+
+The CLI's measurements differ between releases; for example, CLI 0.10.2
+and newer count retried task attempts in `max_failed_task_rate_pct`. See
+[what the CLI measures, by
+version](configuration.md#what-the-cli-measures-by-version). `cli_version`
+in the [summary XCom](configuration.md#summary-xcom) says which CLI ran.
+
+#### The CLI exits 3 with a `parse-incomplete` result
+
+The CLI (0.10.2 or newer) skipped lines it could not parse, so the result
+is inconclusive and the task does not fail. `skipped_lines` in the summary
+XCom holds the count. Check the log (or the baseline) for a truncated
+write.
+
 #### `ValueError: ... need baseline_log_source` or "regression_metric needs max_regression_pct" at DAG parse
 
-The comparison thresholds follow the CLI's own rules: all three need a
-baseline, and `regression_metric` only picks the metric
-`max_regression_pct` checks.
+Every comparison threshold (`max_regression_pct`, `regression_metric`,
+`fail_on_introduced`, `regression_budgets`, `stage_regression_budgets`,
+`stage_qualities`) needs a baseline. `regression_metric` needs
+`max_regression_pct`, and `stage_qualities` needs `stage_regression_budgets`.
+
+#### `ValueError: normalize_path must be a list of non-empty regular expression strings` (or `ignore_conf`, or `noise_band_pct must be a number from 0 to 100`) at DAG parse
+
+`normalize_path` and `ignore_conf` take a list of regular expression
+strings. `noise_band_pct` is a percent from 0 to 100.
+
+#### `ValueError: ... cannot write a Markdown report` at DAG parse
+
+`markdown_dest` needs a backend that writes Markdown. A custom backend
+sets `supports_markdown = True` and `Report.markdown`.
+
+#### `ValueError: ... is budgeted twice` or "regression_budgets[...] must be a non-negative number" at DAG parse
+
+A metric takes one budget. `max_regression_pct` budgets `regression_metric`
+(or `wallClock`), so that metric cannot be a key of `regression_budgets`.
+Budgets are non-negative numbers.
 
 #### Comparison `confidence` is `low`
 
@@ -305,8 +366,8 @@ the async hook doesn't read.
 
 ### A deferred task fails with "Trigger timeout" or "Trigger/execution timeout"
 
-The job didn't report back within `timeout` plus 120 seconds, or within
-the task's `execution_timeout`. The task log's "SparkForensics deferred
+The job didn't report back within `timeout` (twice `timeout` with
+`markdown_dest`) plus 120 seconds, or within the task's `execution_timeout`. The task log's "SparkForensics deferred
 analysis did not finish" line precedes the stop and cleanup of the job.
 Check the SSH host for a reboot or an externally killed job.
 
@@ -322,7 +383,7 @@ directory"). See the reaper suggestion below.
 | Situation | What happens |
 |---|---|
 | The analysis runs past `timeout` | Coreutils `timeout` stops the CLI on the host (exit 124), the trigger fires, and the task fails with the same "timed out after {timeout}s on the SSH host" error as a synchronous run. The job directory is removed. |
-| The job never reports back (host rebooted, job killed from outside) | The deferral gives up 120 seconds past `timeout`, counted from submission, or at the task's `execution_timeout` if that comes first. The task resumes only to stop the job and remove its directory, if the host is reachable. On Airflow 3 it then fails with `TaskDeferralTimeout` ("Trigger timeout"). On Airflow 2 it fails with `TaskDeferralError` ("Trigger/execution timeout"), or, when `execution_timeout` ran out first, with `AirflowTaskTimeout`, after which the task runner calls `on_kill()` to do the same cleanup. |
+| The job never reports back (host rebooted, job killed from outside) | The deferral gives up 120 seconds past `timeout` (twice `timeout` with `markdown_dest`), counted from submission, or at the task's `execution_timeout` if that comes first. The task resumes only to stop the job and remove its directory, if the host is reachable. On Airflow 3 it then fails with `TaskDeferralTimeout` ("Trigger timeout"). On Airflow 2 it fails with `TaskDeferralError` ("Trigger/execution timeout"), or, when `execution_timeout` ran out first, with `AirflowTaskTimeout`, after which the task runner calls `on_kill()` to do the same cleanup. |
 | The triggerer can't reach the host | It retries, tolerating five consecutive connection failures, and fires an error event on the sixth; any other error ends the trigger at once. The task stops and removes the job (best effort) and fails with "lost track of remote job ... while waiting for it". |
 | A retry, or a clear while deferred | Every try first stops any job an earlier try of the same task instance left running and removes its directory, then submits its own. There is never more than one analysis per task instance on the host, and a new try never reuses an old try's output. |
 | A worker restarts while the task is deferred | Nothing: no worker holds the task. A worker that dies while submitting or reading back fails the try as usual, and the next try cleans up. |

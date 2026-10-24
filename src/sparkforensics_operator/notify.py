@@ -29,9 +29,30 @@ class Notifier(ABC):
 
     @staticmethod
     def _default_message(report, report_destination: str) -> str:
+        """One line: app, verdict, run time, finding counts, skipped lines
+        and the report location. Whatever the report lacks is left out."""
         counts = report.summary.get("impactBandCounts", {})
-        return (
-            f"SparkForensics report: {counts.get('critical', 0)} critical, "
-            f"{counts.get('warning', 0)} warning, {counts.get('info', 0)} info findings. "
-            f"Report: {report_destination}"
+        parts = [f"SparkForensics report{f' for {report.app_name}' if report.app_name else ''}:"]
+        if report.verdict_title:
+            parts.append(f"{report.verdict_title.rstrip('.')}.")
+        if report.run_time_ms is not None:
+            parts.append(f"Ran for {_format_duration(report.run_time_ms)}.")
+        parts.append(
+            f"{counts.get('critical', 0)} critical, {counts.get('warning', 0)} warning, "
+            f"{counts.get('info', 0)} info findings."
         )
+        if report.skipped_lines:
+            parts.append(f"{report.skipped_lines} event log lines were skipped.")
+        parts.append(f"Report: {report_destination}")
+        return " ".join(parts)
+
+
+def _format_duration(milliseconds: float) -> str:
+    seconds = milliseconds / 1000
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    minutes, seconds = divmod(round(seconds), 60)
+    if minutes < 60:
+        return f"{minutes} min {seconds} s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes} min"
