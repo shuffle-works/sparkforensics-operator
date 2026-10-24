@@ -25,6 +25,9 @@ class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
     # application (--baseline-shs-base-url). Empty: this backend cannot
     # compare runs.
     supported_baseline_refs: tuple[type, ...] = ()
+    # Whether this backend sets Report.markdown when thresholds["markdown"] is
+    # true. markdown_dest on the operator needs a backend that does.
+    supports_markdown: bool = False
     # Constructor arguments Airflow renders as Jinja when the hook is
     # SparkForensicsOperator's backend (see hooks/_templating.py).
     template_fields: Sequence[str] = ()
@@ -33,10 +36,11 @@ class AnalyzeHook(TemplatedHookMixin, BaseHook, ABC):
         self, log_ref: EventLogRef, thresholds: dict, baseline_ref: EventLogRef | None = None
     ) -> Report:
         """thresholds keys: max_runtime_ms, max_spill_gb, max_skew_ratio,
-        max_failed_task_rate_pct, min_efficiency_pct, and, with a
-        baseline_ref, max_regression_pct, regression_metric,
-        fail_on_introduced (all optional). baseline_ref is the run to
-        compare against."""
+        max_failed_task_rate_pct, min_efficiency_pct, redact, markdown, and,
+        with a baseline_ref, max_regression_pct, regression_metric,
+        fail_on_introduced, regression_budgets, stage_regression_budgets,
+        stage_qualities, normalize_path, ignore_conf, noise_band_pct (all
+        optional). baseline_ref is the run to compare against."""
         self.check_log_ref(log_ref)
         if baseline_ref is None:
             return self._analyze(log_ref, thresholds)

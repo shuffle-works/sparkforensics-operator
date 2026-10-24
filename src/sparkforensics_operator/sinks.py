@@ -17,8 +17,13 @@ def persist(report_json: dict, report_dest: str, aws_conn_id: str | None = None)
     (NFS gateway / WebHDFS FUSE mount), same approach as
     FilesystemLogSourceHook. aws_conn_id targets a non-default Airflow AWS
     connection for the s3:// case; ignored otherwise."""
+    return persist_text(json.dumps(report_json, indent=2), report_dest, aws_conn_id)
+
+
+def persist_text(payload: str, report_dest: str, aws_conn_id: str | None = None) -> str:
+    """persist() for text that is not the JSON report, such as the Markdown
+    report: the same destinations, the same atomic local write."""
     parsed = urlparse(report_dest)
-    payload = json.dumps(report_json, indent=2)
 
     if parsed.scheme in ("", "file"):
         if parsed.scheme == "file":

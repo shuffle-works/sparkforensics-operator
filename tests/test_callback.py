@@ -45,6 +45,7 @@ def test_callback_factory_accepts_threshold_kwargs_matching_the_operator(tmp_pat
         "max_regression_pct": None, "regression_metric": None, "fail_on_introduced": None,
         "regression_budgets": None, "stage_regression_budgets": None, "stage_qualities": None,
         "normalize_path": None, "ignore_conf": None, "noise_band_pct": None, "redact": False,
+        "markdown": False,
     })
 
 

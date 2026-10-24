@@ -54,6 +54,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `markdown_dest` persists the CLI's Markdown report next to the JSON report,
+  to the same kinds of destination, on `SparkForensicsOperator` and
+  `spark_forensics_callback`. The CLI writes one format per run, so the
+  backend runs it a second time with `--format md` (and the same baseline,
+  comparison tuning and `redact`, without the budget flags), in a deferred
+  run inside the same remote job; the analysis takes about twice as long.
+  `Report.markdown` holds the text, `markdown_destination` in the summary
+  XCom its destination, and `AnalyzeHook.supports_markdown` says which
+  backends write it. `sinks.persist_text()` writes any text the way
+  `persist()` writes the report.
 - `redact=True` passes `--redact` to the CLI, on `SparkForensicsOperator`
   and `spark_forensics_callback`: the persisted report, the summary XCom's
   `app_name` and the default notification message carry the CLI's

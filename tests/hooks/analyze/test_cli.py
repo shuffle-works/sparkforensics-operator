@@ -6,7 +6,12 @@ import pytest
 from airflow.exceptions import AirflowException, AirflowFailException
 
 from sparkforensics_operator.exceptions import CliConfigurationError, CliError, HistoryServerFetchError
-from sparkforensics_operator.hooks.analyze._cli import build_cli_args, build_report, check_exit_code
+from sparkforensics_operator.hooks.analyze._cli import (
+    build_cli_args,
+    build_report,
+    check_exit_code,
+    check_markdown_exit_code,
+)
 from sparkforensics_operator.log_ref import HistoryServerApp, LocalEventLog, RemoteEventLog
 
 # What the CLI writes to stderr after the message of a usage error.
@@ -115,6 +120,41 @@ def test_build_cli_args_passes_the_comparison_tuning_flags():
         "--normalize-path", "/out/run-\\d+", "--normalize-path", "tmp[0-9a-f]+",
         "--ignore-conf", "^spark\\.app\\.", "--ignore-conf", "output",
     ]
+
+
+def test_build_cli_args_writes_the_markdown_run_without_the_budget_flags():
+    args = build_cli_args(
+        "sparkforensics-analyze", LocalEventLog(Path("/tmp/app-2.log")),
+        {
+            "max_runtime_ms": 1000, "max_regression_pct": 20, "regression_budgets": {"gcTime": 10},
+            "fail_on_introduced": "critical", "stage_regression_budgets": {"executorRunTime": 30},
+            "stage_qualities": ["exact"], "noise_band_pct": 5, "normalize_path": ["/out/\\d+"],
+            "ignore_conf": ["output"], "redact": True, "markdown": True,
+        },
+        out_path=Path("/tmp/report.md"),
+        baseline_ref=LocalEventLog(Path("/tmp/app-1.log")),
+        markdown=True,
+    )
+
+    assert args == [
+        "sparkforensics-analyze", "/tmp/app-2.log", "--format", "md", "--baseline", "/tmp/app-1.log",
+        "--out", "/tmp/report.md", "--noise-band-pct", "5", "--normalize-path", "/out/\\d+",
+        "--ignore-conf", "output", "--redact",
+    ]
+
+
+def test_build_cli_args_writes_the_json_run_with_every_flag_when_markdown_is_wanted():
+    args = build_cli_args(
+        "sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {"max_runtime_ms": 1000, "markdown": True},
+    )
+
+    assert args == ["sparkforensics-analyze", "/tmp/app.log", "--format", "json", "--max-runtime", "1000"]
+
+
+def test_the_markdown_run_exit_code_check_names_that_run():
+    check_markdown_exit_code(3, "")
+    with pytest.raises(CliError, match=r"sparkforensics-analyze on the SSH host \(Markdown report\) exited with unexpected code 137"):
+        check_markdown_exit_code(137, "Killed", " on the SSH host")
 
 
 def test_build_cli_args_passes_redact_as_a_switch():

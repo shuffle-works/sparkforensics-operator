@@ -97,6 +97,17 @@ option](configuration.md#minimum-cli-version-per-option)). Upgrade it with
 `npm install -g sparkforensics-cli`. A report with no CLI version comes
 from a CLI before 0.8.0.
 
+#### "sparkforensics-analyze (Markdown report) exited with unexpected code ..." or "... did not report how its Markdown report run ended" or "... wrote no Markdown report"
+
+`markdown_dest` makes the backend run the CLI a second time with
+`--format md`, after the JSON run produced its report. This second run
+failed. The message names the same causes as the JSON run's (an OOM kill,
+a timeout past `timeout`, a missing host), with "(Markdown report)" after
+`sparkforensics-analyze`. The JSON report was read, so the failure is in
+the second run alone: look at the host's memory and at `timeout`, which
+bounds each run. The two runs read the same log, so a log that parses the
+first time rarely fails the second except for such resource limits.
+
 #### "sparkforensics-analyze exited with unexpected code {returncode}"
 
 The CLI exited with a code other than 0 to 6, for example after an OOM
@@ -343,6 +354,12 @@ a baseline, and `regression_metric` only picks the metric
 expression each, not a single string. `noise_band_pct` is a percent from 0
 to 100. A pattern the CLI cannot compile fails the task instead, with
 the CLI's message in the exit 2 error described above.
+
+#### `ValueError: ... cannot write a Markdown report` at DAG parse
+
+`markdown_dest` is set with a backend that does not produce the Markdown
+report. `SubprocessAnalyzeHook` and `SSHAnalyzeHook` do. A custom backend
+needs `supports_markdown = True` and has to set `Report.markdown`.
 
 #### `ValueError: ... is budgeted twice` or "regression_budgets[...] must be a non-negative number" at DAG parse
 

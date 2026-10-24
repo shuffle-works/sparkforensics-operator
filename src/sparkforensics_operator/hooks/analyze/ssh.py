@@ -12,7 +12,7 @@ from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, Remot
 from sparkforensics_operator.report import Report
 
 from . import _remote_job
-from ._cli import USABLE_REPORT_EXIT_CODES, build_report, check_exit_code
+from ._cli import USABLE_REPORT_EXIT_CODES, build_report, check_exit_code, check_markdown_exit_code
 from .base import DeferrableAnalyzeHook
 
 # POSIX shells exit 127 for "command not found" and 126 for "found but not
@@ -57,10 +57,12 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
     remote_base_dir/<task instance>/), the task defers on the provider's
     SSHRemoteJobTrigger, polled every poll_interval seconds, and resumes to
     read the report file back. remote_base_dir defaults to
-    $HOME/.sparkforensics/jobs of the SSH user."""
+    $HOME/.sparkforensics/jobs of the SSH user. When the Markdown report is
+    wanted, a second CLI run with `--format md` on that host writes it."""
 
     supported_log_refs = (RemoteEventLog, HistoryServerApp)
     supported_baseline_refs = (RemoteEventLog, HistoryServerApp)
+    supports_markdown = True
     template_fields = ("ssh_conn_id", "analyze_bin", "remote_base_dir")
 
     def __init__(
@@ -132,12 +134,37 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         # Closing a non-PTY channel doesn't signal the remote process, so
         # coreutils `timeout` bounds it on the host itself, and the command
         # reports its pid on the channel so on_kill() can stop it.
-        argv = _remote_job.sync_cli_argv(
-            self.analyze_bin, log_ref, thresholds, self.timeout, baseline_ref=baseline_ref
+        returncode, stdout, stderr = self._run_cli(
+            _remote_job.sync_cli_argv(
+                self.analyze_bin, log_ref, thresholds, self.timeout, baseline_ref=baseline_ref
+            ),
+            log_ref,
         )
+        report = _report_from_run(
+            returncode, stdout, stderr, log_ref, thresholds,
+            ssh_conn_id=self.ssh_conn_id, analyze_bin=self.analyze_bin, timeout=self.timeout,
+        )
+        if thresholds.get("markdown"):
+            # The CLI writes one format per run, so the Markdown report is a
+            # second run over the same log.
+            returncode, stdout, stderr = self._run_cli(
+                _remote_job.sync_cli_argv(
+                    self.analyze_bin, log_ref, thresholds, self.timeout,
+                    baseline_ref=baseline_ref, markdown=True,
+                ),
+                log_ref,
+            )
+            report.markdown = _markdown_from_run(
+                returncode, stdout, stderr, log_ref, ssh_conn_id=self.ssh_conn_id, timeout=self.timeout
+            )
+        return report
+
+    def _run_cli(self, argv: list[str], log_ref: EventLogRef) -> tuple[int, str, str]:
+        """Runs argv on the host and returns (exit status, stdout, stderr),
+        keeping the run where on_kill() can stop it until it is over."""
         self._sync_argv = argv
         try:
-            returncode, stdout, stderr = self._run_remote(_remote_job.sync_analysis_command(argv), log_ref)
+            result = self._run_remote(_remote_job.sync_analysis_command(argv), log_ref)
         except AirflowTaskTimeout:
             # The task runner calls on_kill() after it, which needs the run.
             # Older Airflow 2 releases make it an Exception, not a BaseException.
@@ -146,10 +173,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
             self._clear_sync_run()
             raise
         self._clear_sync_run()
-        return _report_from_run(
-            returncode, stdout, stderr, log_ref, thresholds,
-            ssh_conn_id=self.ssh_conn_id, analyze_bin=self.analyze_bin, timeout=self.timeout,
-        )
+        return result
 
     def _run_remote(self, command: str, log_ref: EventLogRef) -> tuple[int, str, str]:
         """Returns (exit status, stdout, stderr). Reads the channel directly
@@ -228,9 +252,12 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
                 ) from e
             report_file = f"{scope_dir}/{job_id}/{_remote_job.REPORT_FILE_NAME}"
             stderr_file = f"{scope_dir}/{job_id}/{_remote_job.STDERR_FILE_NAME}"
+            markdown_paths = (
+                _remote_job.markdown_paths(f"{scope_dir}/{job_id}") if thresholds.get("markdown") else None
+            )
             command = _remote_job.analysis_command(
                 self.analyze_bin, log_ref, thresholds, self.timeout, report_file, stderr_file,
-                baseline_ref=baseline_ref,
+                baseline_ref=baseline_ref, markdown_paths=markdown_paths,
             )
             submit, paths = _remote_job.submit_command(command, job_id, scope_dir)
             self._checked(client, submit, "submitting the remote analysis job")
@@ -247,6 +274,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
             "scope_dir": scope_dir,
             "submitted_at": time.time(),
             **paths,
+            **(markdown_paths or {}),
         }
 
     def trigger_for(self, job: dict) -> Any:
@@ -284,6 +312,7 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
                 f"job {job['job_id']} while waiting for it: {event.get('message', 'unknown error')}"
             )
 
+        markdown_run = None
         with self._job_connection("reading the remote analysis result", ssh_conn_id) as client:
             try:
                 stderr = self._read_file(client, job["stderr_file"]) or ""
@@ -296,12 +325,33 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
                             job["job_id"], exit_code, job["report_file"],
                         )
                         report_text = ""
+                    elif "markdown_file" in job:
+                        markdown_run = self._read_markdown_run(client, job)
             finally:
                 # Read first, then clean up, on success and on failure alike.
                 self._cleanup_job(client, job)
-        return _report_from_run(
+        report = _report_from_run(
             exit_code, report_text, stderr, log_ref, thresholds,
             ssh_conn_id=ssh_conn_id, analyze_bin=job["analyze_bin"], timeout=job["timeout"],
+        )
+        if markdown_run is not None:
+            report.markdown = _markdown_from_run(
+                *markdown_run, log_ref, ssh_conn_id=ssh_conn_id, timeout=job["timeout"]
+            )
+        return report
+
+    def _read_markdown_run(self, client, job: dict) -> tuple[int | None, str | None, str]:
+        """What the job's Markdown run left: its exit code (None when it
+        never wrote one), its report (None when it wrote none) and stderr."""
+        exit_code_text = self._read_file(client, job["markdown_exit_file"])
+        try:
+            markdown_exit_code = int((exit_code_text or "").strip())
+        except ValueError:
+            markdown_exit_code = None
+        return (
+            markdown_exit_code,
+            self._read_file(client, job["markdown_file"]),
+            self._read_file(client, job["markdown_stderr_file"]) or "",
         )
 
     def abandon(self, context: Any, job: dict | None = None) -> None:
@@ -455,6 +505,36 @@ def _timeout_error(timeout: int, ssh_conn_id: str, log_ref: EventLogRef) -> Airf
         f"sparkforensics-analyze timed out after {timeout}s"
         f"{_where(ssh_conn_id)} analyzing {log_ref.describe()}."
     )
+
+
+def _markdown_from_run(
+    returncode: int | None,
+    markdown: str | None,
+    stderr: str,
+    log_ref: EventLogRef,
+    *,
+    ssh_conn_id: str,
+    timeout: int,
+) -> str:
+    """The one mapping from the Markdown run's outcome to its report or an
+    error, shared by the synchronous and the deferrable path. returncode is
+    None for a deferred run that left no exit code, and markdown None for
+    one that left no report."""
+    where = _where(ssh_conn_id)
+    if returncode == _REMOTE_TIMEOUT_EXIT_CODE:
+        raise _timeout_error(timeout, ssh_conn_id, log_ref)
+    if returncode is None:
+        raise AirflowException(
+            f"sparkforensics-analyze{where} did not report how its Markdown report run "
+            f"ended: {stderr.strip()}"
+        )
+    check_markdown_exit_code(returncode, stderr, where)
+    if markdown is None:
+        raise AirflowException(
+            f"sparkforensics-analyze{where} exited {returncode} but wrote no Markdown report: "
+            f"{stderr.strip()}"
+        )
+    return markdown
 
 
 def _report_from_run(

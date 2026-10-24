@@ -38,6 +38,7 @@ def _report(*threshold_results, exit_code=0):
 
 class FakeDeferrableHook(DeferrableAnalyzeHook):
     supported_log_refs = (RemoteEventLog, HistoryServerApp)
+    supports_markdown = True
 
     def __init__(self, report=None):
         super().__init__()
@@ -648,3 +649,28 @@ def test_regression_budgets_cross_the_deferral_and_reach_the_summary(tmp_path):
     assert kwargs["thresholds"]["stage_qualities"] == ["exact"]
     budgets_summary = ti.xcoms["sparkforensics_summary"]["comparison"]["budgets"]
     assert [(b["metric"], b["verdict"], b["regression_pct"]) for b in budgets_summary] == [("gcTime", "regression", 50.0)]
+
+
+def test_markdown_dest_crosses_the_deferral_with_the_resume_kwargs_only_when_set(tmp_path):
+    without = _defer(_operator(FakeDeferrableHook(), tmp_path))
+    with_markdown = _defer(_operator(FakeDeferrableHook(), tmp_path, markdown_dest=str(tmp_path / "report.md")))
+
+    assert "markdown_dest" not in without.kwargs
+    assert with_markdown.kwargs["markdown_dest"] == str(tmp_path / "report.md")
+    assert with_markdown.kwargs["thresholds"]["markdown"] is True
+
+
+@needs_resume_execution
+def test_resume_persists_the_markdown_report_the_backend_collected(tmp_path):
+    report = _report()
+    report.markdown = "# Report"
+    first = _operator(FakeDeferrableHook(), tmp_path, markdown_dest=str(tmp_path / "report.md"))
+    kwargs = _serialize_round_trip(_defer(first).kwargs)
+    fresh = _operator(FakeDeferrableHook(report), tmp_path, markdown_dest=str(tmp_path / "other.md"))
+    ti = _TI()
+
+    fresh.resume_execution("execute_complete", {"event": _event(), **kwargs}, {"ti": ti})
+
+    assert (tmp_path / "report.md").read_text() == "# Report"
+    assert not (tmp_path / "other.md").exists()
+    assert ti.xcoms["sparkforensics_summary"]["markdown_destination"] == str(tmp_path / "report.md")

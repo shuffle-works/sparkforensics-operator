@@ -24,10 +24,15 @@ from typing import Any
 from sparkforensics_operator._compat import AIRFLOW_V3_PLUS, conf
 from sparkforensics_operator.log_ref import EventLogRef
 
-from ._cli import build_cli_args
+from ._cli import USABLE_REPORT_EXIT_CODES, build_cli_args
 
 REPORT_FILE_NAME = "report.json"
 STDERR_FILE_NAME = "stderr.log"
+# The Markdown report's run writes these next to the JSON report's: the
+# report, its stderr and its exit code.
+MARKDOWN_FILE_NAME = "report.md"
+MARKDOWN_STDERR_FILE_NAME = "markdown-stderr.log"
+MARKDOWN_EXIT_CODE_FILE_NAME = "markdown-exit-code"
 
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9]")
 # The provider's wrapper splices the job's paths into a double-quoted string
@@ -170,12 +175,18 @@ def analysis_command(
     report_file: str,
     stderr_file: str,
     baseline_ref: EventLogRef | None = None,
+    markdown_paths: dict[str, str] | None = None,
 ) -> str:
     """The command the job runs: the same CLI invocation as the synchronous
     path, under the same coreutils `timeout`, writing the report to
     report_file instead of stdout. stderr, where the threshold lines are,
     goes to its own file: the provider's wrapper merges stdout and stderr
-    into its log file, and the report is never parsed from that log."""
+    into its log file, and the report is never parsed from that log.
+
+    With markdown_paths (the markdown_file, markdown_stderr_file and
+    markdown_exit_file of the job), a second run writes the Markdown report
+    when the first produced a report. Its stderr and exit code go to files of
+    their own, and the command's own exit code stays the first run's."""
     cli = shlex.join(
         [
             "timeout",
@@ -186,7 +197,33 @@ def analysis_command(
             ),
         ]
     )
-    return f"{{ {cli} 2>{shlex.quote(stderr_file)}; }}"
+    if markdown_paths is None:
+        return f"{{ {cli} 2>{shlex.quote(stderr_file)}; }}"
+    markdown_cli = shlex.join(
+        [
+            "timeout",
+            str(timeout),
+            *build_cli_args(
+                analyze_bin, log_ref, thresholds, out_path=PurePosixPath(markdown_paths["markdown_file"]),
+                baseline_ref=baseline_ref, markdown=True,
+            ),
+        ]
+    )
+    usable = "|".join(str(code) for code in sorted(USABLE_REPORT_EXIT_CODES))
+    return (
+        f"{{ {cli} 2>{shlex.quote(stderr_file)}; rc=$?; "
+        f'case "$rc" in {usable}) {markdown_cli} 2>{shlex.quote(markdown_paths["markdown_stderr_file"])}; '
+        f'echo "$?" >{shlex.quote(markdown_paths["markdown_exit_file"])};; esac; (exit "$rc"); }}'
+    )
+
+
+def markdown_paths(job_dir: str) -> dict[str, str]:
+    """Where a job's Markdown run writes its report, stderr and exit code."""
+    return {
+        "markdown_file": f"{job_dir}/{MARKDOWN_FILE_NAME}",
+        "markdown_stderr_file": f"{job_dir}/{MARKDOWN_STDERR_FILE_NAME}",
+        "markdown_exit_file": f"{job_dir}/{MARKDOWN_EXIT_CODE_FILE_NAME}",
+    }
 
 
 SYNC_PID_MARKER = "sparkforensics-pid:"
@@ -222,11 +259,13 @@ def sync_cli_argv(
     thresholds: dict,
     timeout: int,
     baseline_ref: EventLogRef | None = None,
+    markdown: bool = False,
 ) -> list[str]:
-    """The synchronous path's CLI invocation, writing the report to stdout."""
+    """The synchronous path's CLI invocation, writing the report (the JSON
+    one, or with markdown=True the Markdown one) to stdout."""
     return [
         "timeout", str(timeout),
-        *build_cli_args(analyze_bin, log_ref, thresholds, baseline_ref=baseline_ref),
+        *build_cli_args(analyze_bin, log_ref, thresholds, baseline_ref=baseline_ref, markdown=markdown),
     ]
 
 

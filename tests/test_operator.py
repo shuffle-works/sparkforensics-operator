@@ -806,3 +806,94 @@ def test_a_report_built_by_hand_persists_the_sections_the_operator_reads(tmp_pat
         "recommendations", "cleanChecks", "notRunChecks", "thresholdResults",
     }
     assert persisted["thresholdResults"] == [{"name": "max-runtime", "status": "violation", "detail": "too slow"}]
+
+
+def _markdown_report(markdown="# Report\n"):
+    report = _report()
+    report.markdown = markdown
+    return report
+
+
+def test_markdown_dest_persists_the_markdown_report_next_to_the_json_one(tmp_path):
+    log_source, backend = _fixtures(tmp_path, _markdown_report())
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=log_source, backend=backend,
+        report_dest=str(tmp_path / "report.json"), markdown_dest=str(tmp_path / "report.md"),
+    )
+    ti = MagicMock()
+
+    destination = op.execute({"ti": ti})
+
+    assert destination == str(tmp_path / "report.json")
+    assert (tmp_path / "report.md").read_text() == "# Report\n"
+    assert json.loads((tmp_path / "report.json").read_text())["schemaVersion"] == 3
+    assert backend.analyze.call_args.args[1]["markdown"] is True
+    summary = {c.kwargs["key"]: c.kwargs["value"] for c in ti.xcom_push.call_args_list}["sparkforensics_summary"]
+    assert summary["markdown_destination"] == str(tmp_path / "report.md")
+
+
+def test_without_markdown_dest_the_backend_is_not_asked_for_markdown_and_the_summary_has_no_markdown_key(tmp_path):
+    log_source, backend = _fixtures(tmp_path, _report())
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=log_source, backend=backend, report_dest=str(tmp_path / "report.json"),
+    )
+    ti = MagicMock()
+
+    op.execute({"ti": ti})
+
+    assert backend.analyze.call_args.args[1]["markdown"] is False
+    summary = {c.kwargs["key"]: c.kwargs["value"] for c in ti.xcom_push.call_args_list}["sparkforensics_summary"]
+    assert "markdown_destination" not in summary
+    assert list(tmp_path.glob("*.md")) == []
+
+
+def test_markdown_dest_with_a_backend_that_returned_no_markdown_fails_after_the_json_report(tmp_path):
+    log_source, backend = _fixtures(tmp_path, _report())
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=log_source, backend=backend,
+        report_dest=str(tmp_path / "report.json"), markdown_dest=str(tmp_path / "report.md"),
+    )
+
+    with pytest.raises(AirflowException, match="markdown_dest is set, but the backend returned no Markdown report"):
+        op.execute({})
+
+    assert (tmp_path / "report.json").exists()
+    assert not (tmp_path / "report.md").exists()
+
+
+def test_markdown_dest_is_a_template_field():
+    assert "markdown_dest" in SparkForensicsOperator.template_fields
+
+
+def test_operator_rejects_markdown_dest_for_a_backend_that_cannot_write_markdown():
+    from sparkforensics_operator.hooks.analyze.base import AnalyzeHook
+
+    class _NoMarkdown(AnalyzeHook):
+        supported_log_refs = (LocalEventLog,)
+
+        def _analyze(self, log_ref, thresholds):
+            return None
+
+    with pytest.raises(ValueError, match="_NoMarkdown cannot write a Markdown report"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=_NoMarkdown(), report_dest="/tmp/r.json",
+            markdown_dest="/tmp/r.md",
+        )
+    SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=_NoMarkdown(), report_dest="/tmp/r.json",
+    )
+
+
+def test_a_breach_still_persists_the_markdown_report(tmp_path):
+    report = _markdown_report()
+    report.threshold_results = [ThresholdResult("max-runtime", "violation", "too slow")]
+    log_source, backend = _fixtures(tmp_path, report)
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=log_source, backend=backend,
+        report_dest=str(tmp_path / "report.json"), markdown_dest=str(tmp_path / "report.md"),
+    )
+
+    with pytest.raises(ThresholdBreached):
+        op.execute({})
+
+    assert (tmp_path / "report.md").read_text() == "# Report\n"

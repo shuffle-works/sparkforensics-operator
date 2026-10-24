@@ -499,6 +499,51 @@ def test_analyze_passes_a_history_server_baseline_as_the_baseline_flags(host):
     assert report.comparison == comparison
 
 
+@needs_posix_host
+def test_analyze_runs_the_cli_a_second_time_on_the_host_for_the_markdown_report(host):
+    host.fake_cli(f"""\
+        printf '%s\\n' "$*" >> "$HOME/argv.log"
+        case " $* " in
+          *" --format md "*) printf '%s' '# Report'; exit 3 ;;
+        esac
+        printf '%s' '{json.dumps(SAMPLE_JSON)}'
+        echo '[violation] max-runtime: Runtime 2ms exceeds budget 1ms.' >&2
+        exit 1
+    """)
+    hook = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=60)
+
+    report = hook.analyze(
+        RemoteEventLog("onprem_ssh", "/logs/app-1"), {"max_runtime_ms": 1, "markdown": True, "redact": True}
+    )
+
+    assert report.markdown == "# Report"
+    assert report.exit_code == 1
+    assert [(r.name, r.status) for r in report.threshold_results] == [("max-runtime", "violation")]
+    json_call, markdown_call = (host.home / "argv.log").read_text().splitlines()
+    assert "--format json" in json_call and "--max-runtime 1" in json_call
+    assert "--format md" in markdown_call and "--max-runtime" not in markdown_call
+    assert "--redact" in markdown_call
+
+
+@needs_posix_host
+def test_analyze_does_not_run_the_markdown_cli_when_markdown_is_not_wanted(host):
+    host.fake_cli(f"""\
+        printf '%s\\n' "$*" >> "$HOME/argv.log"
+        printf '%s' '{json.dumps(SAMPLE_JSON)}'
+    """)
+
+    report = SSHAnalyzeHook(ssh_conn_id="onprem_ssh", timeout=60).analyze(
+        RemoteEventLog("onprem_ssh", "/logs/app-1"), {"markdown": False}
+    )
+
+    assert report.markdown is None
+    assert len((host.home / "argv.log").read_text().splitlines()) == 1
+
+
+def test_the_ssh_backend_writes_markdown():
+    assert SSHAnalyzeHook.supports_markdown is True
+
+
 @pytest.mark.parametrize("baseline, error", [
     (RemoteEventLog("other_ssh", "/logs/app-1"), "baseline on a different SSH host"),
     (LocalEventLog("/tmp/app-1.log"), "cannot use LocalEventLog.*reads a baseline only as RemoteEventLog"),

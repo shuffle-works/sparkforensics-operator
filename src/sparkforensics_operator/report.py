@@ -113,6 +113,9 @@ class Report:
     # comparison section), so what the operator does not read by name is
     # still persisted. None for a report built by hand.
     raw: dict | None = None
+    # The CLI's Markdown report, set by a backend asked to write one
+    # (markdown_dest on the operator) and None otherwise.
+    markdown: str | None = None
 
     @property
     def verdict_title(self) -> str | None:

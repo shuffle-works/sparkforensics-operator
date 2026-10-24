@@ -81,22 +81,33 @@ _HISTORY_SERVER_FAILURES = (
 )
 
 
+# The settings that shape the CLI's report rather than budget it: the run that
+# writes the Markdown report takes these and none of the budget flags.
+_REPORT_SHAPING_KEYS = ("normalize_path", "ignore_conf", "noise_band_pct", "redact")
+
+
 def build_cli_args(
     analyze_bin: str,
     log_ref: EventLogRef,
     thresholds: dict,
     out_path: PurePath | None = None,
     baseline_ref: EventLogRef | None = None,
+    markdown: bool = False,
 ) -> list[str]:
-    """Without out_path the CLI writes the JSON report to stdout. baseline_ref,
+    """Without out_path the CLI writes its report to stdout. baseline_ref,
     if given, is the run to compare against (--baseline, or the
     --baseline-shs-* flags for a History Server application) that the
-    backend has already checked it can read."""
-    args = [analyze_bin, *_log_ref_args(log_ref), "--format", "json"]
+    backend has already checked it can read. The report is JSON, or with
+    markdown=True the Markdown report, which the CLI cannot write in the
+    same run: that run has no budget flags, so it prints no threshold
+    lines."""
+    args = [analyze_bin, *_log_ref_args(log_ref), "--format", "md" if markdown else "json"]
     if baseline_ref is not None:
         args.extend(_baseline_args(baseline_ref))
     if out_path is not None:
         args.extend(["--out", str(out_path)])
+    if markdown:
+        thresholds = {key: thresholds.get(key) for key in _REPORT_SHAPING_KEYS}
     args.extend(_threshold_args(thresholds))
     return args
 
@@ -196,6 +207,13 @@ def cli_error_for_exit_code(returncode: int, stderr: str, where: str = "") -> Cl
             )
         return CliConfigurationError(message, returncode)
     return CliError(message, returncode)
+
+
+def check_markdown_exit_code(returncode: int, stderr: str, where: str = "") -> None:
+    """check_exit_code for the run that writes the Markdown report, whose
+    error names that run, since the JSON run before it succeeded."""
+    if returncode not in USABLE_REPORT_EXIT_CODES:
+        raise cli_error_for_exit_code(returncode, stderr, f"{where} (Markdown report)")
 
 
 def _cli_message(stderr: str) -> str:

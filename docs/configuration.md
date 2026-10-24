@@ -52,6 +52,7 @@ SparkForensicsOperator(
     ignore_conf: Sequence[str] | None = None,
     noise_band_pct: float | None = None,
     redact: bool = False,                                      # see "Redacting the report"
+    markdown_dest: str | None = None,                          # see "Markdown report"
     **base_operator_kwargs,
 )
 ```
@@ -68,9 +69,10 @@ All arguments are keyword-only.
   nothing. Any other value raises `ValueError` when the DAG is parsed.
 - `notifier` is an optional [Notifier](#notifier).
 
-`template_fields` is `("report_dest", "log_source", "backend",
-"baseline_log_source")`: Airflow renders `report_dest` and every
-[templated hook argument](#templated-hook-arguments) before `execute()`.
+`template_fields` is `("report_dest", "markdown_dest", "log_source",
+"backend", "baseline_log_source")`: Airflow renders `report_dest`,
+`markdown_dest` and every [templated hook
+argument](#templated-hook-arguments) before `execute()`.
 
 The operator returns the destination it persisted the report to, which
 Airflow pushes to XCom as `return_value`. See
@@ -245,6 +247,38 @@ failure under `redact` carries a generic message ("The candidate could not
 be read or parsed.") without the CLI's reason, so the exit 4 and 5 causes
 of [Troubleshooting](troubleshooting.md#error-messages) are not told apart
 by their message then. `redact` defaults to `False` and needs no baseline.
+
+### Markdown report
+
+`markdown_dest` is where the CLI's Markdown report is written, next to the
+JSON report at `report_dest`. It takes the same destinations (a local path,
+`file://`, `s3://`, with `aws_conn_id` for S3) and is Jinja-templated like
+`report_dest`. Left unset, no Markdown report is produced and the CLI runs
+once.
+
+```python
+SparkForensicsOperator(
+    ...,
+    report_dest="s3://reports/{{ run_id }}/report.json",
+    markdown_dest="s3://reports/{{ run_id }}/report.md",
+)
+```
+
+The CLI writes one format per run, so with `markdown_dest` the backend runs
+it a second time with `--format md` over the same log, with the same
+baseline, comparison tuning and `redact`, and none of the budget flags. The
+second run repeats the CLI's parsing, so the analysis takes about twice as
+long, and `timeout` bounds each run. The JSON run decides the task's
+thresholds and exit code. When it produced a report but the Markdown run
+failed (a non-zero exit other than 1 or 3, a timeout, no output), the task
+fails with an error naming "(Markdown report)", after the JSON report was
+read. A deferred run does the same two runs in one remote job.
+
+The Markdown text is `Report.markdown`, available to a `Notifier`, and its
+destination is `markdown_destination` in the [summary XCom](#summary-xcom).
+The persisted JSON report is unchanged. `markdown_dest` needs a backend
+with `supports_markdown = True` (`SubprocessAnalyzeHook` and
+`SSHAnalyzeHook`); any other raises `ValueError` when the DAG is parsed.
 
 ### Killing a task
 
@@ -512,6 +546,11 @@ for an unsupported kind; override it to add checks, as `SSHAnalyzeHook`
 does for the SSH host. Override `on_kill()` to stop a running analysis
 when the task is killed.
 
+A backend that can write the Markdown report sets `supports_markdown =
+True` and returns it as `Report.markdown` whenever `thresholds["markdown"]`
+is true; `markdown_dest` with any other backend raises `ValueError` when the
+DAG is parsed.
+
 A backend declares the reference kinds it can pass as `--baseline` in
 `supported_baseline_refs` (empty by default: no comparison). Such a
 backend's `_analyze()`, and `submit()` for a deferrable one, also take a
@@ -683,7 +722,8 @@ warning and never fails the task, whatever `_send()` raises.
 `summary`, `verdict`, `findings`, `recommendations`, `clean_checks`,
 `not_run_checks` and `threshold_results` (each a
 `ThresholdResult` with `name`, `status` and `detail`), its `exit_code`,
-its `cli_version`, and `violated`/`inconclusive` properties. `raw` holds
+its `cli_version`, its `markdown` (the Markdown report when `markdown_dest`
+is set, else `None`), and `violated`/`inconclusive` properties. `raw` holds
 the CLI's whole report, including the sections the operator does not read
 by name (`metrics`, `effectiveConf`, `writeTargets`, `generator`).
 `verdict_title`, `app_name`, `run_time_ms` and `skipped_lines` read the
@@ -744,6 +784,7 @@ reading the report. It is a dict:
 | `verdict` | the title of the CLI's verdict for the run (for example "Start with Stage 7"), or `None` |
 | `app_name` | the Spark application's name (the CLI's pseudonym under `redact`), or `None` |
 | `run_time_ms` | the application's wall-clock time in milliseconds, or `None` when the log does not say (a run that never finished) |
+| `markdown_destination` | where the Markdown report was persisted; present only with `markdown_dest` |
 | `skipped_lines` | how many event log lines the CLI could not parse (`0` for a clean log), or `None` for a CLI before 0.10.2 |
 | `comparison` | only when a baseline ran: see below |
 

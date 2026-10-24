@@ -119,6 +119,11 @@ def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dic
     CLI."""
     if not isinstance(thresholds.get("redact", False), bool):
         raise ValueError(f"redact must be True or False, got {thresholds['redact']!r}")
+    if thresholds.get("markdown") and isinstance(backend, AnalyzeHook) and not backend.supports_markdown:
+        raise ValueError(
+            f"{type(backend).__name__} cannot write a Markdown report; drop markdown_dest, or "
+            "use SubprocessAnalyzeHook or SSHAnalyzeHook."
+        )
     if baseline_log_source is None:
         orphans = [name for name in COMPARISON_THRESHOLDS if _is_set(thresholds.get(name))]
         if orphans:
@@ -210,11 +215,13 @@ def run_spark_forensics(
     aws_conn_id: str | None = None,
     report_url_template: str | None = None,
     baseline_log_source=None,
+    markdown_dest: str | None = None,
 ) -> str:
     """The one code path shared by SparkForensicsOperator.execute() and the
     spark_forensics_callback() factory. baseline_log_source, if given,
     resolves the run to compare against, the same way log_source resolves
-    the run under analysis."""
+    the run under analysis. markdown_dest, if given, is where the Markdown
+    report goes, and thresholds["markdown"] asks the backend for it."""
     _validate_on_threshold_breach(on_threshold_breach)
     # Where the log is (log_source) and where it is analyzed (backend) are
     # independent: the reference may point at a file the worker fetched, a
@@ -237,6 +244,7 @@ def run_spark_forensics(
             report_url_template=report_url_template,
             regression_metric=thresholds.get("regression_metric"),
             regression_budgets=thresholds.get("regression_budgets"),
+            markdown_dest=markdown_dest,
         )
     finally:
         try:
@@ -286,15 +294,24 @@ def handle_report(
     report_url_template: str | None = None,
     regression_metric: str | None = None,
     regression_budgets: dict | None = None,
+    markdown_dest: str | None = None,
 ) -> str:
-    """Persists the report, logs inconclusive thresholds, pushes the summary
-    XCom (to ti, when there is one), notifies, and applies
-    on_threshold_breach. Shared by run_spark_forensics and the deferrable
+    """Persists the report (and, with markdown_dest, its Markdown report),
+    logs inconclusive thresholds, pushes the summary XCom (to ti, when there
+    is one), notifies, and applies on_threshold_breach. Shared by run_spark_forensics and the deferrable
     operator's resume step, so a deferred run acts on its report exactly as
     a synchronous one does. regression_metric is the comparison metric the
     summary XCom reports on, and the metrics of regression_budgets are listed
     after it, for a report compared against a baseline."""
     destination = sinks.persist(_report_json(report), report_dest, aws_conn_id=aws_conn_id)
+    markdown_destination = None
+    if markdown_dest is not None:
+        if report.markdown is None:
+            raise AirflowException(
+                "markdown_dest is set, but the backend returned no Markdown report; use a backend "
+                "that writes one (SubprocessAnalyzeHook or SSHAnalyzeHook)."
+            )
+        markdown_destination = sinks.persist_text(report.markdown, markdown_dest, aws_conn_id=aws_conn_id)
 
     for result in report.threshold_results:
         if result.status == "inconclusive":
@@ -345,6 +362,7 @@ def handle_report(
                 violated=violated,
                 regression_metric=regression_metric,
                 budgeted_metrics=list(regression_budgets or {}),
+                markdown_destination=markdown_destination,
             ),
         )
 
@@ -400,7 +418,9 @@ class SparkForensicsOperator(BaseOperator):
     also pushes a summary XCom (summary.SUMMARY_XCOM_KEY)."""
 
     operator_extra_links = (ReportLink(),)
-    template_fields: Sequence[str] = ("report_dest", "log_source", "backend", "baseline_log_source")
+    template_fields: Sequence[str] = (
+        "report_dest", "markdown_dest", "log_source", "backend", "baseline_log_source",
+    )
 
     def __init__(
         self,
@@ -429,6 +449,7 @@ class SparkForensicsOperator(BaseOperator):
         ignore_conf: Sequence[str] | None = None,
         noise_band_pct: float | None = None,
         redact: bool = False,
+        markdown_dest: str | None = None,
         **kwargs,
     ):
         thresholds = {
@@ -447,6 +468,7 @@ class SparkForensicsOperator(BaseOperator):
             "ignore_conf": as_list(ignore_conf),
             "noise_band_pct": noise_band_pct,
             "redact": redact,
+            "markdown": markdown_dest is not None,
         }
         # Validate before super().__init__() to avoid DAG registration side effects if construction will fail.
         _validate_on_threshold_breach(on_threshold_breach)
@@ -475,6 +497,7 @@ class SparkForensicsOperator(BaseOperator):
         self.log_source = log_source
         self.backend = backend
         self.report_dest = report_dest
+        self.markdown_dest = markdown_dest
         self.baseline_log_source = baseline_log_source
         self.thresholds = thresholds
         self.on_threshold_breach = on_threshold_breach
@@ -515,6 +538,7 @@ class SparkForensicsOperator(BaseOperator):
                 log_source=self.log_source,
                 backend=self.backend,
                 report_dest=self.report_dest,
+                markdown_dest=self.markdown_dest,
                 thresholds=self.thresholds,
                 on_threshold_breach=self.on_threshold_breach,
                 notifier=self.notifier,
@@ -562,6 +586,8 @@ class SparkForensicsOperator(BaseOperator):
                 "report_dest": self.report_dest,
                 "thresholds": dict(self.thresholds),
             }
+            if self.markdown_dest is not None:
+                resume_kwargs["markdown_dest"] = self.markdown_dest
             if baseline_ref is not None:
                 resume_kwargs["baseline_log_ref"] = log_ref_to_dict(baseline_ref)
             self.defer(
@@ -605,6 +631,7 @@ class SparkForensicsOperator(BaseOperator):
         report_dest: str,
         thresholds: dict,
         baseline_log_ref: dict | None = None,
+        markdown_dest: str | None = None,
     ) -> str:
         """Resumes a deferred run on a worker once the trigger fires: reads
         the report back and acts on it exactly as execute() does."""
@@ -630,6 +657,7 @@ class SparkForensicsOperator(BaseOperator):
                 report_url_template=self.report_url_template,
                 regression_metric=thresholds.get("regression_metric"),
                 regression_budgets=thresholds.get("regression_budgets"),
+                markdown_dest=markdown_dest,
             )
         except ThresholdBreached as breach:
             self._record_persisted(breach.destination)

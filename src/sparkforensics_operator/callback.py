@@ -38,6 +38,7 @@ def spark_forensics_callback(
     ignore_conf: Sequence[str] | None = None,
     noise_band_pct: float | None = None,
     redact: bool = False,
+    markdown_dest: str | None = None,
 ) -> Callable[[dict], None]:
     """Builds an on_success_callback for the upstream Spark task, sharing
     SparkForensicsOperator's exact execute() logic via run_spark_forensics.
@@ -85,6 +86,7 @@ def spark_forensics_callback(
         "ignore_conf": as_list(ignore_conf),
         "noise_band_pct": noise_band_pct,
         "redact": redact,
+        "markdown": markdown_dest is not None,
     }
     validate_comparison_thresholds(baseline_log_source, backend, thresholds)
 
@@ -92,12 +94,15 @@ def spark_forensics_callback(
         ti = context.get("ti")
         run_log_source, run_backend, run_report_dest = copy.copy(log_source), copy.copy(backend), report_dest
         run_baseline_log_source = copy.copy(baseline_log_source)
+        run_markdown_dest = markdown_dest
         task = context.get("task")
         if task is not None:
             renderer = task_renderer(task)
             run_log_source = renderer.render_template(run_log_source, context)
             run_backend = renderer.render_template(run_backend, context)
             run_report_dest = renderer.render_template(run_report_dest, context)
+            if run_markdown_dest is not None:
+                run_markdown_dest = renderer.render_template(run_markdown_dest, context)
             if run_baseline_log_source is not None:
                 run_baseline_log_source = renderer.render_template(run_baseline_log_source, context)
         try:
@@ -106,6 +111,7 @@ def spark_forensics_callback(
                 log_source=run_log_source,
                 backend=run_backend,
                 report_dest=run_report_dest,
+                markdown_dest=run_markdown_dest,
                 thresholds=thresholds,
                 on_threshold_breach=on_threshold_breach,
                 notifier=notifier,

@@ -572,3 +572,126 @@ def test_deferred_run_passes_the_baseline_path_and_reads_the_comparison(host):
     assert host.argv()[:5] == ["/logs/app-1", "--format", "json", "--baseline", "/logs/app-0"]
     assert report.comparison == comparison
     assert [r.name for r in report.threshold_results] == ["max-regression"]
+
+
+def _markdown_cli(host, markdown_body="printf '%s' '# Report' | emit\n"):
+    """A fake CLI whose --format md run runs markdown_body and whose JSON run
+    reports a violation; every call's arguments are appended to argv.log."""
+    indented = "".join(f"            {line}\n" for line in markdown_body.splitlines())
+    host.fake_cli(f"""\
+        printf '%s\\n' "$*" >> "$HOME/argv.log"
+        case " $* " in
+          *" --format md "*)
+{indented}            exit 3 ;;
+        esac
+        printf '%s' '{json.dumps(SAMPLE_JSON)}' | emit
+        echo '[violation] max-spill: 3.1 GB > 2 GB' >&2
+        exit 1
+    """)
+
+
+def _calls(host):
+    return (host.home / "argv.log").read_text().splitlines()
+
+
+def test_deferred_run_writes_the_markdown_report_in_a_second_run_and_keeps_the_first_exit_code(host):
+    _markdown_cli(host)
+    hook = _hook()
+    thresholds = {"max_spill_gb": 2, "markdown": True}
+
+    job, event, collect = _run_deferred(hook, thresholds=thresholds)
+    report = collect()
+
+    assert event["exit_code"] == 1
+    assert report.exit_code == 1
+    assert report.markdown == "# Report"
+    assert [(r.name, r.status) for r in report.threshold_results] == [("max-spill", "violation")]
+    json_call, markdown_call = _calls(host)
+    assert "--format json" in json_call and "--max-spill 2" in json_call
+    assert "--format md" in markdown_call and "--max-spill" not in markdown_call
+    assert markdown_call.split("--out ")[1].split()[0] == job["markdown_file"]
+    assert job["markdown_file"].endswith("/report.md")
+    assert not Path(job["scope_dir"]).exists()
+
+
+def test_deferred_run_without_markdown_runs_the_cli_once_and_records_no_markdown_files(host):
+    _markdown_cli(host)
+    job, _, collect = _run_deferred(_hook(), thresholds={"max_spill_gb": 2})
+
+    report = collect()
+
+    assert report.markdown is None
+    assert len(_calls(host)) == 1
+    assert not any(key.startswith("markdown") for key in job)
+
+
+def test_deferred_run_skips_the_markdown_run_when_the_analysis_failed(host):
+    host.fake_cli("printf '%s\\n' \"$*\" >> \"$HOME/argv.log\"; echo 'bad log' >&2; exit 4\n")
+    _, _, collect = _run_deferred(_hook(), thresholds={"markdown": True})
+
+    with pytest.raises(AirflowException, match=r"\(exit 4, event log\): bad log"):
+        collect()
+
+    assert len(_calls(host)) == 1
+
+
+def test_a_failed_markdown_run_raises_the_same_error_deferred_and_synchronous(host):
+    _markdown_cli(host, "echo boom >&2\nexit 137\n")
+    hook = _hook()
+    thresholds = {"markdown": True}
+    _, _, collect = _run_deferred(hook, thresholds=thresholds)
+
+    with pytest.raises(AirflowException) as deferred:
+        collect()
+    with pytest.raises(AirflowException) as sync:
+        hook.analyze(LOG, thresholds)
+
+    assert "(Markdown report) exited with unexpected code 137: boom" in str(deferred.value)
+    assert str(deferred.value) == str(sync.value)
+
+
+def test_a_markdown_run_that_times_out_raises_the_timeout_error_deferred_and_synchronous(host):
+    _markdown_cli(host, "exit 124\n")
+    hook = _hook(timeout=60)
+    thresholds = {"markdown": True}
+    _, _, collect = _run_deferred(hook, thresholds=thresholds)
+
+    with pytest.raises(AirflowException) as deferred:
+        collect()
+    with pytest.raises(AirflowException) as sync:
+        hook.analyze(LOG, thresholds)
+
+    assert "timed out after 60s" in str(deferred.value)
+    assert str(deferred.value) == str(sync.value)
+
+
+def test_a_markdown_run_that_left_no_exit_code_is_reported_by_the_deferred_run(host):
+    _markdown_cli(host)
+    job, _, collect = _run_deferred(_hook(), thresholds={"markdown": True})
+    Path(job["markdown_exit_file"]).unlink()
+
+    with pytest.raises(AirflowException, match="did not report how its Markdown report run ended"):
+        collect()
+
+
+def test_a_markdown_run_that_wrote_no_report_is_reported_by_the_deferred_run(host):
+    _markdown_cli(host)
+    job, _, collect = _run_deferred(_hook(), thresholds={"markdown": True})
+    Path(job["markdown_file"]).unlink()
+
+    with pytest.raises(AirflowException, match="exited 3 but wrote no Markdown report"):
+        collect()
+
+
+def test_a_deferred_run_passes_the_baseline_and_redact_to_the_markdown_run(host):
+    _markdown_cli(host)
+    hook = _hook()
+    thresholds = {"redact": True, "markdown": True, "noise_band_pct": 5}
+
+    job = hook.submit(LOG, thresholds, ti_context(), baseline_ref=RemoteEventLog(CONN, "/logs/app-0"))
+    event = run_trigger(hook.trigger_for(job))
+    hook.collect(job, event, LOG, thresholds)
+
+    markdown_call = _calls(host)[1]
+    assert "--baseline /logs/app-0" in markdown_call
+    assert "--redact" in markdown_call and "--noise-band-pct 5" in markdown_call

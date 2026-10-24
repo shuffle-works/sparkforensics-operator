@@ -132,7 +132,8 @@ breach that raises still gets a notification out first.
   (a dict of per-metric budgets becomes one `--regression-budget` or
   `--stage-regression-budget <metric>:<pct>` each), the comparison tuning
   flags (`--normalize-path` and `--ignore-conf` once per pattern,
-  `--noise-band-pct`), the `--redact` switch, exit-code
+  `--noise-band-pct`), the `--redact` switch, the Markdown run (below),
+  exit-code
   handling, and building the `Report` from the JSON report and stderr
   threshold lines. Exit codes 0, 1 and 3 carry a report. Every other code
   raises a `CliError` with a message of its own: 2 (usage error), 4
@@ -144,7 +145,16 @@ breach that raises still gets a notification out first.
   not retry it. Backends only differ in how they run the command and
   collect its output.
 - `hooks/analyze/subprocess.py`, `SubprocessAnalyzeHook`, runs the CLI on
-  the worker with `--out <tmpfile>`.
+  the worker with `--out <tmpfile>`. The CLI writes one report format per
+  run, so when the operator wants the Markdown report
+  (`thresholds["markdown"]`, set by `markdown_dest`) the backend runs it a
+  second time with `--format md` and none of the budget flags, and sets
+  `Report.markdown` (`AnalyzeHook.supports_markdown`). The first run's
+  report and thresholds decide the outcome; the second run only adds the
+  text. `SSHAnalyzeHook` does the same on the host: a second synchronous
+  run, or, in a deferred job, a second command in the same remote job
+  whose report, stderr and exit code go to their own files, with the job's
+  exit code staying the first run's.
 - `hooks/analyze/ssh.py`, `SSHAnalyzeHook`, runs the CLI on the SSH host
   over `SSHHook` (imported lazily, `ssh` extra) and reads the report from
   stdout, so nothing is written on that host (see "Killing a task" below
@@ -187,7 +197,8 @@ breach that raises still gets a notification out first.
   errors: `CliError` (a CLI exit code with no report, carrying
   `exit_code`), its `HistoryServerFetchError` (retried) and
   `CliConfigurationError` (an `AirflowFailException`, not retried).
-- `sinks.py`, persists the report JSON (local path, `file://`, `s3://`).
+- `sinks.py`, persists the report JSON (local path, `file://`, `s3://`),
+  and, through `persist_text()`, the Markdown report.
   What it persists is the CLI's whole report, kept on `Report.raw`, with
   the operator's `thresholdResults` and the comparison section added, so
   a field the CLI adds reaches the file without a change here;
