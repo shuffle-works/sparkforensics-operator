@@ -9,72 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
-- `sparkforensics-cli` 0.10.2 counts every failed task attempt in
-  `max_failed_task_rate_pct`, including attempts a retry recovered. A job
-  with retried tasks can go from pass to fail on the same log.
-- With 0.10.2, a log with skipped lines gives exit 3 and an inconclusive
-  `parse-incomplete` result when every budget passes. The task does not
-  fail. The result shows in `inconclusive_thresholds`, in the task log and
-  as `skipped_lines` in the summary XCom.
-- The CLI rejects exponent notation in budget values. The operator now
-  passes plain decimals.
-- The operator is tested against `sparkforensics-cli` 0.10.1. See "What the
-  CLI measures, by version" in `docs/configuration.md`.
+- `sparkforensics-cli` 0.10.2 counts every failed task attempt in `max_failed_task_rate_pct`, so a job with retried tasks can fail where it passed.
+- With 0.10.2, a log with skipped lines gives exit 3 and an inconclusive `parse-incomplete` result. The task does not fail; see `skipped_lines` in the summary XCom.
+- The operator is tested against `sparkforensics-cli` 0.10.1.
 
 ### Added
 
-- `markdown_dest` on `SparkForensicsOperator` and `spark_forensics_callback`
-  saves the CLI's Markdown report next to the JSON report. The backend runs
-  the CLI a second time with `--format md`, so the analysis takes about
-  twice as long. Use `Report.markdown`, `markdown_destination` in the summary
-  XCom and `AnalyzeHook.supports_markdown`. `sinks.persist_text()` writes any
-  text the way `persist()` writes the report.
-- `redact=True` passes `--redact`. The saved report, the summary `app_name`
-  and the default notification carry the CLI's pseudonyms.
-- `normalize_path`, `ignore_conf` (lists of regular expressions) and
-  `noise_band_pct` pass `--normalize-path`, `--ignore-conf` and
-  `--noise-band-pct`. They need a baseline. `normalize_path` needs CLI 0.6.0,
-  the other two 0.10.0.
-- `regression_budgets`, `stage_regression_budgets` and `stage_qualities` pass
-  several regression budgets at once. They need a baseline. They need CLI
-  0.5.0 (`regression_budgets`) or 0.7.0 (the stage options).
-- A Spark History Server application can be the baseline on
-  `SubprocessAnalyzeHook` and `SSHAnalyzeHook`, deferrable runs included.
-  This needs CLI 0.10.0 or newer, and the baseline can come from another
-  History Server.
-- The summary XCom has `verdict`, `app_name`, `run_time_ms`, `skipped_lines`
-  and `cli_version` (from `generator.version`). `Report` exposes the same
-  fields. A run analyzed by a CLI older than 0.10.1 logs a warning.
-- `CliError`, `CliConfigurationError` and `HistoryServerFetchError` in
-  `sparkforensics_operator.exceptions`. All carry the CLI exit code as
-  `exit_code`.
+- `markdown_dest` saves the CLI's Markdown report (`--format md`) next to the JSON report. The analysis runs twice.
+- `redact=True` passes `--redact`.
+- `normalize_path`, `ignore_conf` and `noise_band_pct` tune the baseline comparison.
+- `regression_budgets`, `stage_regression_budgets` and `stage_qualities` set several regression budgets at once.
+- A Spark History Server application can be the baseline on `SubprocessAnalyzeHook` and `SSHAnalyzeHook`.
+- The summary XCom has `verdict`, `app_name`, `run_time_ms`, `skipped_lines` and `cli_version`. The default notification names the application, the verdict and the run time.
+- A warning is logged when the CLI is older than the tested version.
+- `CliError`, `CliConfigurationError` and `HistoryServerFetchError` in `sparkforensics_operator.exceptions`.
 
 ### Changed
 
-- Each CLI exit code without a report has its own error message: 2 (usage),
-  4 (unreadable event log or History Server fetch failure), 5 (unreadable
-  baseline) and 6 (internal error). The task still fails on all of them.
-- Airflow does not retry a usage error or a History Server failure that a
-  retry cannot clear (`CliConfigurationError`). It retries one that a retry
-  can clear (`HistoryServerFetchError`).
-- A report with a `schemaVersion` newer than 5 fails the task with
-  `CliConfigurationError`. An older one raises the same exception.
-- The saved report is the CLI's whole JSON report, plus `thresholdResults`
-  and `comparison`. `Report.raw` holds it. `effectiveConf` is masked by the
-  CLI for secret-looking values, and `redact=True` pseudonymizes it.
-- `Report.threshold_results`, `thresholdResults` and the `ThresholdBreached`
-  message keep every result of a threshold that the CLI reports on several
-  lines. The summary lists each name once.
-- `Notifier._default_message()` names the application, the verdict and the
-  run time, and mentions skipped lines. A report without these fields gets
-  the earlier one-line message.
-- `AnalyzeHook.check_baseline_ref()` rejects only a reference kind that the
-  backend does not list in `supported_baseline_refs`.
+- Each CLI exit code without a report (2, 4, 5, 6) has its own error message. The task still fails.
+- Airflow does not retry usage errors, and retries History Server failures that can clear.
+- A report with a newer `schemaVersion` than the operator reads fails the task.
+- The saved report is the CLI's whole JSON report. `Report.raw` holds it.
+- `Report.threshold_results` keeps every result of a threshold the CLI reports on several lines.
 
 ### Fixed
 
-- Thresholds such as `0.00001` or `1e16` reach the CLI as plain decimals.
-  `str()` gave `1e-05`, which the CLI rejects with exit 2.
+- Thresholds such as `0.00001` or `1e16` reach the CLI as plain decimals, not exponent form, which the CLI rejects.
 
 ## [0.3.0] - 2026-09-28
 

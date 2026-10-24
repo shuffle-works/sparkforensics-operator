@@ -153,48 +153,17 @@ check_spark_job = SparkForensicsOperator(
 )
 ```
 
-A baseline can come from any log source whose reference the backend can
-read. With `SubprocessAnalyzeHook`, that is any hook that resolves to a
-`LocalEventLog`: `FilesystemLogSourceHook`, `XComLogSourceHook`,
-`SFTPLogSourceHook` and `HistoryServerLogSourceHook`, which downloads the
-baseline's log from a Spark History Server. With `SSHAnalyzeHook`, it is
-`RemotePathLogSourceHook`, as a `RemoteEventLog` on the backend's own
-`ssh_conn_id`. Both backends also take `HistoryServerAppLogSourceHook`: the
-CLI fetches the baseline from the History Server itself
-(`--baseline-shs-base-url`, `--baseline-app-id` and
-`--baseline-attempt-id`), so its `base_url` must be reachable from where the
-backend runs. It can be a different History Server from the one the log
-under analysis comes from, and either run can be a path while the other is
-a History Server application.
-
-```python
-check_spark_job = SparkForensicsOperator(
-    task_id="check_spark_job",
-    log_source=HistoryServerAppLogSourceHook(base_url="http://shs:18080", app_id="{{ params.app_id }}"),
-    baseline_log_source=HistoryServerAppLogSourceHook(base_url="http://shs:18080", app_id="{{ params.baseline_app_id }}"),
-    backend=SubprocessAnalyzeHook(),
-    report_dest="s3://reports/{{ run_id }}/report.json",
-    max_regression_pct=20,
-)
-```
-
-A baseline that is the log under analysis (the same History Server
-application and attempt), or whose path contains or sits inside it (on the
-same host), fails with `AirflowException` before the CLI runs, since the run
-would be compared against itself. Two `FilesystemLogSourceHook`s or
-`SFTPLogSourceHook`s that share one `dest_dir` for same-named logs hit this,
-so give each its own. `deferrable=True` works too; the resolved baseline crosses
-the deferral with the rest of the resume kwargs.
-
-`max_regression_pct`, `regression_metric`, `fail_on_introduced`,
-`regression_budgets`, `stage_regression_budgets` and `stage_qualities` (see
-[Thresholds](#thresholds)) budget the comparison, and `normalize_path`,
-`ignore_conf` and `noise_band_pct` (see [Tuning the
-comparison](#tuning-the-comparison)) tune it. Without
-`baseline_log_source`, any of them raises `ValueError` when the DAG is
-parsed. A comparison runs even with none of them set: its section is in
-the persisted report under `comparison`, and its outcome in the
-[summary XCom](#summary-xcom).
+A baseline can be any log source the backend can read: a hook that
+resolves to a `LocalEventLog` for `SubprocessAnalyzeHook`, or
+`RemotePathLogSourceHook` on the same `ssh_conn_id` for `SSHAnalyzeHook`.
+Both backends also take `HistoryServerAppLogSourceHook`, which can point at
+a different History Server from the log under analysis. A baseline that is
+the log under analysis fails with `AirflowException`; give each
+`FilesystemLogSourceHook` or `SFTPLogSourceHook` its own `dest_dir`. A
+comparison runs even with no comparison argument set: its section is in the
+persisted report under `comparison` and its outcome in the
+[summary XCom](#summary-xcom). The comparison arguments raise `ValueError`
+at DAG parse without `baseline_log_source`.
 
 ### Tuning the comparison
 
@@ -203,84 +172,36 @@ Three arguments change how the CLI compares the two runs. They need
 
 | argument | CLI flag | effect |
 |---|---|---|
-| `normalize_path` | `--normalize-path <regex>`, once per pattern | each match in a plan node's text is replaced with a fixed token before stages are paired, so run-specific text (an output directory that differs per run) does not keep a stage from pairing. Despite the name it is a general regular expression. It changes stage pairing and the runtime coverage and `confidence` derived from it, never the findings |
-| `ignore_conf` | `--ignore-conf <regex>`, once per pattern | a Spark configuration key that matches is left out of the comparison's configuration check, for keys that differ by design, such as a per-run output path. The CLI always leaves out the per-run identity keys (application id, start time, driver address) |
-| `noise_band_pct` | `--noise-band-pct` | a metric that differs from the baseline by less than this percent (0 to 100, `2` when unset) is marked `withinNoise` in the comparison. It never changes a metric's direction or a budget |
+| `normalize_path` | `--normalize-path <regex>`, once per pattern | replaces each match in a plan node's text with a fixed token before stages are paired, so run-specific text (such as a per-run output directory) does not block pairing |
+| `ignore_conf` | `--ignore-conf <regex>`, once per pattern | leaves a matching Spark configuration key out of the configuration check |
+| `noise_band_pct` | `--noise-band-pct` | marks a metric that differs by less than this percent (0 to 100, `2` when unset) as `withinNoise` |
 
-`normalize_path` and `ignore_conf` are lists of non-empty strings; a bare
-string, an empty string or a number raises `ValueError` when the DAG is
-parsed. The CLI accepts up to 16 patterns of 200 characters each and
-reports a pattern that does not compile, or that matches the empty string,
-as a usage error (exit 2). The patterns are JavaScript regular
-expressions, so a Python-only construct is not valid.
-
-```python
-SparkForensicsOperator(
-    ...,
-    baseline_log_source=...,
-    max_regression_pct=20,
-    normalize_path=[r"/data/out/run-\d+"],
-    ignore_conf=[r"^spark\.myapp\.output\."],
-    noise_band_pct=5,
-)
-```
+`normalize_path` and `ignore_conf` are lists of JavaScript regular
+expressions, for example `normalize_path=[r"/data/out/run-\d+"]`.
 
 ### Redacting the report
 
 `redact=True` passes `--redact`, which makes the CLI replace the
 application id, the application name and every host name and IP address in
 its output with pseudonyms (`app-1`, `host-1`, ...). Use it when the report
-leaves the environment that produced it. What else it covers depends on the
-CLI version (`sparkforensics-analyze --help` lists it for the installed
-one; CLI 0.10.2 and later also replace the host of any URL and the user
-names in URL credentials and home paths). The CLI keeps other paths, table
-names and SQL text as written, so read what it leaves before sharing the
-report. `redact` needs no baseline. Secret-looking values in
-`effectiveConf` are masked with or without it (see [Report
-destinations](#report-destinations)).
-
-The operator persists the CLI's redacted output as it is, and what it
-derives from the report is redacted with it: the summary XCom's `app_name`
-and the default notification message. The operator's own task log lines
-still name the log and the application. A CLI failure under `redact`
-carries a generic message ("The candidate could not be read or parsed.")
-without the CLI's reason, so the exit 4 and 5 causes of
-[Troubleshooting](troubleshooting.md#error-messages) cannot be told apart
-by message.
+leaves the environment that produced it. The CLI keeps other paths, table
+names and SQL text as written. `redact` needs no baseline. The summary XCom's
+`app_name` and the default notification message follow the redacted output.
 
 ### Markdown report
 
 `markdown_dest` is where the CLI's Markdown report is written, next to the
-JSON report at `report_dest`. It takes the same destinations (a local path,
-`file://`, `s3://`, with `aws_conn_id` for S3) and is Jinja-templated like
-`report_dest`. When unset, no Markdown report is produced and the CLI runs
-once.
+JSON report. It takes the same destinations as `report_dest` (see [report
+destinations](#report-destinations)) and is Jinja-templated. When unset, no
+Markdown report is produced.
 
-```python
-SparkForensicsOperator(
-    ...,
-    report_dest="s3://reports/{{ run_id }}/report.json",
-    markdown_dest="s3://reports/{{ run_id }}/report.md",
-)
-```
-
-The CLI writes one format per run, so with `markdown_dest` the backend runs
-it a second time with `--format md` over the same log, with the same
-baseline, comparison tuning and `redact`, and no budget flags. The second
-run parses the log again, so the analysis takes about twice as long, and
-`timeout` bounds each run. The JSON run decides the task's thresholds and
-exit code. If the Markdown run fails (a non-zero exit other than 1 or 3, a
-timeout, no output) after the JSON report was read, the task fails with an
-error naming "(Markdown report)". A deferred run does the same two runs in
-one remote job and waits for both; its deferral allows `timeout` per run,
-plus 120 seconds.
-
-The Markdown text is `Report.markdown`, available to a `Notifier`, and its
-destination is `markdown_destination` in the [summary XCom](#summary-xcom).
-The persisted JSON report is the same with or without it. `markdown_dest`
-needs a backend with `supports_markdown = True` (`SubprocessAnalyzeHook`
-and `SSHAnalyzeHook`); any other raises `ValueError` when the DAG is
-parsed.
+With `markdown_dest`, the backend runs the CLI a second time with
+`--format md`, so the analysis takes about twice as long and `timeout`
+bounds each run. The JSON run decides the thresholds and exit code. The
+Markdown text is `Report.markdown`, and its destination is
+`markdown_destination` in the [summary XCom](#summary-xcom). The backend
+needs `supports_markdown = True` (`SubprocessAnalyzeHook` and
+`SSHAnalyzeHook`).
 
 ### Killing a task
 
@@ -482,35 +403,21 @@ message of its own:
 | 6 | internal error in the CLI | `CliError` | yes |
 | any other | for example an OOM kill (137) | `CliError` | yes |
 
-`CliError`, `CliConfigurationError` and `HistoryServerFetchError` live in
-`sparkforensics_operator.exceptions`. All three are `AirflowException`s
-and carry the CLI's exit code as `exit_code`. `CliConfigurationError` is
-an `AirflowFailException`, so Airflow fails the task without consuming its
-retries, as for `ThresholdBreached`. A missing binary, a timeout, exit 124
-(the SSH host's `timeout`) and exit 126/127 (binary missing or not
-executable on the SSH host) raise their own errors. See
+All three exceptions carry the CLI's exit code as `exit_code`.
+`CliConfigurationError` is an `AirflowFailException`, so Airflow fails the
+task without consuming its retries. A missing binary, a timeout, exit 124
+(the SSH host's `timeout`) and exit 126/127 raise their own errors. See
 [Troubleshooting](troubleshooting.md#error-messages).
 
 ### Minimum CLI version per option
 
-The operator needs `sparkforensics-cli` 0.4.0 or newer for the report
-format. An option passed to a CLI older than the version below makes the
-CLI exit 2 with "Unknown option", which the operator reports as a usage
-error.
-
-The operator is tested against `sparkforensics-cli` 0.10.1
-(`sparkforensics_operator.report.TESTED_CLI_VERSION`). A run analyzed by
-an older CLI logs a warning, as does a report that does not name its CLI
-(before 0.8.0). The CLI version of each run is in the `cli_version` key of
-the [summary XCom](#summary-xcom).
-
-The operator reads report schema 5
-(`sparkforensics_operator.report.MIN_SCHEMA_VERSION` and
-`MAX_SCHEMA_VERSION`). A report with an older schema, or a newer one the
-operator does not know, fails the task with `CliConfigurationError` before
-anything is persisted. The CLI changes `schemaVersion` only for a change
-that can break a reader, and the operator ignores report fields it does not
-read.
+The operator needs `sparkforensics-cli` 0.4.0 or newer. An option passed to
+an older CLI than the table lists makes the CLI exit 2 with "Unknown
+option". The operator is tested against 0.10.1
+(`sparkforensics_operator.report.TESTED_CLI_VERSION`) and logs a warning for
+an older CLI. The CLI version of each run is in `cli_version` of the
+[summary XCom](#summary-xcom). The operator reads report schema 5 and fails
+with `CliConfigurationError` on any other.
 
 | operator feature | minimum `sparkforensics-cli` |
 |---|---|
@@ -524,27 +431,18 @@ read.
 ### What the CLI measures, by version
 
 The CLI evaluates the thresholds, so the same event log can pass on one
-`sparkforensics-cli` release and fail on another. These differences decide
-whether a budget passes:
+`sparkforensics-cli` release and fail on another:
 
 | budget | CLI 0.10.1 and older | CLI 0.10.2 and newer |
 |---|---|---|
-| `max_failed_task_rate_pct` | passes whenever the CLI's job-failure-rate finding is absent, and that finding reports only from a 10% rate, so a budget below 10% is never enforced | failed task attempts over all task attempts, across every stage attempt. An attempt a retry replaced counts as failed, so a run whose jobs all succeeded can violate the budget |
-| `max_spill_gb` | the largest spill among the spill finding's results, which skips a stage shorter than the detector's floor | the largest per-stage memory spill, short stages included |
+| `max_failed_task_rate_pct` | passes whenever the CLI's job-failure-rate finding is absent, and that finding reports only from a 10% rate, so a budget below 10% is never enforced | failed task attempts over all task attempts; an attempt a retry replaced counts as failed |
+| `max_spill_gb` | the largest spill among the spill finding's results, which skips short stages | the largest per-stage memory spill, short stages included |
 | `max_skew_ratio` | peak P95/median ratio, with a stage that has no task-duration median counted as `NaN` | the same ratio over the stages that have a median; a log with none is inconclusive |
 
-A log with corrupt or unparseable lines is analyzed from the lines that
-parsed. With CLI 0.10.2 and newer, the report's `summary.skippedLines`
-counts them (`skipped_lines` in the [summary XCom](#summary-xcom)) and the
-CLI adds an inconclusive `parse-incomplete` result, for the log under
-analysis and for a baseline. A run whose budgets all pass then exits 3, not
-0. The result never fails the task on its own: it is in
-`inconclusive_thresholds`, logged as a warning, and listed in the
-persisted `thresholdResults`. An older CLI gives no such signal.
-
-CLI 0.10.2 and newer refuse a budget value that is empty, negative,
-hexadecimal or in exponent form, and an unknown `fail_on_introduced` band,
-as a usage error (exit 2). The operator passes numbers as plain decimals.
+CLI 0.10.2 and newer count unparseable event log lines in `skipped_lines` of
+the [summary XCom](#summary-xcom) and add an inconclusive `parse-incomplete`
+result, which never fails the task on its own. They also reject a malformed
+budget value as a usage error (exit 2).
 
 ### Job directories
 
@@ -577,9 +475,8 @@ for an unsupported kind; override it to add checks, as `SSHAnalyzeHook`
 does for the SSH host. Override `on_kill()` to stop a running analysis
 when the task is killed.
 
-A backend that can write the Markdown report sets `supports_markdown =
-True` and returns it as `Report.markdown` whenever `thresholds["markdown"]`
-is true (see [Markdown report](#markdown-report)).
+A backend that writes the Markdown report sets `supports_markdown = True`
+and returns it as `Report.markdown` (see [Markdown report](#markdown-report)).
 
 A backend declares the reference kinds it can pass as `--baseline` in
 `supported_baseline_refs` (empty by default: no comparison). Such a
@@ -675,23 +572,19 @@ the evaluation (upstream calls a threshold a "budget"):
 | `stage_regression_budgets` | `--stage-regression-budget <metric>:<pct>`, once per metric | a dict of paired-stage metric name to the percent it may grow in any paired stage |
 | `stage_qualities` | `--stage-quality` | the pair qualities the stage budgets read: a list from `exact`, `structural`, `aligned` (the CLI reads `exact` and `structural` when unset) |
 
-The last six are comparison thresholds, budgets on the difference
-between the run and its baseline (upstream names them `max-regression`,
-`max-stage-regression` and `fail-on-introduced`). They need
-`baseline_log_source`, and `regression_metric` needs `max_regression_pct`,
-as the CLI requires; any other combination, or an unknown
-`fail_on_introduced` band, raises `ValueError` when the DAG is parsed.
-`stage_qualities` needs `stage_regression_budgets`. The CLI validates
-`regression_metric` itself (`wallClock`, `shuffleSpill`, `taskSkew`,
-`failedTaskRate`, `diskSpill`, `gcTime`, `executorRunTime`,
-`executorCpuTime`, `allocatedCoreHours`, and the volume metrics
-`inputBytes`, `outputBytes`, `taskCount`, `executorsAdded`, which it
-reports as inconclusive since they have no regression direction). A
-breach raises `ThresholdBreached` like any other threshold.
+The last six are comparison thresholds. They need `baseline_log_source`;
+`regression_metric` needs `max_regression_pct` and `stage_qualities` needs
+`stage_regression_budgets`. Any other combination raises `ValueError` when
+the DAG is parsed. The CLI validates the metric names (`wallClock`,
+`shuffleSpill`, `taskSkew`, `failedTaskRate`, `diskSpill`, `gcTime`,
+`executorRunTime`, `executorCpuTime`, `allocatedCoreHours`, and the volume
+metrics `inputBytes`, `outputBytes`, `taskCount`, `executorsAdded`, which
+are inconclusive since they have no regression direction). A breach raises
+`ThresholdBreached` like any other threshold.
 
-`max_regression_pct` with `regression_metric` budgets one metric.
-`regression_budgets` budgets as many as you list, each with its own
-percentage, with or without that pair:
+`regression_budgets` budgets several metrics, each with its own percentage.
+A metric can carry one budget, so do not also name it in
+`max_regression_pct`.
 
 ```python
 SparkForensicsOperator(
@@ -703,28 +596,15 @@ SparkForensicsOperator(
 )
 ```
 
-A metric can carry one budget: naming it in `regression_budgets` and as
-the metric of `max_regression_pct` (`wallClock` when `regression_metric` is
-unset) raises `ValueError`, as the CLI refuses it. A budget is a
-non-negative number, and a malformed dict raises `ValueError` when the DAG
-is parsed. The CLI validates the metric names.
+`stage_regression_budgets` compares each paired stage on `executorRunTime`,
+`executorCpuTime`, `memoryBytesSpilled`, `diskBytesSpilled`,
+`shuffleReadBytes` or `shuffleWriteBytes`. It fails when any paired stage
+grew by more than the percentage and is inconclusive when no stage pairs.
+Each violated budget is its own result in the `ThresholdBreached` message
+and the persisted `thresholdResults`.
 
-`stage_regression_budgets` compares each paired stage of the two runs on
-`executorRunTime`, `executorCpuTime`, `memoryBytesSpilled`,
-`diskBytesSpilled`, `shuffleReadBytes` or `shuffleWriteBytes`. It fails
-when any paired stage grew by more than the percentage and is inconclusive
-when no stage pairs.
-
-Every violated or inconclusive budget is a separate result under the name
-`max-regression` or `max-stage-regression`. The task's `ThresholdBreached`
-message and the persisted `thresholdResults` list each one, with a detail
-naming the metric; `breached_thresholds` in the
-[summary XCom](#summary-xcom) lists the name once.
-
-The operator passes every number to the CLI as a plain decimal:
-`max_spill_gb=0.00001` becomes `--max-spill 0.00001` and
-`max_runtime_ms=1e16` becomes `--max-runtime 10000000000000000`, never
-`1e-05` or `1e+16`, which a current CLI rejects as a usage error.
+The operator passes every number to the CLI as a plain decimal, never in
+exponent form.
 
 Each configured threshold comes back as a pass, a violation or
 inconclusive. Inconclusive means the event log lacked the evidence the
@@ -755,19 +635,13 @@ warning and never fails the task, whatever `_send()` raises.
 `summary`, `verdict`, `findings`, `recommendations`, `clean_checks`,
 `not_run_checks` and `threshold_results` (each a
 `ThresholdResult` with `name`, `status` and `detail`), its `exit_code`,
-its `cli_version`, its `markdown` (the Markdown report when `markdown_dest`
-is set, else `None`), and `violated`/`inconclusive` properties. `raw` holds
-the CLI's whole report, including the sections the operator does not read
-by name (`metrics`, `effectiveConf`, `writeTargets`, `generator`); see
-[Report destinations](#report-destinations) for `effectiveConf`.
+its `cli_version`, its `markdown` (`None` without `markdown_dest`), and
+`violated`/`inconclusive` properties. `raw` holds the CLI's whole report.
 `verdict_title`, `app_name`, `run_time_ms` and `skipped_lines` hold the
 values the summary XCom reports, and are `None` when the report lacks them.
 
 The static helper `Notifier._default_message(report, report_destination)`
-builds a one-line plain-text summary you can use as a message body. It
-names the application, the CLI's verdict and the run time when the report
-has them, then the finding counts, the number of skipped event log lines
-when there are any, and the destination:
+builds a one-line plain-text summary you can use as a message body:
 
 ```text
 SparkForensics report for daily_customer_etl: Start with Stage 7. Ran for 47.7 s. 1 critical, 2 warning, 0 info findings. 3 event log lines were skipped. Report: s3://reports/app-1.json
@@ -776,17 +650,13 @@ SparkForensics report for daily_customer_etl: Start with Stage 7. Ran for 47.7 s
 ## Report destinations
 
 `report_dest` is where the report JSON is written. It is the CLI's whole
-JSON report (`summary`, `verdict`, `findings`, `recommendations`,
-`metrics`, `effectiveConf`, `writeTargets`, `generator` and every other
-section the CLI writes), plus the operator's own `thresholdResults` and,
-for a run compared against a baseline, the CLI's `comparison` section.
-Sections a newer CLI adds are persisted too.
+JSON report plus the operator's own `thresholdResults` and, for a run
+compared against a baseline, the CLI's `comparison` section.
 
 `effectiveConf` is the job's Spark configuration, which can name
-credentials. The CLI masks secret-looking keys and values in it, whether
-or not `redact` is set (`redact=True` adds pseudonyms for identifiers, see
-[Redacting the report](#redacting-the-report)). Restrict access to
-`report_dest` as you would to the job's configuration. Where to write it:
+credentials. The CLI masks secret-looking keys and values in it, with or
+without `redact`. Restrict access to `report_dest` as you would to the
+job's configuration. Where to write it:
 
 - a plain local path, or a mounted filesystem such as HDFS through an NFS
   gateway or FUSE mount;
@@ -840,10 +710,8 @@ reading the report. It is a dict:
 | `regression_pct` | the metric's change relative to the baseline in percent, positive when it grew; `None` when either value is missing or the baseline is 0 |
 
 Whether a regression breached a budget is in `breached_thresholds`
-(`max-regression`, `max-stage-regression`, `fail-on-introduced`), as for any
-threshold. A name appears once even when several budgets of that kind were
-violated; the persisted `thresholdResults` and the `ThresholdBreached`
-message list each one.
+(`max-regression`, `max-stage-regression`, `fail-on-introduced`), once per
+name.
 
 A deferred run pushes the same summary. `return_value` stays the
 destination string.
