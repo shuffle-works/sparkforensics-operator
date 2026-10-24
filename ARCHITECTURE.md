@@ -128,7 +128,9 @@ breach that raises still gets a notification out first.
   execution" below.
 - `hooks/analyze/_cli.py`, the CLI contract every backend shares: argument
   building for each reference kind (a positional path, or
-  `--shs-base-url`/`--app-id`/`--attempt-id`), `--baseline`, threshold flags, exit-code
+  `--shs-base-url`/`--app-id`/`--attempt-id`), `--baseline`, threshold flags
+  (a dict of per-metric budgets becomes one `--regression-budget` or
+  `--stage-regression-budget <metric>:<pct>` each), exit-code
   handling, and building the `Report` from the JSON report and stderr
   threshold lines. Exit codes 0, 1 and 3 carry a report. Every other code
   raises a `CliError` with a message of its own: 2 (usage error), 4
@@ -166,7 +168,10 @@ breach that raises still gets a notification out first.
   which reports the CLI's pid, and the command that stops it.
 - `report.py`, `Report`/`ThresholdResult` dataclasses, plus parsing of the
   CLI's JSON report (`--out` file or stdout) and its stderr threshold
-  lines. It refuses a `schemaVersion` outside the range it reads
+  lines. Several regression budgets print as `max-regression` lines
+  (`max-stage-regression` for the stage budgets), so `parse_threshold_results()`
+  keeps every line it reads instead of one per name. It refuses a
+  `schemaVersion` outside the range it reads
   (`MIN_SCHEMA_VERSION` to `MAX_SCHEMA_VERSION`, an
   `UnsupportedReportSchema` that `build_report()` turns into a
   `CliConfigurationError`), reads the CLI's own version from the report's

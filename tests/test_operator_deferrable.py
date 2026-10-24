@@ -626,3 +626,25 @@ def test_resume_reports_the_comparison_and_cleans_up_the_baseline(tmp_path):
     assert json.loads((tmp_path / "report.json").read_text())["comparison"] == report.comparison
     fresh.baseline_log_source.cleanup.assert_called_once_with(BASELINE)
     fresh.log_source.cleanup.assert_called_once_with(LOG)
+
+
+@needs_resume_execution
+def test_regression_budgets_cross_the_deferral_and_reach_the_summary(tmp_path):
+    budgets = {"regression_budgets": {"gcTime": 10}, "stage_regression_budgets": {"executorRunTime": 30}}
+    first = _comparing_operator(FakeComparingHook(), tmp_path, stage_qualities=["exact"], **budgets)
+    kwargs = _serialize_round_trip(_defer(first).kwargs)
+    report = _report()
+    report.comparison = {
+        "confidence": "ok", "reason": None,
+        "metrics": [{"key": "gcTime", "baseline": 10, "candidate": 15, "delta": 5, "direction": "regression"}],
+    }
+    fresh = _comparing_operator(FakeComparingHook(report), tmp_path, stage_qualities=["exact"], **budgets)
+    ti = _TI()
+
+    fresh.resume_execution("execute_complete", {"event": _event(), **kwargs}, {"ti": ti})
+
+    assert kwargs["thresholds"]["regression_budgets"] == {"gcTime": 10}
+    assert kwargs["thresholds"]["stage_regression_budgets"] == {"executorRunTime": 30}
+    assert kwargs["thresholds"]["stage_qualities"] == ["exact"]
+    budgets_summary = ti.xcoms["sparkforensics_summary"]["comparison"]["budgets"]
+    assert [(b["metric"], b["verdict"], b["regression_pct"]) for b in budgets_summary] == [("gcTime", "regression", 50.0)]

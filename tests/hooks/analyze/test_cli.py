@@ -77,6 +77,37 @@ def test_build_cli_args_passes_a_string_threshold_as_it_is():
     assert args[args.index("--max-spill") + 1] == "2"
 
 
+def test_build_cli_args_repeats_a_regression_budget_flag_per_metric():
+    args = build_cli_args(
+        "sparkforensics-analyze", LocalEventLog(Path("/tmp/app-2.log")),
+        {
+            "max_regression_pct": 20,
+            "regression_budgets": {"gcTime": 10, "diskSpill": 0.00001},
+            "stage_regression_budgets": {"executorRunTime": 30, "shuffleReadBytes": 1e16},
+            "stage_qualities": ["exact", "structural"],
+        },
+        baseline_ref=LocalEventLog(Path("/tmp/app-1.log")),
+    )
+
+    assert args == [
+        "sparkforensics-analyze", "/tmp/app-2.log", "--format", "json", "--baseline", "/tmp/app-1.log",
+        "--max-regression-pct", "20", "--stage-quality", "exact,structural",
+        "--regression-budget", "gcTime:10", "--regression-budget", "diskSpill:0.00001",
+        "--stage-regression-budget", "executorRunTime:30",
+        "--stage-regression-budget", "shuffleReadBytes:10000000000000000",
+    ]
+
+
+@pytest.mark.parametrize("empty", [None, {}, []])
+def test_build_cli_args_passes_no_budget_flag_for_an_empty_budget(empty):
+    args = build_cli_args(
+        "sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")),
+        {"regression_budgets": empty, "stage_regression_budgets": empty, "stage_qualities": empty},
+    )
+
+    assert args == ["sparkforensics-analyze", "/tmp/app.log", "--format", "json"]
+
+
 def test_build_cli_args_rejects_something_that_is_not_an_event_log_reference():
     with pytest.raises(TypeError, match="Not an event log reference"):
         build_cli_args("sparkforensics-analyze", Path("/tmp/app.log"), {})

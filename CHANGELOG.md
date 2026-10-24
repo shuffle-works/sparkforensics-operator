@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A threshold that the CLI reports on several lines (one per regression
+  budget) keeps every result in `Report.threshold_results`, the persisted
+  `thresholdResults` and the `ThresholdBreached` message, where only the
+  last line of a name was kept. `breached_thresholds` and
+  `inconclusive_thresholds` in the summary list each name once.
+  `parse_threshold_results()` returns the requested thresholds in the order
+  given, where it returned them in no fixed order.
 - A `HistoryServerApp` baseline is no longer rejected with the message that
   the CLI cannot fetch a baseline from a History Server, which was wrong
   for `sparkforensics-cli` 0.10.0 and newer. `AnalyzeHook.check_baseline_ref()`
@@ -47,6 +54,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Several regression budgets at once: `regression_budgets={metric:
+  percent}` passes one `--regression-budget <metric>:<percent>` per metric,
+  `stage_regression_budgets` one `--stage-regression-budget` per paired-stage
+  metric, and `stage_qualities` the `--stage-quality` list, on
+  `SparkForensicsOperator` and `spark_forensics_callback`. They need a
+  baseline, like the other comparison thresholds, and a metric can carry one
+  budget. `regression_budgets` needs `sparkforensics-cli` 0.5.0, the stage
+  budgets 0.7.0. The summary XCom's `comparison` has `budgets`, the figures
+  for each metric of `regression_budgets`.
 - A Spark History Server application can be the baseline: a
   `baseline_log_source` that resolves to a `HistoryServerApp`
   (`HistoryServerAppLogSourceHook`) is passed to the CLI as

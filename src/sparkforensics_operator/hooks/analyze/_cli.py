@@ -14,6 +14,7 @@ from sparkforensics_operator.exceptions import CliConfigurationError, CliError, 
 from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, LocalEventLog, RemoteEventLog
 from sparkforensics_operator.report import (
     THRESHOLD_CLI_FLAGS,
+    THRESHOLD_CLI_REPEATED_FLAGS,
     Report,
     UnsupportedReportSchema,
     parse_report_text,
@@ -127,18 +128,29 @@ def _threshold_args(thresholds: dict) -> list[str]:
     args = []
     for key, flag in THRESHOLD_CLI_FLAGS.items():
         value = thresholds.get(key)
-        if value is not None:
+        if value is not None and not (isinstance(value, (list, tuple, dict)) and not value):
             args.extend([flag, _flag_value(value)])
+    for key, flag in THRESHOLD_CLI_REPEATED_FLAGS.items():
+        for budget in _budget_values(thresholds.get(key)):
+            args.extend([flag, budget])
     return args
 
 
 def _flag_value(value) -> str:
     """A number as the plain decimal the CLI reads: str() writes some floats
     in exponent form (1e-05, 1e+16), which the CLI rejects as a usage error.
-    A string, such as a metric name, is passed as it is."""
+    A string, such as a metric name, is passed as it is, and a list is
+    joined with commas."""
     if isinstance(value, str):
         return value
+    if isinstance(value, (list, tuple)):
+        return ",".join(_flag_value(item) for item in value)
     return format(Decimal(str(value)), "f")
+
+
+def _budget_values(budgets: dict | None) -> list[str]:
+    """{metric: percentage} as the CLI's "<metric>:<percentage>" values."""
+    return [f"{metric}:{_flag_value(pct)}" for metric, pct in (budgets or {}).items()]
 
 
 def check_exit_code(returncode: int, stderr: str, where: str = "") -> None:

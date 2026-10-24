@@ -22,6 +22,15 @@ THRESHOLD_CLI_FLAGS = {
     "max_regression_pct": "--max-regression-pct",
     "regression_metric": "--regression-metric",
     "fail_on_introduced": "--fail-on-introduced",
+    # A list of pair qualities, joined with commas.
+    "stage_qualities": "--stage-quality",
+}
+
+# The flags the CLI takes once per value. A dict of {metric: percentage}
+# becomes one "<flag> <metric>:<percentage>" each.
+THRESHOLD_CLI_REPEATED_FLAGS = {
+    "regression_budgets": "--regression-budget",
+    "stage_regression_budgets": "--stage-regression-budget",
 }
 
 # The metric --max-regression-pct checks when --regression-metric is unset.
@@ -37,6 +46,8 @@ THRESHOLD_RESULT_NAMES = {
     "max_failed_task_rate_pct": "max-failed-task-rate",
     "min_efficiency_pct": "min-efficiency",
     "max_regression_pct": "max-regression",
+    "regression_budgets": "max-regression",
+    "stage_regression_budgets": "max-stage-regression",
     "fail_on_introduced": "fail-on-introduced",
 }
 
@@ -204,16 +215,25 @@ def _release(version: str) -> tuple[int, ...] | None:
 
 
 def parse_threshold_results(thresholds: dict, stderr: str) -> list[ThresholdResult]:
-    requested_names = {
-        THRESHOLD_RESULT_NAMES[key]
-        for key, value in thresholds.items()
-        if key in THRESHOLD_RESULT_NAMES and value is not None
-    }
-    results = {name: ThresholdResult(name=name, status="pass", detail="") for name in requested_names}
+    """One result per threshold line the CLI printed (only violations and
+    inconclusive results are printed), and a pass for each requested
+    threshold it printed none for. Several regression budgets all print as
+    max-regression (or max-stage-regression), so a name can have several
+    results, one per budget that did not pass."""
+    requested_names = []
+    for key, value in thresholds.items():
+        name = THRESHOLD_RESULT_NAMES.get(key)
+        if name is not None and value is not None and value != {} and name not in requested_names:
+            requested_names.append(name)
+    results = {name: [ThresholdResult(name=name, status="pass", detail="")] for name in requested_names}
+    printed: set[str] = set()
     for line in stderr.splitlines():
         match = _THRESHOLD_LINE_RE.match(line)
         if not match:
             continue
         status, name, detail = match.groups()
-        results[name] = ThresholdResult(name=name, status=status, detail=detail)
-    return list(results.values())
+        if name not in printed:
+            results[name] = []
+            printed.add(name)
+        results[name].append(ThresholdResult(name=name, status=status, detail=detail))
+    return [result for name_results in results.values() for result in name_results]

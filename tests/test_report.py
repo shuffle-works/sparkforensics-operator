@@ -7,6 +7,7 @@ from sparkforensics_operator.report import (
     MAX_SCHEMA_VERSION,
     TESTED_CLI_VERSION,
     THRESHOLD_CLI_FLAGS,
+    THRESHOLD_CLI_REPEATED_FLAGS,
     Report,
     ThresholdResult,
     UnsupportedReportSchema,
@@ -207,6 +208,7 @@ def test_threshold_cli_flags_cover_every_thresholds_key():
         "max_regression_pct",
         "regression_metric",
         "fail_on_introduced",
+        "stage_qualities",
     }
     assert THRESHOLD_CLI_FLAGS["max_runtime_ms"] == "--max-runtime"
     assert THRESHOLD_CLI_FLAGS["max_spill_gb"] == "--max-spill"
@@ -216,6 +218,14 @@ def test_threshold_cli_flags_cover_every_thresholds_key():
     assert THRESHOLD_CLI_FLAGS["max_regression_pct"] == "--max-regression-pct"
     assert THRESHOLD_CLI_FLAGS["regression_metric"] == "--regression-metric"
     assert THRESHOLD_CLI_FLAGS["fail_on_introduced"] == "--fail-on-introduced"
+    assert THRESHOLD_CLI_FLAGS["stage_qualities"] == "--stage-quality"
+
+
+def test_threshold_cli_repeated_flags_are_the_per_metric_budgets():
+    assert THRESHOLD_CLI_REPEATED_FLAGS == {
+        "regression_budgets": "--regression-budget",
+        "stage_regression_budgets": "--stage-regression-budget",
+    }
 
 
 def test_parse_threshold_results_defaults_requested_thresholds_to_pass():
@@ -276,6 +286,56 @@ def test_report_violated_and_inconclusive_properties():
     )
     assert not inconclusive.violated
     assert inconclusive.inconclusive
+
+
+def test_parse_threshold_results_seeds_a_pass_for_each_kind_of_regression_budget():
+    thresholds = {
+        "regression_budgets": {"gcTime": 10, "wallClock": 20},
+        "stage_regression_budgets": {"executorRunTime": 30},
+    }
+
+    results = parse_threshold_results(thresholds, "")
+
+    assert [(r.name, r.status) for r in results] == [("max-regression", "pass"), ("max-stage-regression", "pass")]
+
+
+def test_parse_threshold_results_keeps_every_violated_regression_budget():
+    thresholds = {"max_regression_pct": 20, "regression_budgets": {"gcTime": 10, "diskSpill": 5}}
+    stderr = (
+        '[violation] max-regression: Metric "wallClock" regressed 31.0%, exceeding budget 20%.\n'
+        '[violation] max-regression: Metric "gcTime" regressed 12.0%, exceeding budget 10%.\n'
+        '[inconclusive] max-regression: Metric "diskSpill" is unavailable for this comparison.\n'
+    )
+
+    results = parse_threshold_results(thresholds, stderr)
+
+    assert [(r.name, r.status) for r in results] == [
+        ("max-regression", "violation"), ("max-regression", "violation"), ("max-regression", "inconclusive"),
+    ]
+    assert 'Metric "gcTime"' in results[1].detail
+
+
+def test_parse_threshold_results_replaces_the_seeded_pass_only_for_the_names_printed():
+    thresholds = {"regression_budgets": {"gcTime": 10}, "stage_regression_budgets": {"executorRunTime": 30}}
+    stderr = '[violation] max-stage-regression: 2 of 5 paired stage(s) regressed "executorRunTime" beyond 30%.\n'
+
+    results = parse_threshold_results(thresholds, stderr)
+
+    assert [(r.name, r.status) for r in results] == [
+        ("max-regression", "pass"), ("max-stage-regression", "violation"),
+    ]
+
+
+def test_parse_threshold_results_ignores_an_empty_budget_dict():
+    assert parse_threshold_results({"regression_budgets": {}, "stage_regression_budgets": None}, "") == []
+
+
+def test_parse_threshold_results_lists_the_requested_names_in_the_order_given():
+    thresholds = {"min_efficiency_pct": 50, "max_runtime_ms": 1, "max_skew_ratio": 2, "max_spill_gb": 3}
+
+    assert [r.name for r in parse_threshold_results(thresholds, "")] == [
+        "min-efficiency", "max-runtime", "max-skew", "max-spill",
+    ]
 
 
 def test_parse_threshold_results_seeds_the_comparison_budgets_but_not_the_metric():

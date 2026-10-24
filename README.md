@@ -42,7 +42,9 @@ runs as part of the DAG, right where the Spark task just ran.
   to a Spark History Server application. `max_regression_pct` fails the
   DAG when runtime, or the metric
   `regression_metric` names, regressed past that budget.
-  `fail_on_introduced` fails it when the run gained new findings. The
+  `regression_budgets` budgets several metrics at once, and
+`stage_regression_budgets` the paired stages. `fail_on_introduced` fails it
+when the run gained new findings. The
   comparison's verdict, confidence and measured regression land in the
   summary XCom.
 - Reports persist to a local path, `file://`, or `s3://`, and a clickable

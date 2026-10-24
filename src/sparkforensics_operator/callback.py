@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Callable
+from typing import Callable, Sequence
 
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks._templating import task_renderer
@@ -31,6 +31,9 @@ def spark_forensics_callback(
     max_regression_pct: float | None = None,
     regression_metric: str | None = None,
     fail_on_introduced: str | None = None,
+    regression_budgets: dict[str, float] | None = None,
+    stage_regression_budgets: dict[str, float] | None = None,
+    stage_qualities: Sequence[str] | None = None,
 ) -> Callable[[dict], None]:
     """Builds an on_success_callback for the upstream Spark task, sharing
     SparkForensicsOperator's exact execute() logic via run_spark_forensics.
@@ -71,6 +74,9 @@ def spark_forensics_callback(
         "max_regression_pct": max_regression_pct,
         "regression_metric": regression_metric,
         "fail_on_introduced": fail_on_introduced,
+        "regression_budgets": regression_budgets,
+        "stage_regression_budgets": stage_regression_budgets,
+        "stage_qualities": None if stage_qualities is None else list(stage_qualities),
     }
     validate_comparison_thresholds(baseline_log_source, backend, thresholds)
 

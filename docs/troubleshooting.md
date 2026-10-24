@@ -330,9 +330,20 @@ summary's `comparison.verdict` says which (`unavailable` or `neutral`).
 
 #### `ValueError: ... need baseline_log_source` or "regression_metric needs max_regression_pct" at DAG parse
 
-The comparison thresholds follow the CLI's own rules: all three need a
-baseline, and `regression_metric` only picks the metric
-`max_regression_pct` checks.
+The comparison thresholds follow the CLI's own rules: all of them
+(`max_regression_pct`, `regression_metric`, `fail_on_introduced`,
+`regression_budgets`, `stage_regression_budgets`, `stage_qualities`) need
+a baseline, and `regression_metric` only picks the metric
+`max_regression_pct` checks. `stage_qualities` needs
+`stage_regression_budgets`.
+
+#### `ValueError: ... is budgeted twice` or "regression_budgets[...] must be a non-negative number" at DAG parse
+
+A metric can carry one regression budget. `max_regression_pct` budgets
+`regression_metric`, or `wallClock` when that is unset, so the same metric
+cannot also be a key of `regression_budgets`. A budget is a plain
+non-negative number (not a string, `inf` or `nan`), and a metric name a
+non-empty string without `:`.
 
 #### Comparison `confidence` is `low`
 

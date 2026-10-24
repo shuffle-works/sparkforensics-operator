@@ -392,6 +392,89 @@ def test_operator_rejects_an_unknown_fail_on_introduced_band():
         )
 
 
+def _operator_with(**kwargs):
+    return SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+        baseline_log_source=kwargs.pop("baseline_log_source", MagicMock()), **kwargs,
+    )
+
+
+@pytest.mark.parametrize("threshold", [
+    {"regression_budgets": {"gcTime": 10}},
+    {"stage_regression_budgets": {"executorRunTime": 30}},
+    {"stage_regression_budgets": {"executorRunTime": 30}, "stage_qualities": ["exact"]},
+])
+def test_operator_rejects_a_regression_budget_without_a_baseline_log_source(threshold):
+    with pytest.raises(ValueError, match="need baseline_log_source"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json", **threshold,
+        )
+
+
+@pytest.mark.parametrize("empty", [{}, [], None])
+def test_operator_treats_an_empty_budget_as_none_so_it_needs_no_baseline(empty):
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+        regression_budgets=empty, stage_regression_budgets=empty,
+    )
+
+    assert not op.thresholds["regression_budgets"]
+
+
+def test_operator_keeps_the_regression_budgets_in_its_thresholds_with_the_qualities_as_a_list():
+    op = _operator_with(
+        regression_budgets={"gcTime": 10}, stage_regression_budgets={"executorRunTime": 30},
+        stage_qualities=("exact", "aligned"),
+    )
+
+    assert op.thresholds["regression_budgets"] == {"gcTime": 10}
+    assert op.thresholds["stage_regression_budgets"] == {"executorRunTime": 30}
+    assert op.thresholds["stage_qualities"] == ["exact", "aligned"]
+
+
+def test_operator_accepts_budgets_for_several_metrics_next_to_the_single_metric_pair():
+    _operator_with(max_regression_pct=20, regression_metric="gcTime", regression_budgets={"wallClock": 10})
+    _operator_with(max_regression_pct=20, regression_budgets={"gcTime": 10})
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"max_regression_pct": 20, "regression_budgets": {"wallClock": 10}},
+    {"max_regression_pct": 20, "regression_metric": "gcTime", "regression_budgets": {"gcTime": 10}},
+])
+def test_operator_rejects_a_metric_budgeted_twice(kwargs):
+    with pytest.raises(ValueError, match="is budgeted twice"):
+        _operator_with(**kwargs)
+
+
+@pytest.mark.parametrize("budgets", [
+    ["gcTime"],
+    {"gcTime": -1},
+    {"gcTime": "10"},
+    {"gcTime": True},
+    {"gcTime": float("inf")},
+    {"gcTime": float("nan")},
+    {"": 10},
+    {"gc:Time": 10},
+    {3: 10},
+])
+def test_operator_rejects_a_malformed_regression_budget(budgets):
+    with pytest.raises(ValueError, match="regression_budgets"):
+        _operator_with(regression_budgets=budgets)
+    with pytest.raises(ValueError, match="stage_regression_budgets"):
+        _operator_with(stage_regression_budgets=budgets)
+
+
+def test_operator_rejects_stage_qualities_without_stage_regression_budgets():
+    with pytest.raises(ValueError, match="stage_qualities needs stage_regression_budgets"):
+        _operator_with(stage_qualities=["exact"])
+
+
+@pytest.mark.parametrize("qualities", ["exact", ["exact", "fuzzy"], ("loose",)])
+def test_operator_rejects_an_unknown_stage_quality(qualities):
+    with pytest.raises(ValueError, match="stage_qualities must be a list drawn from"):
+        _operator_with(stage_regression_budgets={"executorRunTime": 30}, stage_qualities=qualities)
+
+
 def test_operator_rejects_a_baseline_for_a_backend_that_cannot_compare_runs():
     from sparkforensics_operator.hooks.analyze.base import AnalyzeHook
 

@@ -45,6 +45,9 @@ SparkForensicsOperator(
     max_regression_pct: float | None = None,
     regression_metric: str | None = None,
     fail_on_introduced: str | None = None,   # "critical" | "warning" | "info" | "all"
+    regression_budgets: dict[str, float] | None = None,        # {metric: percent}, one budget per metric
+    stage_regression_budgets: dict[str, float] | None = None,  # {metric: percent} per paired stage
+    stage_qualities: Sequence[str] | None = None,              # "exact" | "structural" | "aligned"
     **base_operator_kwargs,
 )
 ```
@@ -178,7 +181,8 @@ or `SFTPLogSourceHook`s share one `dest_dir` for same-named logs, so give
 each its own. `deferrable=True` works too; the resolved baseline crosses
 the deferral with the rest of the resume kwargs.
 
-`max_regression_pct`, `regression_metric` and `fail_on_introduced` (see
+`max_regression_pct`, `regression_metric`, `fail_on_introduced`,
+`regression_budgets`, `stage_regression_budgets` and `stage_qualities` (see
 [Thresholds](#thresholds)) budget the comparison. Without
 `baseline_log_source`, any of them raises `ValueError` when the DAG is
 parsed. A comparison runs even with none of them set: its section lands
@@ -414,6 +418,8 @@ the operator ignores fields it does not read.
 | operator feature | minimum `sparkforensics-cli` |
 |---|---|
 | the error messages for exit codes 2, 4, 5 and 6 | 0.5.0 |
+| `regression_budgets` (`--regression-budget`) | 0.5.0 |
+| `stage_regression_budgets` and `stage_qualities` (`--stage-regression-budget`, `--stage-quality`) | 0.7.0 |
 | a History Server application as the baseline (`--baseline-shs-base-url`, `--baseline-app-id`, `--baseline-attempt-id`) | 0.10.0 |
 
 ### Job directories
@@ -537,19 +543,52 @@ the evaluation (upstream calls a threshold a "budget"):
 | `max_regression_pct` | `--max-regression-pct` | percent the checked metric may regress past the baseline |
 | `regression_metric` | `--regression-metric` | the metric `max_regression_pct` checks (default `wallClock`) |
 | `fail_on_introduced` | `--fail-on-introduced` | fail on a finding the baseline did not have, of this impact band (`critical`, `warning`, `info`) or `all` |
+| `regression_budgets` | `--regression-budget <metric>:<pct>`, once per metric | a dict of metric name to the percent that metric may regress past the baseline |
+| `stage_regression_budgets` | `--stage-regression-budget <metric>:<pct>`, once per metric | a dict of paired-stage metric name to the percent it may grow in any paired stage |
+| `stage_qualities` | `--stage-quality` | the pair qualities the stage budgets read: a list from `exact`, `structural`, `aligned` (the CLI reads `exact` and `structural` when unset) |
 
-The last three are comparison thresholds, budgets on the difference
-between the run and its baseline (upstream names them `max-regression`
-and `fail-on-introduced`). They need `baseline_log_source`, and
-`regression_metric` needs `max_regression_pct`, as the CLI requires; any
-other combination, or an unknown `fail_on_introduced` band, raises
-`ValueError` when the DAG is parsed. The CLI validates
+The last six are comparison thresholds, budgets on the difference
+between the run and its baseline (upstream names them `max-regression`,
+`max-stage-regression` and `fail-on-introduced`). They need
+`baseline_log_source`, and `regression_metric` needs `max_regression_pct`,
+as the CLI requires; any other combination, or an unknown
+`fail_on_introduced` band, raises `ValueError` when the DAG is parsed.
+`stage_qualities` needs `stage_regression_budgets`. The CLI validates
 `regression_metric` itself (`wallClock`, `shuffleSpill`, `taskSkew`,
 `failedTaskRate`, `diskSpill`, `gcTime`, `executorRunTime`, and the
 volume metrics `inputBytes`, `outputBytes`, `taskCount`,
 `executorsAdded`, which it reports as inconclusive since they have no
 regression direction). A breach raises `ThresholdBreached` like any
 other threshold.
+
+`max_regression_pct` with `regression_metric` budgets one metric.
+`regression_budgets` budgets as many as you list, each with its own
+percentage, and works with or without that pair:
+
+```python
+SparkForensicsOperator(
+    ...,
+    baseline_log_source=...,
+    regression_budgets={"wallClock": 20, "gcTime": 50, "diskSpill": 10},
+    stage_regression_budgets={"executorRunTime": 30, "shuffleReadBytes": 30},
+    stage_qualities=["exact", "structural"],
+)
+```
+
+A metric can carry one budget: naming it in `regression_budgets` and as
+the metric of `max_regression_pct` (`wallClock` when `regression_metric` is
+unset) raises `ValueError`, as the CLI refuses it. A budget is a
+non-negative number; a malformed dict raises `ValueError` when the DAG is
+parsed, and the CLI validates the metric names.
+`stage_regression_budgets` compare each paired stage of the two runs on
+`executorRunTime`, `executorCpuTime`, `memoryBytesSpilled`,
+`diskBytesSpilled`, `shuffleReadBytes` or `shuffleWriteBytes`; it fails
+when any paired stage grew by more than the percentage, and is inconclusive
+when no stage pairs. Every violated or inconclusive budget is a separate
+result under the name `max-regression` or `max-stage-regression`: the
+task's `ThresholdBreached` message and the persisted `thresholdResults`
+list each one with its detail naming the metric, and `breached_thresholds`
+in the [summary XCom](#summary-xcom) lists the name once.
 
 The operator passes every number to the CLI as a plain decimal:
 `max_spill_gb=0.00001` becomes `--max-spill 0.00001` and
@@ -661,8 +700,15 @@ reading the report. It is a dict:
 | `baseline`, `candidate` | the metric's value in each run, or `None` |
 | `regression_pct` | the metric's change relative to the baseline in percent, positive when it grew; `None` when either value is missing or the baseline is 0 |
 
+With `regression_budgets`, `comparison["budgets"]` lists the same figures
+(`metric`, `verdict`, `baseline`, `candidate`, `regression_pct`) for each
+budgeted metric, in the order of the dict.
+
 Whether a regression breached a budget is in `breached_thresholds`
-(`max-regression`, `fail-on-introduced`), as for any threshold.
+(`max-regression`, `max-stage-regression`, `fail-on-introduced`), as for any
+threshold. A name appears once even when several budgets of that kind were
+violated; the persisted `thresholdResults` and the `ThresholdBreached`
+message tell which.
 
 A deferred run pushes the same summary. `return_value` stays the
 destination string.

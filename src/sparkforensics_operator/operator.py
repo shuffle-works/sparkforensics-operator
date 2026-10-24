@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Sequence
@@ -16,7 +17,7 @@ from sparkforensics_operator._compat import (
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.base import AnalyzeHook, DeferrableAnalyzeHook
 from sparkforensics_operator.links import ReportLink
-from sparkforensics_operator.report import cli_version_warning
+from sparkforensics_operator.report import DEFAULT_REGRESSION_METRIC, cli_version_warning
 from sparkforensics_operator.log_ref import (
     LocalEventLog,
     RemoteEventLog,
@@ -32,9 +33,18 @@ from sparkforensics_operator.summary import (
 
 _THRESHOLD_BREACH_ACTIONS = ("fail", "warn", "ignore")
 # The thresholds the CLI evaluates only against a baseline (--baseline).
-COMPARISON_THRESHOLDS = ("max_regression_pct", "regression_metric", "fail_on_introduced")
+COMPARISON_THRESHOLDS = (
+    "max_regression_pct",
+    "regression_metric",
+    "fail_on_introduced",
+    "regression_budgets",
+    "stage_regression_budgets",
+    "stage_qualities",
+)
 # fail_on_introduced's values: an impact band, or any introduced finding.
 _INTRODUCED_BANDS = ("critical", "warning", "info", "all")
+# The pair qualities stage_qualities picks from.
+_STAGE_QUALITIES = ("exact", "structural", "aligned")
 # The XCom a deferrable run keeps its submitted job under, until the task
 # instance's next try clears it.
 REMOTE_JOB_XCOM_KEY = "sparkforensics_remote_job"
@@ -47,14 +57,38 @@ def _validate_on_threshold_breach(value: str) -> None:
         )
 
 
+def _is_set(value) -> bool:
+    """Whether a threshold was given: an empty budget dict or quality list
+    is the same as none."""
+    return value is not None and not (isinstance(value, (dict, list, tuple)) and len(value) == 0)
+
+
+def _validate_budgets(name: str, budgets) -> None:
+    if not _is_set(budgets):
+        return
+    if not isinstance(budgets, dict):
+        raise ValueError(f"{name} must be a dict of metric name to percentage, got {budgets!r}")
+    for metric, pct in budgets.items():
+        if not isinstance(metric, str) or not metric or ":" in metric:
+            raise ValueError(f"{name} metric names must be non-empty strings without ':', got {metric!r}")
+        if (
+            isinstance(pct, bool)
+            or not isinstance(pct, (int, float))
+            or not math.isfinite(pct)
+            or pct < 0
+        ):
+            raise ValueError(f"{name}[{metric!r}] must be a non-negative number, got {pct!r}")
+
+
 def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dict) -> None:
     """Raise ValueError for the comparison settings the CLI would reject
     or could never evaluate: a comparison threshold without a baseline,
     regression_metric without max_regression_pct, an unknown
-    fail_on_introduced band, or a baseline for a backend that cannot pass
-    one to the CLI."""
+    fail_on_introduced band, a regression budget malformed or given twice
+    for one metric, stage_qualities without stage_regression_budgets, or a
+    baseline for a backend that cannot pass one to the CLI."""
     if baseline_log_source is None:
-        orphans = [name for name in COMPARISON_THRESHOLDS if thresholds.get(name) is not None]
+        orphans = [name for name in COMPARISON_THRESHOLDS if _is_set(thresholds.get(name))]
         if orphans:
             raise ValueError(
                 f"{', '.join(orphans)} compare the run against a baseline, so they need "
@@ -68,6 +102,27 @@ def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dic
     band = thresholds.get("fail_on_introduced")
     if band is not None and band not in _INTRODUCED_BANDS:
         raise ValueError(f"fail_on_introduced must be one of {_INTRODUCED_BANDS}, got {band!r}")
+    for name in ("regression_budgets", "stage_regression_budgets"):
+        _validate_budgets(name, thresholds.get(name))
+    regression_budgets = thresholds.get("regression_budgets")
+    if _is_set(regression_budgets) and thresholds.get("max_regression_pct") is not None:
+        paired = thresholds.get("regression_metric") or DEFAULT_REGRESSION_METRIC
+        if paired in regression_budgets:
+            raise ValueError(
+                f"{paired} is budgeted twice, by max_regression_pct and by regression_budgets; "
+                "the CLI allows one budget per metric."
+            )
+    qualities = thresholds.get("stage_qualities")
+    if _is_set(qualities):
+        if isinstance(qualities, str) or not all(q in _STAGE_QUALITIES for q in qualities):
+            raise ValueError(
+                f"stage_qualities must be a list drawn from {_STAGE_QUALITIES}, got {qualities!r}"
+            )
+        if not _is_set(thresholds.get("stage_regression_budgets")):
+            raise ValueError(
+                "stage_qualities needs stage_regression_budgets: it picks which paired "
+                "stages those budgets read."
+            )
     if (
         baseline_log_source is not None
         and isinstance(backend, AnalyzeHook)
@@ -148,6 +203,7 @@ def run_spark_forensics(
             ti=context.get("ti"),
             report_url_template=report_url_template,
             regression_metric=thresholds.get("regression_metric"),
+            regression_budgets=thresholds.get("regression_budgets"),
         )
     finally:
         try:
@@ -196,13 +252,15 @@ def handle_report(
     ti=None,
     report_url_template: str | None = None,
     regression_metric: str | None = None,
+    regression_budgets: dict | None = None,
 ) -> str:
     """Persists the report, logs inconclusive thresholds, pushes the summary
     XCom (to ti, when there is one), notifies, and applies
     on_threshold_breach. Shared by run_spark_forensics and the deferrable
     operator's resume step, so a deferred run acts on its report exactly as
     a synchronous one does. regression_metric is the comparison metric the
-    summary XCom reports on, for a report compared against a baseline."""
+    summary XCom reports on, and the metrics of regression_budgets are listed
+    after it, for a report compared against a baseline."""
     destination = sinks.persist(_report_json(report), report_dest, aws_conn_id=aws_conn_id)
 
     for result in report.threshold_results:
@@ -253,6 +311,7 @@ def handle_report(
                 report_url=render_report_url(destination, report_url_template),
                 violated=violated,
                 regression_metric=regression_metric,
+                budgeted_metrics=list(regression_budgets or {}),
             ),
         )
 
@@ -295,8 +354,11 @@ class SparkForensicsOperator(BaseOperator):
     compare against (a path template on prev_ds, an XCom pull, ...); the
     backend passes it to the CLI as --baseline, which reads a file path
     only, so it must resolve to one the backend can read where the analysis
-    runs. max_regression_pct, regression_metric and fail_on_introduced
-    budget that comparison and need it.
+    runs. max_regression_pct, regression_metric, fail_on_introduced,
+    regression_budgets (a regression budget per metric, {metric:
+    percentage}), stage_regression_budgets (the same per paired stage's
+    metric) and stage_qualities (which paired stages those read) budget
+    that comparison and need it.
 
     report_dest, and each hook's own template_fields, are Jinja templates
     Airflow renders before execute(). report_url_template, if set, turns the
@@ -326,6 +388,9 @@ class SparkForensicsOperator(BaseOperator):
         max_regression_pct: float | None = None,
         regression_metric: str | None = None,
         fail_on_introduced: str | None = None,
+        regression_budgets: dict[str, float] | None = None,
+        stage_regression_budgets: dict[str, float] | None = None,
+        stage_qualities: Sequence[str] | None = None,
         **kwargs,
     ):
         thresholds = {
@@ -337,6 +402,9 @@ class SparkForensicsOperator(BaseOperator):
             "max_regression_pct": max_regression_pct,
             "regression_metric": regression_metric,
             "fail_on_introduced": fail_on_introduced,
+            "regression_budgets": regression_budgets,
+            "stage_regression_budgets": stage_regression_budgets,
+            "stage_qualities": None if stage_qualities is None else list(stage_qualities),
         }
         # Validate before super().__init__() to avoid DAG registration side effects if construction will fail.
         _validate_on_threshold_breach(on_threshold_breach)
@@ -519,6 +587,7 @@ class SparkForensicsOperator(BaseOperator):
                 ti=context.get("ti"),
                 report_url_template=self.report_url_template,
                 regression_metric=thresholds.get("regression_metric"),
+                regression_budgets=thresholds.get("regression_budgets"),
             )
         except ThresholdBreached as breach:
             self._record_persisted(breach.destination)

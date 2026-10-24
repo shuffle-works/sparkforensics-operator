@@ -260,6 +260,51 @@ def test_the_comparison_reports_on_the_configured_regression_metric(tmp_path):
     assert summary["comparison"]["regression_pct"] == -50.0
 
 
+def test_the_comparison_lists_every_budgeted_metric_after_the_default_one(tmp_path):
+    comparison = {
+        "confidence": "ok", "reason": None,
+        "metrics": [
+            _metric("wallClock", 1000, 1250, "regression"),
+            _metric("gcTime", 10, 5, "improvement"),
+            _metric("diskSpill", 0, 7, "regression"),
+        ],
+    }
+
+    summary = _run_compared(
+        tmp_path, comparison, regression_budgets={"gcTime": 10, "diskSpill": 5, "shuffleSpill": 1},
+    )
+
+    assert summary["comparison"]["metric"] == "wallClock"
+    assert summary["comparison"]["budgets"] == [
+        {"verdict": "improvement", "metric": "gcTime", "baseline": 10, "candidate": 5, "regression_pct": -50.0},
+        {"verdict": "regression", "metric": "diskSpill", "baseline": 0, "candidate": 7, "regression_pct": None},
+        {"verdict": "unavailable", "metric": "shuffleSpill", "baseline": None, "candidate": None, "regression_pct": None},
+    ]
+
+
+def test_the_comparison_has_no_budgets_entry_without_regression_budgets(tmp_path):
+    summary = _run_compared(tmp_path, {"confidence": "ok", "reason": None, "metrics": []})
+
+    assert "budgets" not in summary["comparison"]
+
+
+def test_several_violated_regression_budgets_are_listed_once_in_the_summary(tmp_path):
+    report = _report(
+        ThresholdResult("max-regression", "violation", 'Metric "gcTime" regressed 12.0%, exceeding budget 10%.'),
+        ThresholdResult("max-regression", "violation", 'Metric "diskSpill" regressed 9.0%, exceeding budget 5%.'),
+        ThresholdResult("max-stage-regression", "inconclusive", "No stages were paired between the two runs."),
+        ThresholdResult("max-stage-regression", "inconclusive", "Metric is unavailable."),
+        exit_code=1,
+    )
+
+    summary, error, _ = _run(tmp_path, report)
+
+    assert isinstance(error, ThresholdBreached)
+    assert summary["breached_thresholds"] == ["max-regression"]
+    assert summary["inconclusive_thresholds"] == ["max-stage-regression"]
+    assert str(error).count("max-regression:") == 2
+
+
 @pytest.mark.parametrize("metrics, verdict", [
     ([], "unavailable"),
     ([_metric("wallClock", None, 1250, "unavailable")], "unavailable"),
