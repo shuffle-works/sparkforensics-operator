@@ -260,32 +260,18 @@ def test_the_comparison_reports_on_the_configured_regression_metric(tmp_path):
     assert summary["comparison"]["regression_pct"] == -50.0
 
 
-def test_the_comparison_lists_every_budgeted_metric_after_the_default_one(tmp_path):
+def test_regression_budgets_leave_the_comparison_on_the_default_metric_only(tmp_path):
     comparison = {
         "confidence": "ok", "reason": None,
-        "metrics": [
-            _metric("wallClock", 1000, 1250, "regression"),
-            _metric("gcTime", 10, 5, "improvement"),
-            _metric("diskSpill", 0, 7, "regression"),
-        ],
+        "metrics": [_metric("wallClock", 1000, 1250, "regression"), _metric("gcTime", 10, 5, "improvement")],
     }
 
-    summary = _run_compared(
-        tmp_path, comparison, regression_budgets={"gcTime": 10, "diskSpill": 5, "shuffleSpill": 1},
-    )
+    summary = _run_compared(tmp_path, comparison, regression_budgets={"gcTime": 10})
 
-    assert summary["comparison"]["metric"] == "wallClock"
-    assert summary["comparison"]["budgets"] == [
-        {"verdict": "improvement", "metric": "gcTime", "baseline": 10, "candidate": 5, "regression_pct": -50.0},
-        {"verdict": "regression", "metric": "diskSpill", "baseline": 0, "candidate": 7, "regression_pct": None},
-        {"verdict": "unavailable", "metric": "shuffleSpill", "baseline": None, "candidate": None, "regression_pct": None},
-    ]
-
-
-def test_the_comparison_has_no_budgets_entry_without_regression_budgets(tmp_path):
-    summary = _run_compared(tmp_path, {"confidence": "ok", "reason": None, "metrics": []})
-
-    assert "budgets" not in summary["comparison"]
+    assert summary["comparison"] == {
+        "verdict": "regression", "confidence": "ok", "reason": None, "metric": "wallClock",
+        "baseline": 1000, "candidate": 1250, "regression_pct": 25.0,
+    }
 
 
 def test_several_violated_regression_budgets_are_listed_once_in_the_summary(tmp_path):

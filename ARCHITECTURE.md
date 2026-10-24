@@ -315,8 +315,9 @@ reboot is left alone.
 
 Failure paths. A trigger error event without an exit code makes
 `collect()` stop and remove the job before raising. A deferral that times
-out (the backend's `defer_timeout`, `timeout` plus 120 seconds counted
-from submission, or the task's
+out (the backend's `defer_timeout`, `timeout` per CLI run in the job, so
+twice with `markdown_dest`, plus 120 seconds counted from submission, or
+the task's
 `execution_timeout`) resumes with `next_method="__fail__"`, which never
 reaches `execute_complete()`; `resume_execution()` is overridden to call
 `backend.abandon(context, job)` first, with the job from XCom. Airflow 2

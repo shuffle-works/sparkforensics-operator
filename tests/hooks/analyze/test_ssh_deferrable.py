@@ -349,6 +349,16 @@ def test_defer_timeout_is_a_backstop_past_the_remote_timeout(host):
         hook.abandon(ti_context())
 
 
+def test_defer_timeout_allows_the_remote_timeout_for_each_of_the_two_runs_with_markdown(host):
+    host.fake_cli("sleep 5\n")
+    hook = _hook(timeout=600)
+    job = hook.submit(LOG, {"markdown": True}, ti_context())
+    try:
+        assert 1200 < hook.defer_timeout(job).total_seconds() <= 1320
+    finally:
+        hook.abandon(ti_context())
+
+
 def test_submit_rejects_a_log_the_ssh_host_cannot_read(host, tmp_path):
     with pytest.raises(AirflowException, match="cannot analyze"):
         _hook().check_log_ref(LocalEventLog(tmp_path / "app.log"))

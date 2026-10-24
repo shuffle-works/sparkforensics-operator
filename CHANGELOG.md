@@ -49,7 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `effectiveConf`, `writeTargets`, `generator` and every other section),
   plus `thresholdResults` and `comparison` as before, instead of a fixed
   subset. Every key of the earlier file is still there. `Report.raw` holds
-  it.
+  it. `effectiveConf` is the job's Spark configuration: the CLI masks
+  secret-looking keys and values in it by default, and `redact=True` also
+  replaces identifiers with pseudonyms.
 - `Notifier._default_message()` names the application, the CLI's verdict
   and the run time, and mentions skipped event log lines when there are any.
   A report that carries none of them gets the earlier one-line message.
@@ -77,7 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `spark_forensics_callback`. The CLI writes one format per run, so the
   backend runs it a second time with `--format md` (and the same baseline,
   comparison tuning and `redact`, without the budget flags), in a deferred
-  run inside the same remote job; the analysis takes about twice as long.
+  run inside the same remote job; the analysis takes about twice as long,
+  and `timeout` bounds each run, so a deferral waits for both.
   `Report.markdown` holds the text, `markdown_destination` in the summary
   XCom its destination, and `AnalyzeHook.supports_markdown` says which
   backends write it. `sinks.persist_text()` writes any text the way
@@ -100,8 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SparkForensicsOperator` and `spark_forensics_callback`. They need a
   baseline, like the other comparison thresholds, and a metric can carry one
   budget. `regression_budgets` needs `sparkforensics-cli` 0.5.0, the stage
-  budgets 0.7.0. The summary XCom's `comparison` has `budgets`, the figures
-  for each metric of `regression_budgets`.
+  budgets 0.7.0.
 - A Spark History Server application can be the baseline: a
   `baseline_log_source` that resolves to a `HistoryServerApp`
   (`HistoryServerAppLogSourceHook`) is passed to the CLI as

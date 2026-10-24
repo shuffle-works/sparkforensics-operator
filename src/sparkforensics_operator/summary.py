@@ -5,7 +5,6 @@ browser-openable report URL ReportLink shows.
 """
 from __future__ import annotations
 
-from typing import Sequence
 from urllib.parse import quote, urlparse
 
 from sparkforensics_operator.report import DEFAULT_REGRESSION_METRIC
@@ -60,13 +59,11 @@ def build_summary(
     report_url: str | None,
     violated: bool,
     regression_metric: str | None = None,
-    budgeted_metrics: Sequence[str] = (),
     markdown_destination: str | None = None,
 ) -> dict:
     """regression_metric is the comparison metric the summary reports on
-    (DEFAULT_REGRESSION_METRIC when None), and budgeted_metrics the other
-    metrics it lists under comparison["budgets"], the ones regression_budgets
-    names; both matter only for a report compared against a baseline."""
+    (DEFAULT_REGRESSION_METRIC when None); it matters only for a report
+    compared against a baseline."""
     counts = report.summary.get("impactBandCounts", {}) if isinstance(report.summary, dict) else {}
     summary = {
         "schema_version": report.schema_version,
@@ -87,7 +84,7 @@ def build_summary(
         summary["markdown_destination"] = markdown_destination
     if report.comparison is not None:
         summary["comparison"] = _comparison_summary(
-            report.comparison, regression_metric or DEFAULT_REGRESSION_METRIC, budgeted_metrics
+            report.comparison, regression_metric or DEFAULT_REGRESSION_METRIC
         )
     return summary
 
@@ -98,24 +95,12 @@ def _names(report, status: str) -> list[str]:
     return list(dict.fromkeys(r.name for r in report.threshold_results if r.status == status))
 
 
-def _comparison_summary(comparison: dict, metric: str, budgeted_metrics: Sequence[str] = ()) -> dict:
+def _comparison_summary(comparison: dict, metric: str) -> dict:
     """How the run compares with its baseline on metric: verdict is the
     CLI's direction for it (regression, improvement, unchanged, neutral for
     a volume metric, or unavailable), and regression_pct its signed change
     relative to the baseline (positive: it grew), None when that has no
-    finite value. With budgeted_metrics, budgets lists the same figures for
-    each of them."""
-    summary = {
-        **_metric_summary(comparison, metric),
-        "confidence": comparison.get("confidence"),
-        "reason": comparison.get("reason"),
-    }
-    if budgeted_metrics:
-        summary["budgets"] = [_metric_summary(comparison, budgeted) for budgeted in budgeted_metrics]
-    return summary
-
-
-def _metric_summary(comparison: dict, metric: str) -> dict:
+    finite value."""
     metrics = comparison.get("metrics") if isinstance(comparison, dict) else None
     row = next(
         (m for m in metrics or [] if isinstance(m, dict) and m.get("key") == metric), {}
@@ -126,6 +111,8 @@ def _metric_summary(comparison: dict, metric: str) -> dict:
         regression_pct = (candidate - baseline) / abs(baseline) * 100
     return {
         "verdict": row.get("direction", "unavailable"),
+        "confidence": comparison.get("confidence"),
+        "reason": comparison.get("reason"),
         "metric": metric,
         "baseline": baseline,
         "candidate": candidate,

@@ -239,6 +239,10 @@ names in URL credentials and home paths). The CLI keeps other paths, table
 names and SQL text as written, so read what it leaves before sharing the
 report.
 
+The CLI masks secret-looking keys and values in the persisted report's
+`effectiveConf` by default, without `redact`; `redact` adds the pseudonyms
+above.
+
 The operator persists the CLI's redacted output as it is, and everything it
 derives from the report is redacted with it: the summary XCom's `app_name`,
 and the default notification message. The operator's own task log lines
@@ -272,7 +276,8 @@ long, and `timeout` bounds each run. The JSON run decides the task's
 thresholds and exit code. When it produced a report but the Markdown run
 failed (a non-zero exit other than 1 or 3, a timeout, no output), the task
 fails with an error naming "(Markdown report)", after the JSON report was
-read. A deferred run does the same two runs in one remote job.
+read. A deferred run does the same two runs in one remote job, and waits
+for both: its deferral allows `timeout` per run, plus 120 seconds.
 
 The Markdown text is `Report.markdown`, available to a `Notifier`, and its
 destination is `markdown_destination` in the [summary XCom](#summary-xcom).
@@ -448,7 +453,8 @@ hook. Don't define a `resolve` method: Airflow 3's templater calls
   connection `SSHOperator` uses) and reads the JSON report from its
   stdout. Reads `RemoteEventLog` on the same `ssh_conn_id` and
   `HistoryServerApp`, and a `RemoteEventLog` baseline on the same
-  `ssh_conn_id` or a `HistoryServerApp` baseline. `timeout` bounds the whole remote run in seconds,
+  `ssh_conn_id` or a `HistoryServerApp` baseline. `timeout` bounds each CLI run in seconds
+  (with `markdown_dest`, the JSON run and the Markdown run each get it),
   on the worker and on the SSH host through coreutils `timeout`. Every
   argument is shell-quoted. Requires the `ssh` extra on the worker, and
   coreutils `timeout`, Node.js 18+ and `sparkforensics-cli` on the SSH
@@ -752,7 +758,8 @@ warning and never fails the task, whatever `_send()` raises.
 its `cli_version`, its `markdown` (the Markdown report when `markdown_dest`
 is set, else `None`), and `violated`/`inconclusive` properties. `raw` holds
 the CLI's whole report, including the sections the operator does not read
-by name (`metrics`, `effectiveConf`, `writeTargets`, `generator`).
+by name (`metrics`, `effectiveConf`, `writeTargets`, `generator`); see
+[Report destinations](#report-destinations) for what `effectiveConf` holds.
 `verdict_title`, `app_name`, `run_time_ms` and `skipped_lines` read the
 fields the summary XCom reports, and are `None` when the report lacks them.
 
@@ -774,7 +781,14 @@ JSON report (every section it writes: `summary`, `verdict`, `findings`,
 and the rest), plus the operator's own `thresholdResults` and, for a run
 compared against a baseline, the CLI's `comparison` section. The sections
 the operator reads are a subset of it, so whatever a newer CLI adds to its
-report is persisted too. Where to write it:
+report is persisted too.
+
+`effectiveConf` is the job's Spark configuration, which can name
+credentials. The CLI masks secret-looking keys and values in it by default,
+whether or not `redact` is set; `redact=True` also replaces identifiers
+(the application id and name, host names, IP addresses) with pseudonyms
+(see [Redacting the report](#redacting-the-report)). Restrict access to
+`report_dest` as you would to the job's configuration. Where to write it:
 
 - a plain local path, or a mounted filesystem such as HDFS through an NFS
   gateway or FUSE mount;
@@ -826,10 +840,6 @@ reading the report. It is a dict:
 | `metric` | the metric's key |
 | `baseline`, `candidate` | the metric's value in each run, or `None` |
 | `regression_pct` | the metric's change relative to the baseline in percent, positive when it grew; `None` when either value is missing or the baseline is 0 |
-
-With `regression_budgets`, `comparison["budgets"]` lists the same figures
-(`metric`, `verdict`, `baseline`, `candidate`, `regression_pct`) for each
-budgeted metric, in the order of the dict.
 
 Whether a regression breached a budget is in `breached_thresholds`
 (`max-regression`, `max-stage-regression`, `fail-on-introduced`), as for any

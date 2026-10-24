@@ -249,7 +249,6 @@ def run_spark_forensics(
             ti=context.get("ti"),
             report_url_template=report_url_template,
             regression_metric=thresholds.get("regression_metric"),
-            regression_budgets=thresholds.get("regression_budgets"),
             markdown_dest=markdown_dest,
         )
     finally:
@@ -299,7 +298,6 @@ def handle_report(
     ti=None,
     report_url_template: str | None = None,
     regression_metric: str | None = None,
-    regression_budgets: dict | None = None,
     markdown_dest: str | None = None,
 ) -> str:
     """Persists the report (and, with markdown_dest, its Markdown report),
@@ -307,8 +305,7 @@ def handle_report(
     is one), notifies, and applies on_threshold_breach. Shared by run_spark_forensics and the deferrable
     operator's resume step, so a deferred run acts on its report exactly as
     a synchronous one does. regression_metric is the comparison metric the
-    summary XCom reports on, and the metrics of regression_budgets are listed
-    after it, for a report compared against a baseline."""
+    summary XCom reports on, for a report compared against a baseline."""
     destination = sinks.persist(_report_json(report), report_dest, aws_conn_id=aws_conn_id)
     markdown_destination = None
     if markdown_dest is not None:
@@ -367,7 +364,6 @@ def handle_report(
                 report_url=render_report_url(destination, report_url_template),
                 violated=violated,
                 regression_metric=regression_metric,
-                budgeted_metrics=list(regression_budgets or {}),
                 markdown_destination=markdown_destination,
             ),
         )
@@ -662,8 +658,7 @@ class SparkForensicsOperator(BaseOperator):
                 ti=context.get("ti"),
                 report_url_template=self.report_url_template,
                 regression_metric=thresholds.get("regression_metric"),
-                regression_budgets=thresholds.get("regression_budgets"),
-                markdown_dest=markdown_dest,
+                    markdown_dest=markdown_dest,
             )
         except ThresholdBreached as breach:
             self._record_persisted(breach.destination)

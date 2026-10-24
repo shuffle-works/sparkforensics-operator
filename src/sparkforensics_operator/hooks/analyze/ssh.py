@@ -292,7 +292,8 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         )
 
     def defer_timeout(self, job: dict) -> timedelta:
-        deadline = job["submitted_at"] + job["timeout"] + _DEFER_GRACE_S
+        runs = 2 if "markdown_file" in job else 1
+        deadline = job["submitted_at"] + runs * job["timeout"] + _DEFER_GRACE_S
         return timedelta(seconds=max(1.0, deadline - time.time()))
 
     def collect(self, job: dict, event: dict, log_ref: EventLogRef, thresholds: dict) -> Report:
