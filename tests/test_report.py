@@ -137,6 +137,11 @@ def test_a_cli_older_than_the_tested_version_gets_a_warning(cli_version):
     assert "npm install -g sparkforensics-cli" in warning
 
 
+@pytest.mark.parametrize("cli_version", ["dev", "v0.10.1", "", 10])
+def test_no_warning_for_a_cli_version_that_is_not_a_release_number(cli_version):
+    assert cli_version_warning(cli_version) is None
+
+
 def test_a_report_without_a_cli_version_gets_a_warning():
     warning = cli_version_warning(None)
 

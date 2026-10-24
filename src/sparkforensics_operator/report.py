@@ -169,6 +169,8 @@ def cli_version_warning(cli_version: str | None) -> str | None:
     without a version is from a CLI before 0.8.0."""
     if cli_version is None:
         older = "The report does not name its sparkforensics-cli, so it is older than 0.8.0"
+    elif not isinstance(cli_version, str) or not re.match(r"\d", cli_version):
+        return None
     elif _release(cli_version) < _release(TESTED_CLI_VERSION):
         older = f"sparkforensics-cli {cli_version} is older than {TESTED_CLI_VERSION}"
     else:
