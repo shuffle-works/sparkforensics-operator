@@ -281,6 +281,11 @@ def test_exit_2_is_a_usage_error_that_airflow_does_not_retry():
     assert isinstance(raised.value, AirflowFailException)
 
 
+def test_exit_2_with_only_the_usage_text_keeps_it_so_the_message_is_not_empty():
+    with pytest.raises(CliConfigurationError, match=r"\(exit 2, usage error\): Usage: sparkforensics-analyze"):
+        check_exit_code(2, _USAGE)
+
+
 def test_exit_2_for_an_option_the_cli_does_not_know_names_the_upgrade():
     stderr = "Unknown option '--ignore-conf'. To specify a positional argument starting with a '-', ..." + _USAGE
 

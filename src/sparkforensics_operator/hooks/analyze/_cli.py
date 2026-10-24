@@ -217,8 +217,9 @@ def check_markdown_exit_code(returncode: int, stderr: str, where: str = "") -> N
 
 
 def _cli_message(stderr: str) -> str:
-    """The CLI's stderr without the usage text it appends to a usage error."""
-    return stderr.partition(_USAGE_START)[0].strip()
+    """The CLI's stderr without the usage text it appends to a usage error,
+    or the usage text itself when that is all it wrote (no arguments)."""
+    return stderr.partition(_USAGE_START)[0].strip() or stderr.strip()
 
 
 def _history_server_failure(detail: str) -> tuple[str, bool] | None:

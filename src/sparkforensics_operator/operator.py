@@ -17,13 +17,13 @@ from sparkforensics_operator._compat import (
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks.analyze.base import AnalyzeHook, DeferrableAnalyzeHook
 from sparkforensics_operator.links import ReportLink
-from sparkforensics_operator.report import DEFAULT_REGRESSION_METRIC, cli_version_warning
 from sparkforensics_operator.log_ref import (
     LocalEventLog,
     RemoteEventLog,
     log_ref_from_dict,
     log_ref_to_dict,
 )
+from sparkforensics_operator.report import DEFAULT_REGRESSION_METRIC, cli_version_warning
 from sparkforensics_operator.summary import (
     SUMMARY_XCOM_KEY,
     build_summary,
@@ -90,6 +90,32 @@ def _validate_budgets(name: str, budgets) -> None:
             raise ValueError(f"{name}[{metric!r}] must be a non-negative number, got {pct!r}")
 
 
+def _validate_budget_thresholds(thresholds: dict) -> None:
+    """The per-metric regression budgets: well formed, one budget per metric,
+    and stage_qualities only with stage_regression_budgets."""
+    for name in ("regression_budgets", "stage_regression_budgets"):
+        _validate_budgets(name, thresholds.get(name))
+    regression_budgets = thresholds.get("regression_budgets")
+    if _is_set(regression_budgets) and thresholds.get("max_regression_pct") is not None:
+        paired = thresholds.get("regression_metric") or DEFAULT_REGRESSION_METRIC
+        if paired in regression_budgets:
+            raise ValueError(
+                f"{paired} is budgeted twice, by max_regression_pct and by regression_budgets; "
+                "the CLI allows one budget per metric."
+            )
+    qualities = thresholds.get("stage_qualities")
+    if _is_set(qualities):
+        if isinstance(qualities, str) or not all(q in _STAGE_QUALITIES for q in qualities):
+            raise ValueError(
+                f"stage_qualities must be a list drawn from {_STAGE_QUALITIES}, got {qualities!r}"
+            )
+        if not _is_set(thresholds.get("stage_regression_budgets")):
+            raise ValueError(
+                "stage_qualities needs stage_regression_budgets: it picks which paired "
+                "stages those budgets read."
+            )
+
+
 def _validate_comparison_tuning(thresholds: dict) -> None:
     for name in ("normalize_path", "ignore_conf"):
         patterns = thresholds.get(name)
@@ -139,28 +165,8 @@ def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dic
     band = thresholds.get("fail_on_introduced")
     if band is not None and band not in _INTRODUCED_BANDS:
         raise ValueError(f"fail_on_introduced must be one of {_INTRODUCED_BANDS}, got {band!r}")
-    for name in ("regression_budgets", "stage_regression_budgets"):
-        _validate_budgets(name, thresholds.get(name))
-    regression_budgets = thresholds.get("regression_budgets")
-    if _is_set(regression_budgets) and thresholds.get("max_regression_pct") is not None:
-        paired = thresholds.get("regression_metric") or DEFAULT_REGRESSION_METRIC
-        if paired in regression_budgets:
-            raise ValueError(
-                f"{paired} is budgeted twice, by max_regression_pct and by regression_budgets; "
-                "the CLI allows one budget per metric."
-            )
+    _validate_budget_thresholds(thresholds)
     _validate_comparison_tuning(thresholds)
-    qualities = thresholds.get("stage_qualities")
-    if _is_set(qualities):
-        if isinstance(qualities, str) or not all(q in _STAGE_QUALITIES for q in qualities):
-            raise ValueError(
-                f"stage_qualities must be a list drawn from {_STAGE_QUALITIES}, got {qualities!r}"
-            )
-        if not _is_set(thresholds.get("stage_regression_budgets")):
-            raise ValueError(
-                "stage_qualities needs stage_regression_budgets: it picks which paired "
-                "stages those budgets read."
-            )
     if (
         baseline_log_source is not None
         and isinstance(backend, AnalyzeHook)

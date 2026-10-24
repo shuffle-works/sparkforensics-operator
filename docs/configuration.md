@@ -326,8 +326,8 @@ A callback cannot defer. `deferrable` defaults to `False` here, ignores
 `ValueError`.
 
 Airflow does not render callback arguments, so the callback renders them
-itself when it runs: `report_dest` and the templated arguments of
-`log_source`, `baseline_log_source` and `backend`, with the upstream task's Jinja environment
+itself when it runs: `report_dest`, `markdown_dest` and the templated
+arguments of `log_source`, `baseline_log_source` and `backend`, with the upstream task's Jinja environment
 (its DAG's macros and filters) and the callback's context. Every value is
 rendered as a template string, never loaded as a template file, so a
 `report_dest` ending in `.json` works on an upstream task whose
