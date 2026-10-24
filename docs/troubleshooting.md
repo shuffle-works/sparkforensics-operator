@@ -422,7 +422,8 @@ the async hook doesn't read.
 
 ### A deferred task fails with "Trigger timeout" or "Trigger/execution timeout"
 
-The job didn't report back within `timeout` plus 120 seconds, or within
+The job didn't report back within `timeout` (twice `timeout` with
+`markdown_dest`) plus 120 seconds, or within
 the task's `execution_timeout`. The task log's "SparkForensics deferred
 analysis did not finish" line precedes the stop and cleanup of the job.
 Check the SSH host for a reboot or an externally killed job.
@@ -439,7 +440,7 @@ directory"). See the reaper suggestion below.
 | Situation | What happens |
 |---|---|
 | The analysis runs past `timeout` | Coreutils `timeout` stops the CLI on the host (exit 124), the trigger fires, and the task fails with the same "timed out after {timeout}s on the SSH host" error as a synchronous run. The job directory is removed. |
-| The job never reports back (host rebooted, job killed from outside) | The deferral gives up 120 seconds past `timeout`, counted from submission, or at the task's `execution_timeout` if that comes first. The task resumes only to stop the job and remove its directory, if the host is reachable. On Airflow 3 it then fails with `TaskDeferralTimeout` ("Trigger timeout"). On Airflow 2 it fails with `TaskDeferralError` ("Trigger/execution timeout"), or, when `execution_timeout` ran out first, with `AirflowTaskTimeout`, after which the task runner calls `on_kill()` to do the same cleanup. |
+| The job never reports back (host rebooted, job killed from outside) | The deferral gives up 120 seconds past `timeout` (twice `timeout` with `markdown_dest`), counted from submission, or at the task's `execution_timeout` if that comes first. The task resumes only to stop the job and remove its directory, if the host is reachable. On Airflow 3 it then fails with `TaskDeferralTimeout` ("Trigger timeout"). On Airflow 2 it fails with `TaskDeferralError` ("Trigger/execution timeout"), or, when `execution_timeout` ran out first, with `AirflowTaskTimeout`, after which the task runner calls `on_kill()` to do the same cleanup. |
 | The triggerer can't reach the host | It retries, tolerating five consecutive connection failures, and fires an error event on the sixth; any other error ends the trigger at once. The task stops and removes the job (best effort) and fails with "lost track of remote job ... while waiting for it". |
 | A retry, or a clear while deferred | Every try first stops any job an earlier try of the same task instance left running and removes its directory, then submits its own. There is never more than one analysis per task instance on the host, and a new try never reuses an old try's output. |
 | A worker restarts while the task is deferred | Nothing: no worker holds the task. A worker that dies while submitting or reading back fails the try as usual, and the next try cleans up. |
