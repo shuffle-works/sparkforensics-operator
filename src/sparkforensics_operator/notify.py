@@ -29,10 +29,8 @@ class Notifier(ABC):
 
     @staticmethod
     def _default_message(report, report_destination: str) -> str:
-        """One plain-text line: the app, the CLI's verdict, the run time, the
-        finding counts, the number of event log lines the CLI skipped when
-        there are any, and where the report is. Whatever the report does not
-        carry is left out."""
+        """One line: app, verdict, run time, finding counts, skipped lines
+        and the report location. Whatever the report lacks is left out."""
         counts = report.summary.get("impactBandCounts", {})
         parts = [f"SparkForensics report{f' for {report.app_name}' if report.app_name else ''}:"]
         if report.verdict_title:

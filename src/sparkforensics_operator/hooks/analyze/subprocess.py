@@ -8,7 +8,7 @@ from sparkforensics_operator._compat import AirflowException
 from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, LocalEventLog
 from sparkforensics_operator.report import Report
 
-from ._cli import USABLE_REPORT_EXIT_CODES, build_cli_args, build_report, check_exit_code, check_markdown_exit_code
+from ._cli import USABLE_REPORT_EXIT_CODES, build_cli_args, build_report, check_exit_code
 from .base import AnalyzeHook
 
 
@@ -46,7 +46,7 @@ class SubprocessAnalyzeHook(AnalyzeHook):
             # The CLI writes one format per run, so the Markdown report is a
             # second run over the same log.
             returncode, markdown, stderr = self._run(log_ref, thresholds, baseline_ref, markdown=True)
-            check_markdown_exit_code(returncode, stderr)
+            check_exit_code(returncode, stderr, " (Markdown report)")
             report.markdown = markdown
         return report
 

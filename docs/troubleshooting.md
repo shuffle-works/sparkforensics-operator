@@ -19,15 +19,14 @@ prerequisites](getting-started.md#worker-prerequisites-subprocessanalyzehook).
 The CLI refused the command line the operator built, and the message
 quotes its reason. Typical causes are a threshold or budget value the CLI
 cannot read, a `regression_metric` it does not know, or a malformed
-`base_url`, `app_id` or `attempt_id`. "Unknown option" means the
-installed `sparkforensics-cli` is older than the option the operator
-passed: upgrade it (the [minimum CLI version of each
-option](configuration.md#minimum-cli-version-per-option) is listed
-there).
+`base_url`, `app_id` or `attempt_id`. "Unknown option" means the installed
+`sparkforensics-cli` is older than the option the operator passed. Upgrade
+it; the [minimum CLI version of each
+option](configuration.md#minimum-cli-version-per-option) is listed there.
 
-This raises `CliConfigurationError`, an `AirflowFailException`, so
-Airflow does not retry it: the same arguments fail the same way. A CLI
-older than 0.5.0 also exits 2 for an unreadable event log.
+This raises `CliConfigurationError`, an `AirflowFailException`, so Airflow
+does not retry it: the same arguments fail the same way. A CLI older than
+0.5.0 also exits 2 for an unreadable event log.
 
 #### "sparkforensics-analyze [on the SSH host (...)] could not read or parse the event log, or fetch it from the Spark History Server (exit 4, event log)"
 
@@ -50,27 +49,24 @@ reported, after "The CLI said:" quoting its own text:
 | the event log is larger than the CLI's download cap | raise `SPARKFORENSICS_MAX_ARCHIVE_BYTES` on the CLI's host, or analyze the log from a file | no |
 | the address, application id or attempt id is invalid | `base_url`, `app_id`, `attempt_id` | no |
 
-A retried failure raises `HistoryServerFetchError`; a failure no retry
-can fix raises `CliConfigurationError`, an `AirflowFailException`. Both
+A failure a retry can clear raises `HistoryServerFetchError`; one it
+cannot raises `CliConfigurationError`, an `AirflowFailException`. Both
 extend `CliError`, whose `exit_code` attribute holds the CLI's exit code.
-An event log that cannot be read or parsed (a missing file, a corrupt
-log) raises a plain `CliError`, which Airflow retries like any task
-failure.
+An event log that cannot be read or parsed (a missing file, a corrupt log)
+raises a plain `CliError`, which Airflow retries like any task failure.
 
 #### "sparkforensics-analyze [on the SSH host (...)] could not read or parse the baseline (exit 5, baseline)"
 
-The same as exit 4, for the run `baseline_log_source` resolved to: the
-path is missing on the host running the analysis, the log is not a valid
-event log, or the baseline's History Server fetch failed (classified as
-above). When both the run and its baseline are unreadable the CLI
-reports the baseline.
+The same causes as exit 4, for the run `baseline_log_source` resolved to,
+and classified the same way. When both the run and its baseline are
+unreadable, the CLI reports the baseline.
 
 #### "sparkforensics-analyze [on the SSH host (...)] failed with an internal error (exit 6, internal error)"
 
-The CLI hit a bug, or a write after its checks failed. The message
-carries the CLI's stack trace. Report it to the sparkforensics project
-with that trace; a retry rarely helps. `CliError` is raised and Airflow
-retries it like any task failure.
+The CLI hit a bug, or a write after its checks failed. The message carries
+the CLI's stack trace. Report it to the sparkforensics project with that
+trace; a retry rarely helps. The operator raises `CliError`, which Airflow
+retries like any task failure.
 
 #### "sparkforensics-analyze exited ... but its JSON report could not be parsed"
 
@@ -82,17 +78,17 @@ interactive shells.
 
 #### "... wrote a report this sparkforensics-operator cannot read: report schemaVersion N ..."
 
-The CLI's report is in a schema the operator does not read: an older one
-than 5 (CLI before 0.4.0), or a newer one than the operator knows. For a
-newer one, upgrade `sparkforensics-operator`, or install a
-`sparkforensics-cli` release that writes schema 5 on the worker or SSH
-host. The task fails without retrying: every try reads the same report.
+The CLI's report uses a schema the operator does not read: one older than
+5 (CLI before 0.4.0) or one newer than the operator knows. For a newer
+one, upgrade `sparkforensics-operator`, or install a `sparkforensics-cli`
+release that writes schema 5 on the worker or SSH host. The task fails
+without retrying, since every try reads the same report.
 
 #### Warning "sparkforensics-cli X is older than Y, the release this sparkforensics-operator is tested against"
 
-The CLI on the worker or SSH host is older than the release the operator's
-tests run. The run still completes, but an option the operator passes can
-be missing from that CLI (see the [minimum CLI version of each
+The CLI on the worker or SSH host is older than the release the operator
+is tested against. The run completes, but an option the operator passes
+can be missing from that CLI (see the [minimum CLI version of each
 option](configuration.md#minimum-cli-version-per-option)). Upgrade it with
 `npm install -g sparkforensics-cli`. A report with no CLI version comes
 from a CLI before 0.8.0.
@@ -104,9 +100,9 @@ from a CLI before 0.8.0.
 failed. The message names the same causes as the JSON run's (an OOM kill,
 a timeout past `timeout`, a missing host), with "(Markdown report)" after
 `sparkforensics-analyze`. The JSON report was read, so the failure is in
-the second run alone: look at the host's memory and at `timeout`, which
-bounds each run. The two runs read the same log, so a log that parses the
-first time rarely fails the second except for such resource limits.
+the second run alone. Check the host's memory and `timeout`, which bounds
+each run. Both runs read the same log, so a log that parses the first time
+rarely fails the second except for such resource limits.
 
 #### "sparkforensics-analyze exited with unexpected code {returncode}"
 
@@ -142,8 +138,7 @@ event log path where the analysis runs (a `LocalEventLog` for
 `SubprocessAnalyzeHook`, a `RemoteEventLog` for `SSHAnalyzeHook`) or a
 Spark History Server application. "cannot compare against a baseline on a
 different SSH host" means the baseline's `ssh_conn_id` differs from the
-backend's. See
-[comparing against a baseline
+backend's. See [comparing against a baseline
 run](configuration.md#comparing-against-a-baseline-run).
 
 #### "The baseline (...) overlaps the log under analysis"
@@ -341,12 +336,12 @@ summary's `comparison.verdict` says which (`unavailable` or `neutral`).
 
 #### A threshold passes on one `sparkforensics-cli` version and fails on another
 
-The CLI evaluates the budgets, and its measurements change between
+The CLI evaluates the budgets, and its measurements differ between
 releases. `max_failed_task_rate_pct` is the usual case: CLI 0.10.2 and
 newer count every failed task attempt, including the ones a retry
-recovered, so a job whose tasks were retried can violate a budget the same
-log passed before. `max_spill_gb` and `max_skew_ratio` are measured over
-the run's stages in the same release. [What the CLI measures, by
+recovered, so a job whose tasks were retried can violate a budget that the
+same log passes on an older CLI. `max_spill_gb` and `max_skew_ratio` also
+differ between those releases. [What the CLI measures, by
 version](configuration.md#what-the-cli-measures-by-version) lists them. The
 `cli_version` of the [summary XCom](configuration.md#summary-xcom) says which
 CLI evaluated a run.
@@ -354,11 +349,11 @@ CLI evaluated a run.
 #### The CLI exits 3 with a `parse-incomplete` result
 
 The event log has lines the CLI could not parse, and `sparkforensics-cli`
-0.10.2 or newer says so: the totals cover only the lines that parsed, so
+0.10.2 or newer reports it. The totals cover only the lines that parsed, so
 a budget that passes cannot be trusted. The result is inconclusive, never a
-violation, and the task does not fail on it. The number of skipped lines is
-`skipped_lines` in the summary XCom. Check the log for a truncated write or
-a mix of two writers; `parse-incomplete` also covers a damaged baseline.
+violation, and the task does not fail on it. `skipped_lines` in the summary
+XCom holds the number of skipped lines. Check the log for a truncated write
+or a mix of two writers; `parse-incomplete` also covers a damaged baseline.
 
 #### `ValueError: ... need baseline_log_source` or "regression_metric needs max_regression_pct" at DAG parse
 
@@ -380,14 +375,14 @@ the CLI's message in the exit 2 error described above.
 
 `markdown_dest` is set with a backend that does not produce the Markdown
 report. `SubprocessAnalyzeHook` and `SSHAnalyzeHook` do. A custom backend
-needs `supports_markdown = True` and has to set `Report.markdown`.
+needs `supports_markdown = True` and must set `Report.markdown`.
 
 #### `ValueError: ... is budgeted twice` or "regression_budgets[...] must be a non-negative number" at DAG parse
 
 A metric can carry one regression budget. `max_regression_pct` budgets
-`regression_metric`, or `wallClock` when that is unset, so the same metric
+`regression_metric`, or `wallClock` when that is unset, so that metric
 cannot also be a key of `regression_budgets`. A budget is a plain
-non-negative number (not a string, `inf` or `nan`), and a metric name a
+non-negative number (not a string, `inf` or `nan`), and a metric name is a
 non-empty string without `:`.
 
 #### Comparison `confidence` is `low`
@@ -423,8 +418,7 @@ the async hook doesn't read.
 ### A deferred task fails with "Trigger timeout" or "Trigger/execution timeout"
 
 The job didn't report back within `timeout` (twice `timeout` with
-`markdown_dest`) plus 120 seconds, or within
-the task's `execution_timeout`. The task log's "SparkForensics deferred
+`markdown_dest`) plus 120 seconds, or within the task's `execution_timeout`. The task log's "SparkForensics deferred
 analysis did not finish" line precedes the stop and cleanup of the job.
 Check the SSH host for a reboot or an externally killed job.
 

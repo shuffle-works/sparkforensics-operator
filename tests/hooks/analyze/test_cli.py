@@ -6,12 +6,7 @@ import pytest
 from airflow.exceptions import AirflowException, AirflowFailException
 
 from sparkforensics_operator.exceptions import CliConfigurationError, CliError, HistoryServerFetchError
-from sparkforensics_operator.hooks.analyze._cli import (
-    build_cli_args,
-    build_report,
-    check_exit_code,
-    check_markdown_exit_code,
-)
+from sparkforensics_operator.hooks.analyze._cli import build_cli_args, build_report, check_exit_code
 from sparkforensics_operator.log_ref import HistoryServerApp, LocalEventLog, RemoteEventLog
 
 # What the CLI writes to stderr after the message of a usage error.
@@ -151,12 +146,6 @@ def test_build_cli_args_writes_the_json_run_with_every_flag_when_markdown_is_wan
     assert args == ["sparkforensics-analyze", "/tmp/app.log", "--format", "json", "--max-runtime", "1000"]
 
 
-def test_the_markdown_run_exit_code_check_names_that_run():
-    check_markdown_exit_code(3, "")
-    with pytest.raises(CliError, match=r"sparkforensics-analyze on the SSH host \(Markdown report\) exited with unexpected code 137"):
-        check_markdown_exit_code(137, "Killed", " on the SSH host")
-
-
 def test_build_cli_args_passes_redact_as_a_switch():
     args = build_cli_args(
         "sparkforensics-analyze", HistoryServerApp(base_url="http://shs:18080", app_id="app-1"),
@@ -289,7 +278,7 @@ def test_exit_2_with_only_the_usage_text_keeps_it_so_the_message_is_not_empty():
 def test_exit_2_for_an_option_the_cli_does_not_know_names_the_upgrade():
     stderr = "Unknown option '--ignore-conf'. To specify a positional argument starting with a '-', ..." + _USAGE
 
-    with pytest.raises(CliConfigurationError, match="does not know this option: upgrade it"):
+    with pytest.raises(CliConfigurationError, match="is older than this option: upgrade it"):
         check_exit_code(2, stderr, where=" on the SSH host (ssh_conn_id='onprem_ssh')")
 
 

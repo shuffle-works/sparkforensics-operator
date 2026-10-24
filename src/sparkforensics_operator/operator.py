@@ -46,7 +46,6 @@ COMPARISON_THRESHOLDS = (
 )
 # fail_on_introduced's values: an impact band, or any introduced finding.
 _INTRODUCED_BANDS = ("critical", "warning", "info", "all")
-# The pair qualities stage_qualities picks from.
 _STAGE_QUALITIES = ("exact", "structural", "aligned")
 # The XCom a deferrable run keeps its submitted job under, until the task
 # instance's next try clears it.
@@ -61,16 +60,14 @@ def _validate_on_threshold_breach(value: str) -> None:
 
 
 def as_list(value):
-    """A sequence as a list, which survives a deferral as plain JSON. A string
-    stays one, for the validation to refuse, rather than splitting into
-    characters."""
+    """A sequence as a list, so it survives a deferral as JSON. A string stays
+    a string, for the validation to refuse."""
     return list(value) if value is not None and not isinstance(value, str) else value
 
 
 def _is_set(value) -> bool:
-    """Whether a threshold was given: an empty budget dict or quality list
-    is the same as none."""
-    return value is not None and not (isinstance(value, (dict, list, tuple)) and len(value) == 0)
+    """An empty dict or list is the same as no threshold."""
+    return value is not None and value != {} and value != [] and value != ()
 
 
 def _validate_budgets(name: str, budgets) -> None:
@@ -81,12 +78,7 @@ def _validate_budgets(name: str, budgets) -> None:
     for metric, pct in budgets.items():
         if not isinstance(metric, str) or not metric or ":" in metric:
             raise ValueError(f"{name} metric names must be non-empty strings without ':', got {metric!r}")
-        if (
-            isinstance(pct, bool)
-            or not isinstance(pct, (int, float))
-            or not math.isfinite(pct)
-            or pct < 0
-        ):
+        if isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 <= pct < math.inf:
             raise ValueError(f"{name}[{metric!r}] must be a non-negative number, got {pct!r}")
 
 
@@ -135,14 +127,8 @@ def _validate_comparison_tuning(thresholds: dict) -> None:
 
 
 def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dict) -> None:
-    """Raise ValueError for the comparison settings the CLI would reject
-    or could never evaluate: a comparison threshold without a baseline,
-    regression_metric without max_regression_pct, an unknown
-    fail_on_introduced band, a regression budget malformed or given twice
-    for one metric, stage_qualities without stage_regression_budgets, a
-    malformed normalize_path, ignore_conf or noise_band_pct, redact that is
-    not a bool, or a baseline for a backend that cannot pass one to the
-    CLI."""
+    """Raise ValueError for a setting the CLI would reject or could never
+    evaluate, or that the backend cannot pass to it."""
     if not isinstance(thresholds.get("redact", False), bool):
         raise ValueError(f"redact must be True or False, got {thresholds['redact']!r}")
     if thresholds.get("markdown") and isinstance(backend, AnalyzeHook) and not backend.supports_markdown:
@@ -179,8 +165,7 @@ def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dic
 
 
 def _baseline_kwargs(baseline_ref) -> dict:
-    # Passed only when there is one, so a backend without baseline support
-    # is called exactly as before.
+    # A backend without baseline support is never handed the argument.
     return {} if baseline_ref is None else {"baseline_ref": baseline_ref}
 
 

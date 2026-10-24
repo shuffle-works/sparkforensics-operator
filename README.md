@@ -45,8 +45,8 @@ runs as part of the DAG, right where the Spark task just ran.
   `stage_regression_budgets` the paired stages. `fail_on_introduced` fails
   it when the run gained new findings. The comparison's verdict,
   confidence and measured regression land in the summary XCom.
-- `markdown_dest` also persists the CLI's Markdown report, which a
-  notifier can post or a person can read.
+- `markdown_dest` also persists the CLI's Markdown report, for a notifier
+  to post or a person to read.
 - Reports persist to a local path, `file://`, or `s3://`, and a clickable
   "SparkForensics report" link shows up on the task in the Airflow UI. Set
   `report_url_template` (an S3 console URL, say) to make it open in a

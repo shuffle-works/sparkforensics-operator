@@ -12,7 +12,7 @@ from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, Remot
 from sparkforensics_operator.report import Report
 
 from . import _remote_job
-from ._cli import USABLE_REPORT_EXIT_CODES, build_report, check_exit_code, check_markdown_exit_code
+from ._cli import USABLE_REPORT_EXIT_CODES, build_report, check_exit_code
 from .base import DeferrableAnalyzeHook
 
 # POSIX shells exit 127 for "command not found" and 126 for "found but not
@@ -160,8 +160,8 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         return report
 
     def _run_cli(self, argv: list[str], log_ref: EventLogRef) -> tuple[int, str, str]:
-        """Runs argv on the host and returns (exit status, stdout, stderr),
-        keeping the run where on_kill() can stop it until it is over."""
+        """Runs argv on the host and returns (exit status, stdout, stderr).
+        on_kill() can stop the run until it ends."""
         self._sync_argv = argv
         try:
             result = self._run_remote(_remote_job.sync_analysis_command(argv), log_ref)
@@ -342,8 +342,8 @@ class SSHAnalyzeHook(DeferrableAnalyzeHook):
         return report
 
     def _read_markdown_run(self, client, job: dict) -> tuple[int | None, str | None, str]:
-        """What the job's Markdown run left: its exit code (None when it
-        never wrote one), its report (None when it wrote none) and stderr."""
+        """The Markdown run's exit code, report and stderr; None for a missing
+        exit code or report."""
         exit_code_text = self._read_file(client, job["markdown_exit_file"])
         try:
             markdown_exit_code = int((exit_code_text or "").strip())
@@ -517,10 +517,8 @@ def _markdown_from_run(
     ssh_conn_id: str,
     timeout: int,
 ) -> str:
-    """The one mapping from the Markdown run's outcome to its report or an
-    error, shared by the synchronous and the deferrable path. returncode is
-    None for a deferred run that left no exit code, and markdown None for
-    one that left no report."""
+    """The Markdown run's report, or an error. returncode is None when a
+    deferred run left no exit code, and markdown None when it left no report."""
     where = _where(ssh_conn_id)
     if returncode == _REMOTE_TIMEOUT_EXIT_CODE:
         raise _timeout_error(timeout, ssh_conn_id, log_ref)
@@ -529,7 +527,7 @@ def _markdown_from_run(
             f"sparkforensics-analyze{where} did not report how its Markdown report run "
             f"ended: {stderr.strip()}"
         )
-    check_markdown_exit_code(returncode, stderr, where)
+    check_exit_code(returncode, stderr, f"{where} (Markdown report)")
     if markdown is None:
         raise AirflowException(
             f"sparkforensics-analyze{where} exited {returncode} but wrote no Markdown report: "

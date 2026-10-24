@@ -27,23 +27,20 @@ from sparkforensics_operator.report import (
 # (OOM-kill, wrapper failure, etc.) means the report is not trustworthy.
 USABLE_REPORT_EXIT_CODES = {0, 1, 3}
 
-# The CLI's exit codes that carry no report: what the CLI did, and a short label.
+# The exit codes that carry no report: what the CLI did, and a short label.
 _EXIT_CODE_MEANINGS = {
     2: ("rejected its arguments", "usage error"),
     4: ("could not read or parse the event log, or fetch it from the Spark History Server", "event log"),
     5: ("could not read or parse the baseline", "baseline"),
     6: ("failed with an internal error", "internal error"),
 }
-# Codes whose message can be a Spark History Server fetch failure: the
-# candidate's (4) and the baseline's (5).
+# The candidate (4) and the baseline (5) can fail on a History Server fetch.
 _HISTORY_SERVER_EXIT_CODES = {4, 5}
-# A usage error's stderr ends with the CLI's usage text.
+# The CLI appends its usage text to a usage error.
 _USAGE_START = "Usage: sparkforensics-analyze"
-_UNKNOWN_OPTION = re.compile(r"Unknown option", re.I)
-# The Spark History Server failures the CLI names in its stderr, each with
-# what it means and whether a retry can clear it. A "refused or errored"
-# answer covers an access problem as well as a server error, which only the
-# History Server's own log tells apart, so it counts as retryable.
+# The History Server failures the CLI names in stderr: what each means, and
+# whether a retry can clear it. "Refused or errored" covers both an access
+# problem and a server error, so it is retried.
 _HISTORY_SERVER_FAILURES = (
     (
         re.compile(r"SHS fetch failed: upstream-unreachable"),
@@ -81,8 +78,7 @@ _HISTORY_SERVER_FAILURES = (
 )
 
 
-# The settings that shape the CLI's report rather than budget it: the run that
-# writes the Markdown report takes these and none of the budget flags.
+# The settings the Markdown run takes: it has no budget flags.
 _REPORT_SHAPING_KEYS = ("normalize_path", "ignore_conf", "noise_band_pct", "redact")
 
 
@@ -94,13 +90,9 @@ def build_cli_args(
     baseline_ref: EventLogRef | None = None,
     markdown: bool = False,
 ) -> list[str]:
-    """Without out_path the CLI writes its report to stdout. baseline_ref,
-    if given, is the run to compare against (--baseline, or the
-    --baseline-shs-* flags for a History Server application) that the
-    backend has already checked it can read. The report is JSON, or with
-    markdown=True the Markdown report, which the CLI cannot write in the
-    same run: that run has no budget flags, so it prints no threshold
-    lines."""
+    """The CLI's arguments for the JSON report, or with markdown=True the
+    Markdown one (the CLI writes one format per run). Without out_path the CLI
+    writes to stdout."""
     args = [analyze_bin, *_log_ref_args(log_ref), "--format", "md" if markdown else "json"]
     if baseline_ref is not None:
         args.extend(_baseline_args(baseline_ref))
@@ -124,8 +116,6 @@ def _log_ref_args(log_ref: EventLogRef) -> list[str]:
 
 
 def _baseline_args(baseline_ref: EventLogRef) -> list[str]:
-    # --baseline takes an event-log file or rolling-log directory; the
-    # --baseline-shs-* flags mirror --shs-base-url/--app-id/--attempt-id.
     if isinstance(baseline_ref, HistoryServerApp):
         args = ["--baseline-shs-base-url", baseline_ref.base_url, "--baseline-app-id", baseline_ref.app_id]
         if baseline_ref.attempt_id:
@@ -152,10 +142,9 @@ def _threshold_args(thresholds: dict) -> list[str]:
 
 
 def _flag_value(value) -> str:
-    """A number as the plain decimal the CLI reads: str() writes some floats
-    in exponent form (1e-05, 1e+16), which the CLI rejects as a usage error.
-    A string, such as a metric name, is passed as it is, and a list is
-    joined with commas."""
+    """A number as a plain decimal: the CLI rejects the exponent form (1e-05)
+    that str() writes for some floats. A string passes as it is, a list is
+    comma-joined."""
     if isinstance(value, str):
         return value
     if isinstance(value, (list, tuple)):
@@ -164,8 +153,7 @@ def _flag_value(value) -> str:
 
 
 def _repeated_values(value: dict | list | None) -> list[str]:
-    """The values of a flag the CLI takes once per value: a budget dict
-    {metric: percentage} as "<metric>:<percentage>", a list as it is."""
+    """The items of a repeated flag: "<metric>:<percentage>" for a budget dict."""
     if isinstance(value, dict):
         return [f"{metric}:{_flag_value(pct)}" for metric, pct in value.items()]
     return [str(item) for item in value or []]
@@ -180,10 +168,9 @@ def check_exit_code(returncode: int, stderr: str, where: str = "") -> None:
 
 
 def cli_error_for_exit_code(returncode: int, stderr: str, where: str = "") -> CliError:
-    """The error for a CLI exit code that carries no report. A Spark History
-    Server failure is told apart by the CLI's own message: the ones a retry
-    can clear raise HistoryServerFetchError, the ones it cannot (and a usage
-    error) raise CliConfigurationError, which Airflow does not retry."""
+    """The error for an exit code that carries no report. A History Server
+    failure is told apart by the CLI's message: a retry can clear
+    HistoryServerFetchError, not CliConfigurationError (nor a usage error)."""
     detail = _cli_message(stderr)
     if returncode not in _EXIT_CODE_MEANINGS:
         return CliError(
@@ -193,42 +180,21 @@ def cli_error_for_exit_code(returncode: int, stderr: str, where: str = "") -> Cl
     meaning, label = _EXIT_CODE_MEANINGS[returncode]
     problem = f"sparkforensics-analyze{where} {meaning} (exit {returncode}, {label})"
     if returncode in _HISTORY_SERVER_EXIT_CODES:
-        failure = _history_server_failure(detail)
-        if failure is not None:
-            cause, retryable = failure
-            error_type = HistoryServerFetchError if retryable else CliConfigurationError
-            return error_type(f"{problem}: {cause}. The CLI said: {detail}", returncode)
+        for pattern, cause, retryable in _HISTORY_SERVER_FAILURES:
+            if pattern.search(detail):
+                error_type = HistoryServerFetchError if retryable else CliConfigurationError
+                return error_type(f"{problem}: {cause}. The CLI said: {detail}", returncode)
     message = f"{problem}: {detail}"
     if returncode == 2:
-        if _UNKNOWN_OPTION.search(detail):
-            message += (
-                " The installed sparkforensics-cli does not know this option: upgrade it "
-                "(docs/configuration.md lists the version each option needs)."
-            )
+        if "Unknown option" in detail:
+            message += " The installed sparkforensics-cli is older than this option: upgrade it."
         return CliConfigurationError(message, returncode)
     return CliError(message, returncode)
 
 
-def check_markdown_exit_code(returncode: int, stderr: str, where: str = "") -> None:
-    """check_exit_code for the run that writes the Markdown report, whose
-    error names that run, since the JSON run before it succeeded."""
-    if returncode not in USABLE_REPORT_EXIT_CODES:
-        raise cli_error_for_exit_code(returncode, stderr, f"{where} (Markdown report)")
-
-
 def _cli_message(stderr: str) -> str:
-    """The CLI's stderr without the usage text it appends to a usage error,
-    or the usage text itself when that is all it wrote (no arguments)."""
+    """The stderr without the usage text, unless that is all there is."""
     return stderr.partition(_USAGE_START)[0].strip() or stderr.strip()
-
-
-def _history_server_failure(detail: str) -> tuple[str, bool] | None:
-    """(what went wrong, whether a retry can help) for a History Server
-    failure the CLI's message names, or None."""
-    for pattern, cause, retryable in _HISTORY_SERVER_FAILURES:
-        if pattern.search(detail):
-            return cause, retryable
-    return None
 
 
 def build_report(

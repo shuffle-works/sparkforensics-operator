@@ -28,8 +28,6 @@ from ._cli import USABLE_REPORT_EXIT_CODES, build_cli_args
 
 REPORT_FILE_NAME = "report.json"
 STDERR_FILE_NAME = "stderr.log"
-# The Markdown report's run writes these next to the JSON report's: the
-# report, its stderr and its exit code.
 MARKDOWN_FILE_NAME = "report.md"
 MARKDOWN_STDERR_FILE_NAME = "markdown-stderr.log"
 MARKDOWN_EXIT_CODE_FILE_NAME = "markdown-exit-code"
@@ -183,10 +181,8 @@ def analysis_command(
     goes to its own file: the provider's wrapper merges stdout and stderr
     into its log file, and the report is never parsed from that log.
 
-    With markdown_paths (the markdown_file, markdown_stderr_file and
-    markdown_exit_file of the job), a second run writes the Markdown report
-    when the first produced a report. Its stderr and exit code go to files of
-    their own, and the command's own exit code stays the first run's."""
+    With markdown_paths, a second run writes the Markdown report when the
+    first produced a report. The command's exit code stays the first run's."""
     cli = shlex.join(
         [
             "timeout",
@@ -261,8 +257,7 @@ def sync_cli_argv(
     baseline_ref: EventLogRef | None = None,
     markdown: bool = False,
 ) -> list[str]:
-    """The synchronous path's CLI invocation, writing the report (the JSON
-    one, or with markdown=True the Markdown one) to stdout."""
+    """The synchronous path's CLI invocation, writing the report to stdout."""
     return [
         "timeout", str(timeout),
         *build_cli_args(analyze_bin, log_ref, thresholds, baseline_ref=baseline_ref, markdown=markdown),

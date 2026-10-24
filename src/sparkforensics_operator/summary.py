@@ -90,8 +90,7 @@ def build_summary(
 
 
 def _names(report, status: str) -> list[str]:
-    """The names of the thresholds with this status, each once: several
-    regression budgets share the name max-regression."""
+    """Names with this status, each once: regression budgets share a name."""
     return list(dict.fromkeys(r.name for r in report.threshold_results if r.status == status))
 
 

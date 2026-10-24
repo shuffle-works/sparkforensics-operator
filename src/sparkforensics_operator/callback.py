@@ -58,9 +58,10 @@ def spark_forensics_callback(
     Airflow renders no callback arguments, so the callback renders
     report_dest, markdown_dest and the hooks' template_fields itself, with
     the upstream task's Jinja environment and the callback's context, the
-    same values the operator would see. Strings are rendered as templates, never read as
-    template files by the upstream task's template_ext. It renders copies:
-    the hooks passed here are shared by every run of the upstream task.
+    same values the operator would see. Strings are rendered as templates,
+    never read as template files by the upstream task's template_ext. It
+    renders copies: the hooks passed here are shared by every run of the
+    upstream task.
     """
     if deferrable:
         raise ValueError(

@@ -21,8 +21,7 @@ def persist(report_json: dict, report_dest: str, aws_conn_id: str | None = None)
 
 
 def persist_text(payload: str, report_dest: str, aws_conn_id: str | None = None) -> str:
-    """persist() for text that is not the JSON report, such as the Markdown
-    report: the same destinations, the same atomic local write."""
+    """persist() for any text, such as the Markdown report."""
     parsed = urlparse(report_dest)
 
     if parsed.scheme in ("", "file"):
