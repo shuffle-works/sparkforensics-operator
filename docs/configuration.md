@@ -48,6 +48,9 @@ SparkForensicsOperator(
     regression_budgets: dict[str, float] | None = None,        # {metric: percent}, one budget per metric
     stage_regression_budgets: dict[str, float] | None = None,  # {metric: percent} per paired stage
     stage_qualities: Sequence[str] | None = None,              # "exact" | "structural" | "aligned"
+    normalize_path: Sequence[str] | None = None,               # regexes: see "Tuning the comparison"
+    ignore_conf: Sequence[str] | None = None,
+    noise_band_pct: float | None = None,
     **base_operator_kwargs,
 )
 ```
@@ -183,11 +186,43 @@ the deferral with the rest of the resume kwargs.
 
 `max_regression_pct`, `regression_metric`, `fail_on_introduced`,
 `regression_budgets`, `stage_regression_budgets` and `stage_qualities` (see
-[Thresholds](#thresholds)) budget the comparison. Without
+[Thresholds](#thresholds)) budget the comparison, and `normalize_path`,
+`ignore_conf` and `noise_band_pct` (see [Tuning the
+comparison](#tuning-the-comparison)) tune it. Without
 `baseline_log_source`, any of them raises `ValueError` when the DAG is
 parsed. A comparison runs even with none of them set: its section lands
 in the persisted report under `comparison`, and its outcome in the
 [summary XCom](#summary-xcom).
+
+### Tuning the comparison
+
+Three arguments change how the CLI compares the two runs, not what fails.
+They need `baseline_log_source`, and none of them adds a threshold.
+
+| argument | CLI flag | effect |
+|---|---|---|
+| `normalize_path` | `--normalize-path <regex>`, once per pattern | each match in a plan node's text is replaced with a fixed token before stages are paired, so run-specific text (an output directory that differs per run) does not keep a stage from pairing. Despite the name it is a general regular expression. It changes stage pairing, and the runtime coverage and `confidence` derived from it, never the findings |
+| `ignore_conf` | `--ignore-conf <regex>`, once per pattern | a Spark configuration key that matches is left out of the comparison's configuration check, for keys that differ by design, such as a per-run output path. The CLI always leaves out the per-run identity keys (application id, start time, driver address) |
+| `noise_band_pct` | `--noise-band-pct` | a metric that differs from the baseline by less than this percent (0 to 100, `2` when unset) is marked `withinNoise` in the comparison. It never changes a metric's direction, so it changes no budget |
+
+`normalize_path` and `ignore_conf` are lists of non-empty strings; a bare
+string, an empty string or a number raises `ValueError` when the DAG is
+parsed. The CLI accepts up to 16 patterns of 200 characters each, refuses a
+pattern that does not compile or that matches the empty string, and
+reports that as a usage error (exit 2). The patterns are the CLI's
+JavaScript regular expressions, so a Python-only construct is not valid in
+them.
+
+```python
+SparkForensicsOperator(
+    ...,
+    baseline_log_source=...,
+    max_regression_pct=20,
+    normalize_path=[r"/data/out/run-\d+"],
+    ignore_conf=[r"^spark\.myapp\.output\."],
+    noise_band_pct=5,
+)
+```
 
 ### Killing a task
 
@@ -418,6 +453,8 @@ the operator ignores fields it does not read.
 | operator feature | minimum `sparkforensics-cli` |
 |---|---|
 | the error messages for exit codes 2, 4, 5 and 6 | 0.5.0 |
+| `normalize_path` (`--normalize-path`) | 0.6.0 |
+| `ignore_conf` and `noise_band_pct` (`--ignore-conf`, `--noise-band-pct`) | 0.10.0 |
 | `regression_budgets` (`--regression-budget`) | 0.5.0 |
 | `stage_regression_budgets` and `stage_qualities` (`--stage-regression-budget`, `--stage-quality`) | 0.7.0 |
 | a History Server application as the baseline (`--baseline-shs-base-url`, `--baseline-app-id`, `--baseline-attempt-id`) | 0.10.0 |
@@ -558,7 +595,7 @@ as the CLI requires; any other combination, or an unknown
 `failedTaskRate`, `diskSpill`, `gcTime`, `executorRunTime`, and the
 volume metrics `inputBytes`, `outputBytes`, `taskCount`,
 `executorsAdded`, which it reports as inconclusive since they have no
-regression direction). A breach raises `ThresholdBreached` like any
+regression direction), plus `executorCpuTime` and `allocatedCoreHours`. A breach raises `ThresholdBreached` like any
 other threshold.
 
 `max_regression_pct` with `regression_metric` budgets one metric.

@@ -24,13 +24,18 @@ THRESHOLD_CLI_FLAGS = {
     "fail_on_introduced": "--fail-on-introduced",
     # A list of pair qualities, joined with commas.
     "stage_qualities": "--stage-quality",
+    # Comparison tuning: not a budget, so it adds no threshold result.
+    "noise_band_pct": "--noise-band-pct",
 }
 
 # The flags the CLI takes once per value. A dict of {metric: percentage}
-# becomes one "<flag> <metric>:<percentage>" each.
+# becomes one "<flag> <metric>:<percentage>" each, and a list one
+# "<flag> <item>" each.
 THRESHOLD_CLI_REPEATED_FLAGS = {
     "regression_budgets": "--regression-budget",
     "stage_regression_budgets": "--stage-regression-budget",
+    "normalize_path": "--normalize-path",
+    "ignore_conf": "--ignore-conf",
 }
 
 # The metric --max-regression-pct checks when --regression-metric is unset.

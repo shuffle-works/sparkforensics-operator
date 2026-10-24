@@ -6,7 +6,7 @@ from typing import Callable, Sequence
 
 from sparkforensics_operator.exceptions import ThresholdBreached
 from sparkforensics_operator.hooks._templating import task_renderer
-from sparkforensics_operator.operator import run_spark_forensics, validate_comparison_thresholds
+from sparkforensics_operator.operator import as_list, run_spark_forensics, validate_comparison_thresholds
 from sparkforensics_operator.summary import validate_report_url_template
 
 log = logging.getLogger("airflow.task")
@@ -34,6 +34,9 @@ def spark_forensics_callback(
     regression_budgets: dict[str, float] | None = None,
     stage_regression_budgets: dict[str, float] | None = None,
     stage_qualities: Sequence[str] | None = None,
+    normalize_path: Sequence[str] | None = None,
+    ignore_conf: Sequence[str] | None = None,
+    noise_band_pct: float | None = None,
 ) -> Callable[[dict], None]:
     """Builds an on_success_callback for the upstream Spark task, sharing
     SparkForensicsOperator's exact execute() logic via run_spark_forensics.
@@ -76,7 +79,10 @@ def spark_forensics_callback(
         "fail_on_introduced": fail_on_introduced,
         "regression_budgets": regression_budgets,
         "stage_regression_budgets": stage_regression_budgets,
-        "stage_qualities": None if stage_qualities is None else list(stage_qualities),
+        "stage_qualities": as_list(stage_qualities),
+        "normalize_path": as_list(normalize_path),
+        "ignore_conf": as_list(ignore_conf),
+        "noise_band_pct": noise_band_pct,
     }
     validate_comparison_thresholds(baseline_log_source, backend, thresholds)
 

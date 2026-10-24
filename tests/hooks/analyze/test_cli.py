@@ -98,11 +98,42 @@ def test_build_cli_args_repeats_a_regression_budget_flag_per_metric():
     ]
 
 
+def test_build_cli_args_passes_the_comparison_tuning_flags():
+    args = build_cli_args(
+        "sparkforensics-analyze", LocalEventLog(Path("/tmp/app-2.log")),
+        {
+            "normalize_path": ["/out/run-\\d+", "tmp[0-9a-f]+"],
+            "ignore_conf": ["^spark\\.app\\.", "output"],
+            "noise_band_pct": 0.5,
+        },
+        baseline_ref=LocalEventLog(Path("/tmp/app-1.log")),
+    )
+
+    assert args == [
+        "sparkforensics-analyze", "/tmp/app-2.log", "--format", "json", "--baseline", "/tmp/app-1.log",
+        "--noise-band-pct", "0.5",
+        "--normalize-path", "/out/run-\\d+", "--normalize-path", "tmp[0-9a-f]+",
+        "--ignore-conf", "^spark\\.app\\.", "--ignore-conf", "output",
+    ]
+
+
+def test_build_cli_args_writes_a_small_noise_band_as_a_plain_decimal():
+    args = build_cli_args(
+        "sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {"noise_band_pct": 0.00001},
+        baseline_ref=LocalEventLog(Path("/tmp/app-1.log")),
+    )
+
+    assert args[args.index("--noise-band-pct") + 1] == "0.00001"
+
+
 @pytest.mark.parametrize("empty", [None, {}, []])
 def test_build_cli_args_passes_no_budget_flag_for_an_empty_budget(empty):
     args = build_cli_args(
         "sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")),
-        {"regression_budgets": empty, "stage_regression_budgets": empty, "stage_qualities": empty},
+        {
+            "regression_budgets": empty, "stage_regression_budgets": empty, "stage_qualities": empty,
+            "normalize_path": empty, "ignore_conf": empty,
+        },
     )
 
     assert args == ["sparkforensics-analyze", "/tmp/app.log", "--format", "json"]

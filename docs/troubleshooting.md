@@ -337,6 +337,13 @@ a baseline, and `regression_metric` only picks the metric
 `max_regression_pct` checks. `stage_qualities` needs
 `stage_regression_budgets`.
 
+#### `ValueError: normalize_path must be a list of non-empty regular expression strings` (or `ignore_conf`, or `noise_band_pct must be a number from 0 to 100`) at DAG parse
+
+`normalize_path` and `ignore_conf` take a list of strings, one regular
+expression each, not a single string. `noise_band_pct` is a percent from 0
+to 100. A pattern the CLI cannot compile fails the task instead, with
+the CLI's message in the exit 2 error described above.
+
 #### `ValueError: ... is budgeted twice` or "regression_budgets[...] must be a non-negative number" at DAG parse
 
 A metric can carry one regression budget. `max_regression_pct` budgets

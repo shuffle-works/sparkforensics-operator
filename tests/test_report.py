@@ -209,6 +209,7 @@ def test_threshold_cli_flags_cover_every_thresholds_key():
         "regression_metric",
         "fail_on_introduced",
         "stage_qualities",
+        "noise_band_pct",
     }
     assert THRESHOLD_CLI_FLAGS["max_runtime_ms"] == "--max-runtime"
     assert THRESHOLD_CLI_FLAGS["max_spill_gb"] == "--max-spill"
@@ -219,12 +220,15 @@ def test_threshold_cli_flags_cover_every_thresholds_key():
     assert THRESHOLD_CLI_FLAGS["regression_metric"] == "--regression-metric"
     assert THRESHOLD_CLI_FLAGS["fail_on_introduced"] == "--fail-on-introduced"
     assert THRESHOLD_CLI_FLAGS["stage_qualities"] == "--stage-quality"
+    assert THRESHOLD_CLI_FLAGS["noise_band_pct"] == "--noise-band-pct"
 
 
-def test_threshold_cli_repeated_flags_are_the_per_metric_budgets():
+def test_threshold_cli_repeated_flags_are_the_per_metric_budgets_and_the_comparison_patterns():
     assert THRESHOLD_CLI_REPEATED_FLAGS == {
         "regression_budgets": "--regression-budget",
         "stage_regression_budgets": "--stage-regression-budget",
+        "normalize_path": "--normalize-path",
+        "ignore_conf": "--ignore-conf",
     }
 
 
@@ -324,6 +328,12 @@ def test_parse_threshold_results_replaces_the_seeded_pass_only_for_the_names_pri
     assert [(r.name, r.status) for r in results] == [
         ("max-regression", "pass"), ("max-stage-regression", "violation"),
     ]
+
+
+def test_comparison_tuning_adds_no_threshold_result():
+    thresholds = {"normalize_path": ["/out/\\d+"], "ignore_conf": ["^spark\\.app\\."], "noise_band_pct": 5}
+
+    assert parse_threshold_results(thresholds, "") == []
 
 
 def test_parse_threshold_results_ignores_an_empty_budget_dict():

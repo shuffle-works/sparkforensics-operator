@@ -464,6 +464,49 @@ def test_operator_rejects_a_malformed_regression_budget(budgets):
         _operator_with(stage_regression_budgets=budgets)
 
 
+@pytest.mark.parametrize("threshold", [
+    {"normalize_path": ["/out/\\d+"]},
+    {"ignore_conf": ["output"]},
+    {"noise_band_pct": 5},
+    {"noise_band_pct": 0},
+])
+def test_operator_rejects_comparison_tuning_without_a_baseline_log_source(threshold):
+    with pytest.raises(ValueError, match="need baseline_log_source"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json", **threshold,
+        )
+
+
+def test_operator_keeps_the_comparison_tuning_in_its_thresholds_with_the_patterns_as_lists():
+    op = _operator_with(normalize_path=("/out/\\d+",), ignore_conf=["output"], noise_band_pct=2.5)
+
+    assert op.thresholds["normalize_path"] == ["/out/\\d+"]
+    assert op.thresholds["ignore_conf"] == ["output"]
+    assert op.thresholds["noise_band_pct"] == 2.5
+
+
+@pytest.mark.parametrize("empty", [[], (), None])
+def test_operator_treats_empty_comparison_patterns_as_none_so_they_need_no_baseline(empty):
+    SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+        normalize_path=empty, ignore_conf=empty,
+    )
+
+
+@pytest.mark.parametrize("patterns", ["output", [""], [3], ["ok", None]])
+def test_operator_rejects_malformed_comparison_patterns(patterns):
+    with pytest.raises(ValueError, match="normalize_path must be a list of non-empty"):
+        _operator_with(normalize_path=patterns)
+    with pytest.raises(ValueError, match="ignore_conf must be a list of non-empty"):
+        _operator_with(ignore_conf=patterns)
+
+
+@pytest.mark.parametrize("noise_band", [-1, 100.5, "2", True, float("nan")])
+def test_operator_rejects_a_noise_band_outside_0_to_100(noise_band):
+    with pytest.raises(ValueError, match="noise_band_pct must be a number from 0 to 100"):
+        _operator_with(noise_band_pct=noise_band)
+
+
 def test_operator_rejects_stage_qualities_without_stage_regression_budgets():
     with pytest.raises(ValueError, match="stage_qualities needs stage_regression_budgets"):
         _operator_with(stage_qualities=["exact"])

@@ -131,8 +131,8 @@ def _threshold_args(thresholds: dict) -> list[str]:
         if value is not None and not (isinstance(value, (list, tuple, dict)) and not value):
             args.extend([flag, _flag_value(value)])
     for key, flag in THRESHOLD_CLI_REPEATED_FLAGS.items():
-        for budget in _budget_values(thresholds.get(key)):
-            args.extend([flag, budget])
+        for item in _repeated_values(thresholds.get(key)):
+            args.extend([flag, item])
     return args
 
 
@@ -148,9 +148,12 @@ def _flag_value(value) -> str:
     return format(Decimal(str(value)), "f")
 
 
-def _budget_values(budgets: dict | None) -> list[str]:
-    """{metric: percentage} as the CLI's "<metric>:<percentage>" values."""
-    return [f"{metric}:{_flag_value(pct)}" for metric, pct in (budgets or {}).items()]
+def _repeated_values(value: dict | list | None) -> list[str]:
+    """The values of a flag the CLI takes once per value: a budget dict
+    {metric: percentage} as "<metric>:<percentage>", a list as it is."""
+    if isinstance(value, dict):
+        return [f"{metric}:{_flag_value(pct)}" for metric, pct in value.items()]
+    return [str(item) for item in value or []]
 
 
 def check_exit_code(returncode: int, stderr: str, where: str = "") -> None:

@@ -40,6 +40,9 @@ COMPARISON_THRESHOLDS = (
     "regression_budgets",
     "stage_regression_budgets",
     "stage_qualities",
+    "normalize_path",
+    "ignore_conf",
+    "noise_band_pct",
 )
 # fail_on_introduced's values: an impact band, or any introduced finding.
 _INTRODUCED_BANDS = ("critical", "warning", "info", "all")
@@ -55,6 +58,13 @@ def _validate_on_threshold_breach(value: str) -> None:
         raise ValueError(
             f"on_threshold_breach must be one of {_THRESHOLD_BREACH_ACTIONS}, got {value!r}"
         )
+
+
+def as_list(value):
+    """A sequence as a list, which survives a deferral as plain JSON. A string
+    stays one, for the validation to refuse, rather than splitting into
+    characters."""
+    return list(value) if value is not None and not isinstance(value, str) else value
 
 
 def _is_set(value) -> bool:
@@ -80,13 +90,21 @@ def _validate_budgets(name: str, budgets) -> None:
             raise ValueError(f"{name}[{metric!r}] must be a non-negative number, got {pct!r}")
 
 
+def _validate_patterns(name: str, patterns) -> None:
+    if not _is_set(patterns):
+        return
+    if isinstance(patterns, str) or not all(isinstance(p, str) and p for p in patterns):
+        raise ValueError(f"{name} must be a list of non-empty regular expression strings, got {patterns!r}")
+
+
 def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dict) -> None:
     """Raise ValueError for the comparison settings the CLI would reject
     or could never evaluate: a comparison threshold without a baseline,
     regression_metric without max_regression_pct, an unknown
     fail_on_introduced band, a regression budget malformed or given twice
-    for one metric, stage_qualities without stage_regression_budgets, or a
-    baseline for a backend that cannot pass one to the CLI."""
+    for one metric, stage_qualities without stage_regression_budgets, a
+    malformed normalize_path, ignore_conf or noise_band_pct, or a baseline
+    for a backend that cannot pass one to the CLI."""
     if baseline_log_source is None:
         orphans = [name for name in COMPARISON_THRESHOLDS if _is_set(thresholds.get(name))]
         if orphans:
@@ -112,6 +130,15 @@ def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dic
                 f"{paired} is budgeted twice, by max_regression_pct and by regression_budgets; "
                 "the CLI allows one budget per metric."
             )
+    for name in ("normalize_path", "ignore_conf"):
+        _validate_patterns(name, thresholds.get(name))
+    noise_band = thresholds.get("noise_band_pct")
+    if noise_band is not None and (
+        isinstance(noise_band, bool)
+        or not isinstance(noise_band, (int, float))
+        or not 0 <= noise_band <= 100
+    ):
+        raise ValueError(f"noise_band_pct must be a number from 0 to 100, got {noise_band!r}")
     qualities = thresholds.get("stage_qualities")
     if _is_set(qualities):
         if isinstance(qualities, str) or not all(q in _STAGE_QUALITIES for q in qualities):
@@ -358,7 +385,8 @@ class SparkForensicsOperator(BaseOperator):
     regression_budgets (a regression budget per metric, {metric:
     percentage}), stage_regression_budgets (the same per paired stage's
     metric) and stage_qualities (which paired stages those read) budget
-    that comparison and need it.
+    that comparison, and normalize_path, ignore_conf and noise_band_pct
+    tune it; all of them need it.
 
     report_dest, and each hook's own template_fields, are Jinja templates
     Airflow renders before execute(). report_url_template, if set, turns the
@@ -391,6 +419,9 @@ class SparkForensicsOperator(BaseOperator):
         regression_budgets: dict[str, float] | None = None,
         stage_regression_budgets: dict[str, float] | None = None,
         stage_qualities: Sequence[str] | None = None,
+        normalize_path: Sequence[str] | None = None,
+        ignore_conf: Sequence[str] | None = None,
+        noise_band_pct: float | None = None,
         **kwargs,
     ):
         thresholds = {
@@ -404,7 +435,10 @@ class SparkForensicsOperator(BaseOperator):
             "fail_on_introduced": fail_on_introduced,
             "regression_budgets": regression_budgets,
             "stage_regression_budgets": stage_regression_budgets,
-            "stage_qualities": None if stage_qualities is None else list(stage_qualities),
+            "stage_qualities": as_list(stage_qualities),
+            "normalize_path": as_list(normalize_path),
+            "ignore_conf": as_list(ignore_conf),
+            "noise_band_pct": noise_band_pct,
         }
         # Validate before super().__init__() to avoid DAG registration side effects if construction will fail.
         _validate_on_threshold_breach(on_threshold_breach)

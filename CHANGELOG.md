@@ -54,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Comparison tuning: `normalize_path` and `ignore_conf` (lists of regular
+  expressions) and `noise_band_pct`, on `SparkForensicsOperator` and
+  `spark_forensics_callback`, pass `--normalize-path` and `--ignore-conf`
+  once per pattern and `--noise-band-pct`. They change how the CLI pairs
+  stages, checks the Spark configuration and marks a metric as within noise,
+  need a baseline, and add no threshold. `normalize_path` needs
+  `sparkforensics-cli` 0.6.0, the other two 0.10.0.
 - Several regression budgets at once: `regression_budgets={metric:
   percent}` passes one `--regression-budget <metric>:<percent>` per metric,
   `stage_regression_budgets` one `--stage-regression-budget` per paired-stage
