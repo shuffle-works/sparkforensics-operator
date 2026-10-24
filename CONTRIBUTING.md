@@ -15,12 +15,39 @@ pip install -e ".[test,s3,ssh]"
 pytest
 ```
 
-The suite needs no live Spark, Airflow or Node.js. The one real process is
-a shell: the deferred-mode tests run the SSH provider's real shell wrapper against a local `sh` standing in
+The suite needs no live Spark or Airflow. Apart from `tests/integration`,
+which skips without the CLI (below), it needs no Node.js either. The one
+real process is a shell: the deferred-mode tests run the SSH provider's real shell wrapper against a local `sh` standing in
 for the SSH host (`tests/hooks/analyze/_local_ssh.py`), so they need
 `bash`, `setsid` and coreutils `timeout` on the machine running the tests.
 The kill and sweep tests also run with procps hidden
 (`LocalHost.hide_procps()`), as on slim images.
+
+### Tests against the real CLI
+
+The other tests simulate `sparkforensics-analyze`, so they cannot notice the
+CLI changing an exit code or a flag's rules. `tests/integration` runs the
+real one on public logs from the
+[spark-event-corpus-data](https://github.com/shuffle-works/spark-event-corpus-data)
+repository (fetched at a pinned tag), through `SubprocessAnalyzeHook`,
+`SSHAnalyzeHook` against a local shell, and a fake History Server on
+localhost. It covers a clean log, a violation, an unreadable log, an
+unreadable baseline, budgets small enough to print in exponent form, several
+regression budgets, a History Server baseline, `redact` and the Markdown
+report.
+
+```bash
+npm install -g sparkforensics-cli
+pytest tests/integration
+```
+
+The tests need Node.js 18+, the `sparkforensics-cli` package on `PATH` (or
+its binary at `SPARKFORENSICS_ANALYZE_BIN`) and network access to GitHub, and
+skip when either is missing. With `SPARKFORENSICS_REQUIRE_CLI=1` a missing CLI
+or an unreachable corpus fails the run instead, as in CI. The `cli-integration`
+job in `.github/workflows/ci.yml` installs Node.js and runs them against the
+release the operator is tested against (`TESTED_CLI_VERSION` in
+`report.py`) and the newest one.
 
 ## The tox Airflow matrix
 

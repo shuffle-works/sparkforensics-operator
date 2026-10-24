@@ -13,8 +13,8 @@ that backends consume; see `ARCHITECTURE.md`.
 
 ## Commands
 - `pip install -e ".[test,s3,ssh]"`, install for local dev.
-- `pytest`, run the test suite (mocks everything: no live Spark/Airflow/Node
-  needed for any single test).
+- `pytest`, run the test suite (mocks everything except `tests/integration`,
+  which runs the real CLI on public logs and skips without it).
 - `tox -e py311-airflow2` / `tox -e py311-airflow3`, run the suite against a
   specific Airflow major version.
 
