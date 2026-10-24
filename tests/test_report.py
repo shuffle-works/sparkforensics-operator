@@ -8,6 +8,7 @@ from sparkforensics_operator.report import (
     TESTED_CLI_VERSION,
     THRESHOLD_CLI_FLAGS,
     THRESHOLD_CLI_REPEATED_FLAGS,
+    THRESHOLD_CLI_SWITCHES,
     Report,
     ThresholdResult,
     UnsupportedReportSchema,
@@ -328,6 +329,14 @@ def test_parse_threshold_results_replaces_the_seeded_pass_only_for_the_names_pri
     assert [(r.name, r.status) for r in results] == [
         ("max-regression", "pass"), ("max-stage-regression", "violation"),
     ]
+
+
+def test_threshold_cli_switches_are_redact():
+    assert THRESHOLD_CLI_SWITCHES == {"redact": "--redact"}
+
+
+def test_redact_adds_no_threshold_result():
+    assert parse_threshold_results({"redact": True}, "") == []
 
 
 def test_comparison_tuning_adds_no_threshold_result():

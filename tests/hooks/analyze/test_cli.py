@@ -117,6 +117,25 @@ def test_build_cli_args_passes_the_comparison_tuning_flags():
     ]
 
 
+def test_build_cli_args_passes_redact_as_a_switch():
+    args = build_cli_args(
+        "sparkforensics-analyze", HistoryServerApp(base_url="http://shs:18080", app_id="app-1"),
+        {"redact": True, "max_runtime_ms": 1000},
+    )
+
+    assert args == [
+        "sparkforensics-analyze", "--shs-base-url", "http://shs:18080", "--app-id", "app-1",
+        "--format", "json", "--max-runtime", "1000", "--redact",
+    ]
+
+
+@pytest.mark.parametrize("redact", [False, None])
+def test_build_cli_args_passes_no_redact_switch_unless_asked(redact):
+    args = build_cli_args("sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {"redact": redact})
+
+    assert "--redact" not in args
+
+
 def test_build_cli_args_writes_a_small_noise_band_as_a_plain_decimal():
     args = build_cli_args(
         "sparkforensics-analyze", LocalEventLog(Path("/tmp/app.log")), {"noise_band_pct": 0.00001},

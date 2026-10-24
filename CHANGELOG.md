@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `redact=True` passes `--redact` to the CLI, on `SparkForensicsOperator`
+  and `spark_forensics_callback`: the persisted report, the summary XCom's
+  `app_name` and the default notification message carry the CLI's
+  pseudonyms for the application and its hosts. It defaults to `False`.
 - Comparison tuning: `normalize_path` and `ignore_conf` (lists of regular
   expressions) and `noise_band_pct`, on `SparkForensicsOperator` and
   `spark_forensics_callback`, pass `--normalize-path` and `--ignore-conf`

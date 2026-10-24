@@ -15,6 +15,7 @@ from sparkforensics_operator.log_ref import EventLogRef, HistoryServerApp, Local
 from sparkforensics_operator.report import (
     THRESHOLD_CLI_FLAGS,
     THRESHOLD_CLI_REPEATED_FLAGS,
+    THRESHOLD_CLI_SWITCHES,
     Report,
     UnsupportedReportSchema,
     parse_report_text,
@@ -133,6 +134,9 @@ def _threshold_args(thresholds: dict) -> list[str]:
     for key, flag in THRESHOLD_CLI_REPEATED_FLAGS.items():
         for item in _repeated_values(thresholds.get(key)):
             args.extend([flag, item])
+    for key, flag in THRESHOLD_CLI_SWITCHES.items():
+        if thresholds.get(key):
+            args.append(flag)
     return args
 
 

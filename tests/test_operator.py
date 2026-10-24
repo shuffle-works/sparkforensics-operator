@@ -507,6 +507,27 @@ def test_operator_rejects_a_noise_band_outside_0_to_100(noise_band):
         _operator_with(noise_band_pct=noise_band)
 
 
+def test_operator_redact_defaults_to_off_and_needs_no_baseline():
+    op = SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+    )
+    redacting = SparkForensicsOperator(
+        task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json", redact=True,
+    )
+
+    assert op.thresholds["redact"] is False
+    assert redacting.thresholds["redact"] is True
+
+
+@pytest.mark.parametrize("redact", ["yes", 1, None])
+def test_operator_rejects_a_redact_that_is_not_a_bool(redact):
+    with pytest.raises(ValueError, match="redact must be True or False"):
+        SparkForensicsOperator(
+            task_id="forensics", log_source=MagicMock(), backend=MagicMock(), report_dest="/tmp/r.json",
+            redact=redact,
+        )
+
+
 def test_operator_rejects_stage_qualities_without_stage_regression_budgets():
     with pytest.raises(ValueError, match="stage_qualities needs stage_regression_budgets"):
         _operator_with(stage_qualities=["exact"])

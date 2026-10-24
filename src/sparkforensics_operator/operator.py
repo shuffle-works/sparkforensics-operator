@@ -90,11 +90,22 @@ def _validate_budgets(name: str, budgets) -> None:
             raise ValueError(f"{name}[{metric!r}] must be a non-negative number, got {pct!r}")
 
 
-def _validate_patterns(name: str, patterns) -> None:
-    if not _is_set(patterns):
-        return
-    if isinstance(patterns, str) or not all(isinstance(p, str) and p for p in patterns):
-        raise ValueError(f"{name} must be a list of non-empty regular expression strings, got {patterns!r}")
+def _validate_comparison_tuning(thresholds: dict) -> None:
+    for name in ("normalize_path", "ignore_conf"):
+        patterns = thresholds.get(name)
+        if _is_set(patterns) and (
+            isinstance(patterns, str) or not all(isinstance(p, str) and p for p in patterns)
+        ):
+            raise ValueError(
+                f"{name} must be a list of non-empty regular expression strings, got {patterns!r}"
+            )
+    noise_band = thresholds.get("noise_band_pct")
+    if noise_band is not None and (
+        isinstance(noise_band, bool)
+        or not isinstance(noise_band, (int, float))
+        or not 0 <= noise_band <= 100
+    ):
+        raise ValueError(f"noise_band_pct must be a number from 0 to 100, got {noise_band!r}")
 
 
 def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dict) -> None:
@@ -103,8 +114,11 @@ def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dic
     regression_metric without max_regression_pct, an unknown
     fail_on_introduced band, a regression budget malformed or given twice
     for one metric, stage_qualities without stage_regression_budgets, a
-    malformed normalize_path, ignore_conf or noise_band_pct, or a baseline
-    for a backend that cannot pass one to the CLI."""
+    malformed normalize_path, ignore_conf or noise_band_pct, redact that is
+    not a bool, or a baseline for a backend that cannot pass one to the
+    CLI."""
+    if not isinstance(thresholds.get("redact", False), bool):
+        raise ValueError(f"redact must be True or False, got {thresholds['redact']!r}")
     if baseline_log_source is None:
         orphans = [name for name in COMPARISON_THRESHOLDS if _is_set(thresholds.get(name))]
         if orphans:
@@ -130,15 +144,7 @@ def validate_comparison_thresholds(baseline_log_source, backend, thresholds: dic
                 f"{paired} is budgeted twice, by max_regression_pct and by regression_budgets; "
                 "the CLI allows one budget per metric."
             )
-    for name in ("normalize_path", "ignore_conf"):
-        _validate_patterns(name, thresholds.get(name))
-    noise_band = thresholds.get("noise_band_pct")
-    if noise_band is not None and (
-        isinstance(noise_band, bool)
-        or not isinstance(noise_band, (int, float))
-        or not 0 <= noise_band <= 100
-    ):
-        raise ValueError(f"noise_band_pct must be a number from 0 to 100, got {noise_band!r}")
+    _validate_comparison_tuning(thresholds)
     qualities = thresholds.get("stage_qualities")
     if _is_set(qualities):
         if isinstance(qualities, str) or not all(q in _STAGE_QUALITIES for q in qualities):
@@ -422,6 +428,7 @@ class SparkForensicsOperator(BaseOperator):
         normalize_path: Sequence[str] | None = None,
         ignore_conf: Sequence[str] | None = None,
         noise_band_pct: float | None = None,
+        redact: bool = False,
         **kwargs,
     ):
         thresholds = {
@@ -439,6 +446,7 @@ class SparkForensicsOperator(BaseOperator):
             "normalize_path": as_list(normalize_path),
             "ignore_conf": as_list(ignore_conf),
             "noise_band_pct": noise_band_pct,
+            "redact": redact,
         }
         # Validate before super().__init__() to avoid DAG registration side effects if construction will fail.
         _validate_on_threshold_breach(on_threshold_breach)

@@ -51,6 +51,7 @@ SparkForensicsOperator(
     normalize_path: Sequence[str] | None = None,               # regexes: see "Tuning the comparison"
     ignore_conf: Sequence[str] | None = None,
     noise_band_pct: float | None = None,
+    redact: bool = False,                                      # see "Redacting the report"
     **base_operator_kwargs,
 )
 ```
@@ -223,6 +224,27 @@ SparkForensicsOperator(
     noise_band_pct=5,
 )
 ```
+
+### Redacting the report
+
+`redact=True` passes `--redact`, which makes the CLI replace the
+application id, the application name and every host name and IP address in
+its output with pseudonyms (`app-1`, `host-1`, ...). Use it when the report
+leaves the environment that produced it. What else it covers depends on the
+CLI version (`sparkforensics-analyze --help` lists it for the installed
+one; CLI 0.10.2 and later also replace the host of any URL and the user
+names in URL credentials and home paths). The CLI keeps other paths, table
+names and SQL text as written, so read what it leaves before sharing the
+report.
+
+The operator persists the CLI's redacted output as it is, and everything it
+derives from the report is redacted with it: the summary XCom's `app_name`,
+and the default notification message. The operator's own task log lines
+still name the log and the application they work on, and a CLI
+failure under `redact` carries a generic message ("The candidate could not
+be read or parsed.") without the CLI's reason, so the exit 4 and 5 causes
+of [Troubleshooting](troubleshooting.md#error-messages) are not told apart
+by their message then. `redact` defaults to `False` and needs no baseline.
 
 ### Killing a task
 

@@ -28,6 +28,11 @@ THRESHOLD_CLI_FLAGS = {
     "noise_band_pct": "--noise-band-pct",
 }
 
+# The flags the CLI takes without a value, set when the setting is True.
+THRESHOLD_CLI_SWITCHES = {
+    "redact": "--redact",
+}
+
 # The flags the CLI takes once per value. A dict of {metric: percentage}
 # becomes one "<flag> <metric>:<percentage>" each, and a list one
 # "<flag> <item>" each.

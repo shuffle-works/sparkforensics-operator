@@ -132,7 +132,7 @@ breach that raises still gets a notification out first.
   (a dict of per-metric budgets becomes one `--regression-budget` or
   `--stage-regression-budget <metric>:<pct>` each), the comparison tuning
   flags (`--normalize-path` and `--ignore-conf` once per pattern,
-  `--noise-band-pct`), exit-code
+  `--noise-band-pct`), the `--redact` switch, exit-code
   handling, and building the `Report` from the JSON report and stderr
   threshold lines. Exit codes 0, 1 and 3 carry a report. Every other code
   raises a `CliError` with a message of its own: 2 (usage error), 4

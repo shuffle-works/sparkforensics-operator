@@ -37,6 +37,7 @@ def spark_forensics_callback(
     normalize_path: Sequence[str] | None = None,
     ignore_conf: Sequence[str] | None = None,
     noise_band_pct: float | None = None,
+    redact: bool = False,
 ) -> Callable[[dict], None]:
     """Builds an on_success_callback for the upstream Spark task, sharing
     SparkForensicsOperator's exact execute() logic via run_spark_forensics.
@@ -83,6 +84,7 @@ def spark_forensics_callback(
         "normalize_path": as_list(normalize_path),
         "ignore_conf": as_list(ignore_conf),
         "noise_band_pct": noise_band_pct,
+        "redact": redact,
     }
     validate_comparison_thresholds(baseline_log_source, backend, thresholds)
 
