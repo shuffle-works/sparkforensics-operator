@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Each CLI exit code without a report (2, 4, 5, 6) has its own error message. The task still fails.
 - Airflow does not retry usage errors, and retries History Server failures that can clear.
 - A report with a newer `schemaVersion` than the operator reads fails the task.
-- The saved report is the CLI's whole JSON report. `Report.raw` holds it.
+- The saved report is the CLI's whole JSON report. `Report.raw` holds it. It includes `effectiveConf`, where the CLI masks secret-looking keys and values; see [Report destinations](docs/configuration.md#report-destinations).
 - `Report.threshold_results` keeps every result of a threshold the CLI reports on several lines.
 
 ### Fixed
