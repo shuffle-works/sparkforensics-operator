@@ -515,6 +515,33 @@ the operator ignores fields it does not read.
 | `stage_regression_budgets` and `stage_qualities` (`--stage-regression-budget`, `--stage-quality`) | 0.7.0 |
 | a History Server application as the baseline (`--baseline-shs-base-url`, `--baseline-app-id`, `--baseline-attempt-id`) | 0.10.0 |
 
+### What the CLI measures, by version
+
+The thresholds are evaluated by the CLI, so the same event log can pass on
+one `sparkforensics-cli` release and fail on another. These differences
+decide whether a budget passes:
+
+| budget | CLI 0.10.1 and older | CLI 0.10.2 and newer |
+|---|---|---|
+| `max_failed_task_rate_pct` | passes whenever the CLI's job-failure-rate finding is absent, and that finding reports only from a 10% rate, so a budget below 10% is never enforced | failed task attempts over all task attempts, across every stage attempt. An attempt a retry replaced counts as failed, so a run whose jobs all succeeded can violate the budget |
+| `max_spill_gb` | the largest spill among the spill finding's results, which skips a stage shorter than the detector's floor | the largest per-stage memory spill, short stages included |
+| `max_skew_ratio` | peak P95/median ratio, with a stage that has no task-duration median counted as `NaN` | the same ratio over the stages that have a median; a log with none is inconclusive |
+
+A log with corrupt or unparseable lines is analyzed from the lines that
+parsed. With CLI 0.10.2 and newer the report's `summary.skippedLines`
+counts them (`skipped_lines` in the [summary XCom](#summary-xcom)), and the
+CLI adds an inconclusive `parse-incomplete` result, for the log under
+analysis and for a baseline: a run whose budgets all pass then exits 3, not
+0. The result never fails the task on its own; it is in
+`inconclusive_thresholds`, logged as a warning, and listed in the
+persisted `thresholdResults`. With an older CLI a damaged log gives no such
+signal.
+
+The CLI (0.10.2 and newer) also refuses a budget value that is empty,
+negative, hexadecimal or in exponent form, and an unknown `fail_on_introduced`
+band, as a usage error (exit 2). The operator passes numbers as plain
+decimals.
+
 ### Job directories
 
 A deferred run's job files live under `remote_base_dir`, which defaults

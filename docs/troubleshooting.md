@@ -339,6 +339,27 @@ runs, or it is a volume metric (`inputBytes`, `outputBytes`,
 `taskCount`, `executorsAdded`) with no regression direction. The
 summary's `comparison.verdict` says which (`unavailable` or `neutral`).
 
+#### A threshold passes on one `sparkforensics-cli` version and fails on another
+
+The CLI evaluates the budgets, and its measurements change between
+releases. `max_failed_task_rate_pct` is the usual case: CLI 0.10.2 and
+newer count every failed task attempt, including the ones a retry
+recovered, so a job whose tasks were retried can violate a budget the same
+log passed before. `max_spill_gb` and `max_skew_ratio` are measured over
+the run's stages in the same release. [What the CLI measures, by
+version](configuration.md#what-the-cli-measures-by-version) lists them. The
+`cli_version` of the [summary XCom](configuration.md#summary-xcom) says which
+CLI evaluated a run.
+
+#### The CLI exits 3 with a `parse-incomplete` result
+
+The event log has lines the CLI could not parse, and `sparkforensics-cli`
+0.10.2 or newer says so: the totals cover only the lines that parsed, so
+a budget that passes cannot be trusted. The result is inconclusive, never a
+violation, and the task does not fail on it. The number of skipped lines is
+`skipped_lines` in the summary XCom. Check the log for a truncated write or
+a mix of two writers; `parse-incomplete` also covers a damaged baseline.
+
 #### `ValueError: ... need baseline_log_source` or "regression_metric needs max_regression_pct" at DAG parse
 
 The comparison thresholds follow the CLI's own rules: all of them

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- `sparkforensics-cli` 0.10.2 counts every failed task attempt in the
+  failed-task-rate budget (`max_failed_task_rate_pct`), including attempts a
+  retry recovered, so a job with retried tasks can go from pass to fail on
+  the same log. It also measures `max_spill_gb` as the largest per-stage
+  memory spill and `max_skew_ratio` over the stages that have a task-duration
+  median.
+- With `sparkforensics-cli` 0.10.2 a log with skipped (corrupt or
+  unparseable) lines gives exit 3 and an inconclusive `parse-incomplete`
+  threshold result when every budget passes, where it gave exit 0. The task
+  does not fail on it; it shows in `inconclusive_thresholds`, as a warning
+  in the task log, and as `skipped_lines` in the summary XCom.
+- `sparkforensics-cli` 0.10.2 rejects budget values in exponent form. The
+  operator passes plain decimals (see Fixed).
+- The operator is tested against `sparkforensics-cli` 0.10.1; see "What the
+  CLI measures, by version" in `docs/configuration.md`.
+
 ### Fixed
 
 - Thresholds are passed to the CLI as plain decimals. A float such as
