@@ -181,8 +181,9 @@ breach that raises still gets a notification out first.
 - `report.py`, `Report`/`ThresholdResult` dataclasses, plus parsing of the
   CLI's JSON report (`--out` file or stdout) and its stderr threshold
   lines. Several regression budgets print as `max-regression` lines
-  (`max-stage-regression` for the stage budgets), so `parse_threshold_results()`
-  keeps every line it reads instead of one per name. It refuses a
+  (`max-stage-regression` for the stage budgets), and
+  `parse_threshold_results()` keeps every line it reads, so a name can have
+  several results. It refuses a
   `schemaVersion` outside the range it reads
   (`MIN_SCHEMA_VERSION` to `MAX_SCHEMA_VERSION`, an
   `UnsupportedReportSchema` that `build_report()` turns into a
