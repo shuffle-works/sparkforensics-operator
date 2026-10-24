@@ -28,12 +28,9 @@ The other tests simulate `sparkforensics-analyze`, so they cannot catch the
 CLI changing an exit code or a flag's rules. `tests/integration` runs the
 real CLI on public logs from the
 [spark-event-corpus-data](https://github.com/shuffle-works/spark-event-corpus-data)
-repository (fetched at a pinned tag), through `SubprocessAnalyzeHook`,
-`SSHAnalyzeHook` against a local shell, and a fake History Server on
-localhost. It covers a clean log, a violation, an unreadable log, an
-unreadable baseline, budgets that print in exponent form, several
-regression budgets, a History Server baseline, `redact` and the Markdown
-report.
+repository (fetched at a pinned tag), through `SubprocessAnalyzeHook`. It
+covers a clean log, a violation, an unreadable log, an unreadable baseline
+and budgets that print in exponent form.
 
 ```bash
 npm install -g sparkforensics-cli

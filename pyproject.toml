@@ -47,6 +47,3 @@ packages = ["src/sparkforensics_operator"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = [
-    "cli_integration: runs the real sparkforensics-analyze CLI on public corpus logs (needs Node.js, the sparkforensics-cli npm package and network access); skipped without the CLI",
-]
