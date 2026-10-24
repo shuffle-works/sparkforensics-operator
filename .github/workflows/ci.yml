@@ -44,6 +44,32 @@ jobs:
           path-to-lcov: coverage-${{ matrix.tox-env }}.lcov
           parallel: true
 
+  # The rest of the suite simulates the CLI. This job runs the real one on
+  # public corpus logs, so a change in its exit codes or flag rules fails
+  # here. SPARKFORENSICS_REQUIRE_CLI turns a missing CLI or an unreachable
+  # corpus into a failure instead of a skip.
+  cli-integration:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The release the operator is tested against (TESTED_CLI_VERSION in
+        # report.py), and the newest one.
+        cli: ["0.10.1", "latest"]
+    env:
+      SPARKFORENSICS_REQUIRE_CLI: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g sparkforensics-cli@${{ matrix.cli }}
+      - run: pip install tox
+      - run: tox -e py312-airflow3 -- tests/integration -v
+
   finish:
     needs: test
     runs-on: ubuntu-latest
