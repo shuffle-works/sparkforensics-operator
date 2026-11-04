@@ -755,11 +755,11 @@ def test_a_run_by_a_cli_older_than_the_tested_version_logs_a_warning(tmp_path):
     log = _run_with_cli_version(tmp_path, "0.9.0")
 
     log.warning.assert_called_once()
-    assert "sparkforensics-cli 0.9.0 is older than 0.10.1" in log.warning.call_args.args[1]
+    assert "sparkforensics-cli 0.9.0 is older than 0.12.0" in log.warning.call_args.args[1]
 
 
 def test_a_run_by_the_tested_cli_version_logs_no_warning(tmp_path):
-    log = _run_with_cli_version(tmp_path, "0.10.1")
+    log = _run_with_cli_version(tmp_path, "0.12.0")
 
     log.warning.assert_not_called()
 

@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `sparkforensics-cli` 0.10.2 counts every failed task attempt in `max_failed_task_rate_pct`, so a job with retried tasks can fail where it passed.
 - With 0.10.2, a log with skipped lines gives exit 3 and an inconclusive `parse-incomplete` result. The task does not fail; see `skipped_lines` in the summary XCom.
-- The operator is tested against `sparkforensics-cli` 0.10.1.
+- The operator is tested against `sparkforensics-cli` 0.12.0.
+- From 0.12.0 the report's `findings` list only critical and warning findings. The persisted report, `report.findings` and the `findings` XCom omit info findings; `notesHidden` in the report counts them. The summary's `impact_band_counts` is unchanged.
 
 ### Added
 
@@ -26,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The operator reads the JSON output shape of `sparkforensics-cli` 0.12.0 (`{schemaVersion, run, comparison, budgets}`) and still reads the older shapes.
 - Each CLI exit code without a report (2, 4, 5, 6) has its own error message. The task still fails.
 - Airflow does not retry usage errors, and retries History Server failures that can clear.
 - A report with a newer `schemaVersion` than the operator reads fails the task.

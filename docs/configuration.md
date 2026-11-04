@@ -412,7 +412,7 @@ task without consuming its retries. A missing binary, a timeout, exit 124
 
 The operator needs `sparkforensics-cli` 0.4.0 or newer. An option passed to
 an older CLI than the table lists makes the CLI exit 2 with "Unknown
-option". The operator is tested against 0.10.1
+option". The operator is tested against 0.12.0
 (`sparkforensics_operator.report.TESTED_CLI_VERSION`) and logs a warning for
 an older CLI. The CLI version of each run is in `cli_version` of the
 [summary XCom](#summary-xcom). The operator reads report schema 5 and fails
@@ -636,6 +636,7 @@ warning and never fails the task, whatever `_send()` raises.
 `ThresholdResult` with `name`, `status` and `detail`), its `exit_code`,
 its `cli_version`, its `markdown` (`None` without `markdown_dest`), and
 `violated`/`inconclusive` properties. `raw` holds the CLI's whole report.
+With CLI 0.12.0 and newer, `findings` lists critical and warning findings only; `raw["notesHidden"]` counts the info findings left out.
 `verdict_title`, `app_name`, `run_time_ms` and `skipped_lines` hold the
 values the summary XCom reports, and are `None` when the report lacks them.
 
