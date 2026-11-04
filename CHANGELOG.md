@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sparkforensics-cli` 0.10.2 counts every failed task attempt in `max_failed_task_rate_pct`, so a job with retried tasks can fail where it passed.
 - With 0.10.2, a log with skipped lines gives exit 3 and an inconclusive `parse-incomplete` result. The task does not fail; see `skipped_lines` in the summary XCom.
 - The operator is tested against `sparkforensics-cli` 0.12.0.
-- From 0.12.0 the report's `findings` list only critical and warning findings. The persisted report, `report.findings` and the `findings` XCom omit info findings; `notesHidden` in the report counts them. The summary's `impact_band_counts` is unchanged.
+- With CLI 0.12.0 and newer, `findings` lists critical and warning findings only. The persisted report, `report.findings` and the `findings` XCom omit info findings; `notesHidden` in the report counts them. The summary's `impact_band_counts` is unchanged.
 
 ### Added
 
