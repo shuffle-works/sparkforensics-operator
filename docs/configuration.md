@@ -412,7 +412,7 @@ task without consuming its retries. A missing binary, a timeout, exit 124
 
 The operator needs `sparkforensics-cli` 0.4.0 or newer. An option passed to
 an older CLI than the table lists makes the CLI exit 2 with "Unknown
-option". The operator is tested against 0.10.1
+option". The operator is tested against 0.12.0
 (`sparkforensics_operator.report.TESTED_CLI_VERSION`) and logs a warning for
 an older CLI. The CLI version of each run is in `cli_version` of the
 [summary XCom](#summary-xcom). The operator reads report schema 5 and fails
@@ -635,7 +635,10 @@ warning and never fails the task, whatever `_send()` raises.
 `not_run_checks` and `threshold_results` (each a
 `ThresholdResult` with `name`, `status` and `detail`), its `exit_code`,
 its `cli_version`, its `markdown` (`None` without `markdown_dest`), and
-`violated`/`inconclusive` properties. `raw` holds the CLI's whole report.
+`violated`/`inconclusive` properties. `raw` holds the CLI's whole report:
+with CLI 0.12.0 and newer, the `run` section of the CLI's output. With CLI
+0.12.0 and newer, `findings` lists critical and warning findings only;
+`raw["notesHidden"]` counts the info findings left out.
 `verdict_title`, `app_name`, `run_time_ms` and `skipped_lines` hold the
 values the summary XCom reports, and are `None` when the report lacks them.
 
@@ -650,7 +653,10 @@ SparkForensics report for daily_customer_etl: Start with Stage 7. Ran for 47.7 s
 
 `report_dest` is where the report JSON is written. It is the CLI's whole
 JSON report plus the operator's own `thresholdResults` and, for a run
-compared against a baseline, the CLI's `comparison` section.
+compared against a baseline, the CLI's `comparison` section. With CLI
+0.12.0 and newer, the report is the `run` section of the CLI's output; the
+CLI's `budgets` section is not persisted, and `thresholdResults` holds the
+budget outcomes.
 
 `effectiveConf` is the job's Spark configuration, which can name
 credentials. The CLI masks secret-looking keys and values in it, with or

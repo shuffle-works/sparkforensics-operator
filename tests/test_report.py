@@ -124,12 +124,12 @@ def test_parse_report_text_has_no_cli_version_without_a_generator():
     assert parse_report_text(_fixture_text("report.json")).cli_version is None
 
 
-@pytest.mark.parametrize("cli_version", [TESTED_CLI_VERSION, "0.10.2", "0.11.0", "1.0.0", "0.10.2-rc.1"])
+@pytest.mark.parametrize("cli_version", [TESTED_CLI_VERSION, "0.12.1", "0.13.0", "1.0.0", "0.12.1-rc.1"])
 def test_no_warning_for_the_tested_cli_version_or_a_newer_one(cli_version):
     assert cli_version_warning(cli_version) is None
 
 
-@pytest.mark.parametrize("cli_version", ["0.10.0", "0.9.0", "0.8.0", "0.4.0"])
+@pytest.mark.parametrize("cli_version", ["0.11.0", "0.10.1", "0.9.0", "0.4.0"])
 def test_a_cli_older_than_the_tested_version_gets_a_warning(cli_version):
     warning = cli_version_warning(cli_version)
 
@@ -183,6 +183,35 @@ def test_parse_report_text_keeps_the_whole_cli_report_in_raw():
     report = parse_report_text(json.dumps(data))
 
     assert report.raw == data
+
+
+def _envelope(comparison: bool) -> dict:
+    """The CLI 0.12.0 output shape, built from a recorded report."""
+    old = json.loads(_fixture_text("comparison.json"))
+    envelope = {"schemaVersion": 1, "run": old["candidate"], "budgets": []}
+    if comparison:
+        envelope["comparison"] = old["comparison"]
+    return envelope
+
+
+def test_parse_report_text_reads_the_run_of_a_cli_0_12_envelope_with_a_comparison():
+    envelope = _envelope(comparison=True)
+
+    report = parse_report_text(json.dumps(envelope))
+
+    assert report.schema_version == 5
+    assert report.findings == envelope["run"]["findings"]
+    assert report.raw == envelope["run"]
+    assert report.comparison == envelope["comparison"]
+
+
+def test_parse_report_text_reads_the_run_of_a_cli_0_12_envelope_without_a_comparison():
+    envelope = _envelope(comparison=False)
+
+    report = parse_report_text(json.dumps(envelope))
+
+    assert report.summary == envelope["run"]["summary"]
+    assert report.comparison is None
 
 
 def test_parse_report_text_keeps_the_candidate_report_in_raw_when_comparing():

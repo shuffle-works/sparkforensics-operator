@@ -1,7 +1,10 @@
 """
 Parses what the sparkforensics-analyze CLI produces: the JSON --out file
 (summary/verdict/findings/recommendations/cleanChecks/notRunChecks) and the
-stderr threshold lines (the CLI's own budget evaluation isn't in the JSON output at all: see the "Global constraints" section of the implementation plan). Threshold
+stderr threshold lines. CLI 0.12.0 and newer write an envelope with `run`,
+an optional `comparison` and `budgets` (the CLI's own budget evaluation).
+The operator ignores `budgets` and derives threshold results from the
+stderr threshold lines. Threshold
 logic lives entirely upstream in sparkforensics; this module only parses
 its output, so it can never drift from what the CLI actually enforces.
 """
@@ -59,7 +62,7 @@ THRESHOLD_RESULT_NAMES = {
 MIN_SCHEMA_VERSION = 5
 MAX_SCHEMA_VERSION = 5
 
-TESTED_CLI_VERSION = "0.10.1"
+TESTED_CLI_VERSION = "0.12.0"
 
 _THRESHOLD_LINE_RE = re.compile(r"^\[(violation|inconclusive)\] ([a-z-]+): (.*)$")
 
@@ -126,12 +129,16 @@ def _nested(data, *keys):
 
 
 def parse_report_text(text: str) -> Report:
-    """Parses the CLI's JSON report, as written to its --out file or, with
-    no --out, to stdout. With --baseline the CLI wraps the run's own report
-    as {"candidate": <report>, "comparison": {...}}."""
+    """Parses the CLI's JSON output, as written to its --out file or, with no
+    --out, to stdout. CLI 0.12.0 and newer wrap the run's report as
+    {"schemaVersion", "run", "comparison"?, "budgets"}. Older CLIs write the
+    report itself, or with --baseline {"candidate": <report>, "comparison": {...}}."""
     data = json.loads(text)
     comparison = None
-    if isinstance(data, dict) and "candidate" in data and "comparison" in data:
+    if isinstance(data, dict) and "run" in data and "budgets" in data:
+        comparison = data.get("comparison")
+        data = data["run"]
+    elif isinstance(data, dict) and "candidate" in data and "comparison" in data:
         comparison = data["comparison"]
         data = data["candidate"]
     schema_version = data["schemaVersion"]
