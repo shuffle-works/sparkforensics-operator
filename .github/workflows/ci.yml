@@ -55,7 +55,7 @@ jobs:
       matrix:
         # The release the operator is tested against (TESTED_CLI_VERSION in
         # report.py), and the newest one.
-        cli: ["0.10.1", "latest"]
+        cli: ["0.12.0", "latest"]
     env:
       SPARKFORENSICS_REQUIRE_CLI: "1"
     steps:
