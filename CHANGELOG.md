@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-04
+
 ### Upgrade notes
 
 - `sparkforensics-cli` 0.10.2 counts every failed task attempt in `max_failed_task_rate_pct`, so a job with retried tasks can fail where it passed.
@@ -219,7 +221,8 @@ Initial release.
 - Generic `Notifier` interface for threshold-breach alerting.
 - PyPI trusted-publishing GitHub Actions workflow (OIDC, no stored token).
 
-[Unreleased]: https://github.com/shuffle-works/sparkforensics-operator/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/shuffle-works/sparkforensics-operator/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.4.0
 [0.3.0]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.3.0
 [0.2.0]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.2.0
 [0.1.1]: https://github.com/shuffle-works/sparkforensics-operator/releases/tag/v0.1.1
