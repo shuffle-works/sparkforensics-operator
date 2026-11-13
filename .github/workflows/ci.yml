@@ -11,7 +11,9 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Keeps the check names `test (<python>, <tox-env>)` that branch protection requires.
+    name: test (${{ matrix.python }}, ${{ matrix.tox-env }})
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -24,10 +26,13 @@ jobs:
             tox-env: py311-airflow3
           - python: "3.12"
             tox-env: py312-airflow3
+          # ubuntu-latest has no Python 3.9.
           - python: "3.9"
             tox-env: py39-airflow2min
+            runner: ubuntu-24.04
           - python: "3.9"
             tox-env: py39-airflow2sshmin
+            runner: ubuntu-24.04
           - python: "3.11"
             tox-env: py311-airflow2deferrablemin
     steps:
