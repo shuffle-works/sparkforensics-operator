@@ -1,7 +1,7 @@
 # sparkforensics-operator
 
 [![CI](https://github.com/shuffle-works/sparkforensics-operator/actions/workflows/ci.yml/badge.svg)](https://github.com/shuffle-works/sparkforensics-operator/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/shuffle-works/sparkforensics-operator/blob/main/LICENSE)
+[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](https://github.com/shuffle-works/sparkforensics-operator/blob/main/LICENSE)
 
 An Airflow operator that runs [sparkforensics](https://github.com/shuffle-works/sparkforensics)
 analysis on a Spark job's event log right after it finishes, then acts on
@@ -174,4 +174,4 @@ tox -e py311-airflow3
 
 ## License
 
-[MIT](https://github.com/shuffle-works/sparkforensics-operator/blob/main/LICENSE)
+[FSL-1.1-MIT](https://github.com/shuffle-works/sparkforensics-operator/blob/main/LICENSE)
